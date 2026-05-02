@@ -124,7 +124,8 @@ final class AdminUsersController
             $this->pdo->commit();
         } catch (Throwable $e) {
             $this->pdo->rollBack();
-            crm_flash_set('Uložení se nezdařilo.');
+            error_log('[AdminUsers::postNew] ' . $e->getMessage() . ' | ' . $e->getFile() . ':' . $e->getLine());
+            crm_flash_set('Uložení se nezdařilo. Detail: ' . $e->getMessage());
             crm_redirect('/admin/users/new');
         }
 
