@@ -69,20 +69,19 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
                     <button type="submit" class="btn btn-secondary btn-sm">Reset hesla</button>
                 </form>
             <?php } ?>
+            <?php if ($isSuperadmin && !$isSelf) { ?>
+                <form method="post" action="<?= crm_h(crm_url('/admin/users/delete')) ?>"
+                      class="inline-form ucard-delete-form" data-uid="<?= $uid ?>">
+                    <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+                    <input type="hidden" name="id" value="<?= $uid ?>">
+                    <button type="button" class="btn btn-danger-ghost btn-sm ucard-delete-btn"
+                            data-uid="<?= $uid ?>"
+                            data-name="<?= crm_h((string)($u['jmeno'] ?? '')) ?>"
+                            title="Trvale smazat uživatele"
+                            onclick="userDeleteToggle(this)">🗑</button>
+                </form>
+            <?php } ?>
         </div>
-        <?php if ($isSuperadmin && !$isSelf) { ?>
-        <div class="ucard__delete">
-            <form method="post" action="<?= crm_h(crm_url('/admin/users/delete')) ?>"
-                  class="inline-form"
-                  onsubmit="return confirm('⚠ TRVALE smazat uživatele „<?= addslashes((string)($u['jmeno'] ?? '')) ?>“?\n\nTato akce je NEVRATNÁ. Záznamy v deníku, audit logu a workflow_log zůstanou (user_id se vyprázdní), kontakty se odpojí od tohoto uživatele.\n\nKlikni OK pro potvrzení.');">
-                <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
-                <input type="hidden" name="id" value="<?= $uid ?>">
-                <button type="submit" class="btn btn-danger btn-sm" style="background:#7a1a1a;border-color:#5a0a0a;">
-                    🗑 Smazat trvale
-                </button>
-            </form>
-        </div>
-        <?php } ?>
         <?php if ($aktivni && $canManage && !$isSelf) { ?>
         <div class="ucard__deactivate">
             <form method="post" action="<?= crm_h(crm_url('/admin/users/deactivate')) ?>"
@@ -193,12 +192,32 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
     border-top: 1px solid rgba(255,255,255,0.06);
     padding-top: 0.4rem; margin-top: 0.3rem;
 }
-.ucard__delete {
-    border-top: 1px dashed rgba(231,76,60,0.25);
-    padding-top: 0.4rem; margin-top: 0.3rem;
+/* Smazat trvale — malé ikonkové tlačítko (2-step inline confirm) */
+.btn-danger-ghost {
+    background: transparent;
+    color: #c5535b;
+    border: 1px solid rgba(231,76,60,0.4);
+    padding: 0.3rem 0.55rem;
+    font-size: 0.85rem;
+    line-height: 1;
 }
-.ucard__delete .inline-form button {
-    width: 100%;
+.btn-danger-ghost:hover {
+    background: rgba(231,76,60,0.12);
+    color: #e74c3c;
+    border-color: rgba(231,76,60,0.7);
+}
+.btn-danger-ghost.confirm-armed {
+    background: #e74c3c;
+    color: #fff;
+    border-color: #e74c3c;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    animation: ucard-armed-pulse 0.6s ease-in-out infinite alternate;
+}
+@keyframes ucard-armed-pulse {
+    from { box-shadow: 0 0 0 0 rgba(231,76,60,0.5); }
+    to   { box-shadow: 0 0 0 4px rgba(231,76,60,0.15); }
 }
 .ucard__deactivate .deactivate-form {
     display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
@@ -285,3 +304,35 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
     </div>
 
 </section>
+
+<script>
+// 2-step inline confirm pro Smazat trvale (žádný native confirm dialog)
+(function () {
+    const ARM_TIMEOUT_MS = 5000;
+    const armed = new Map(); // uid → timeoutId
+
+    window.userDeleteToggle = function (btn) {
+        const uid  = btn.dataset.uid;
+        const name = btn.dataset.name || 'uživatele';
+
+        if (armed.has(uid)) {
+            // Druhý klik → submit form
+            clearTimeout(armed.get(uid));
+            armed.delete(uid);
+            const form = btn.closest('form.ucard-delete-form');
+            if (form) form.submit();
+            return;
+        }
+
+        // První klik → "armed" stav s odpočtem
+        btn.classList.add('confirm-armed');
+        btn.innerHTML = '⚠ Klikni znovu — smazat „' + name + '"';
+        const tid = setTimeout(() => {
+            btn.classList.remove('confirm-armed');
+            btn.innerHTML = '🗑';
+            armed.delete(uid);
+        }, ARM_TIMEOUT_MS);
+        armed.set(uid, tid);
+    };
+})();
+</script>
