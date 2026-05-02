@@ -1,0 +1,13 @@
+# Přihlašovací údaje a tajné klíče
+.env
+config/db.php
+
+# Lokální storage (sessions, ratelimit, logy)
+storage/
+
+# PHP závislosti (pokud by se přidal Composer)
+vendor/
+
+# OS soubory
+.DS_Store
+Thumbs.db

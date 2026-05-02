@@ -1,0 +1,535 @@
+/* ════════════════════════════════════════════════════════════════════
+   OZ KIT — design tokens + base komponenty
+   Zdroj pravdy: OZ_UI_KIT.md
+   Použití: <link rel="stylesheet" href="/assets/css/oz_kit.css"> v OZ views
+   POZN: Nikdy neimportovat globálně do app.css ani do layout/base.php —
+   tokeny jsou scoped pro OZ obrazovky (queue, work, dashboard).
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. DESIGN TOKENS ─────────────────────────────────────────────── */
+:root {
+  /* Aktivní barvy — max 3 (primary + error + warning) */
+  --oz-primary:      #2ecc71;
+  --oz-primary-50:   rgba(46,204,113,0.10);
+  --oz-primary-20:   rgba(46,204,113,0.20);
+  --oz-primary-40:   rgba(46,204,113,0.40);
+  --oz-primary-dark: #27ae60;
+
+  --oz-error:        #e74c3c;
+  --oz-error-50:     rgba(231,76,60,0.10);
+  --oz-error-20:     rgba(231,76,60,0.20);
+
+  --oz-warning:      #f0a030;
+  --oz-warning-50:   rgba(240,160,48,0.10);
+  --oz-warning-20:   rgba(240,160,48,0.20);
+
+  /* Neutrální paleta */
+  --oz-bg:           #0d141f;
+  --oz-card:         #121a26;
+  --oz-card-hover:   #18222e;
+  --oz-border:       rgba(255,255,255,0.08);
+  --oz-border-soft:  rgba(255,255,255,0.04);
+  --oz-text:         #e6edf3;
+  --oz-text-2:       #a8b2c0;
+  --oz-text-3:       #6b7785;
+  --oz-text-disabled:#3d4654;
+
+  /* Typografie */
+  --oz-text-xs:      0.70rem;
+  --oz-text-sm:      0.82rem;
+  --oz-text-base:    0.92rem;
+  --oz-text-lg:      1.10rem;
+  --oz-text-xl:      1.40rem;
+  --oz-text-2xl:     1.80rem;
+
+  /* Spacing */
+  --oz-space-1:      0.25rem;
+  --oz-space-2:      0.5rem;
+  --oz-space-3:      0.75rem;
+  --oz-space-4:      1rem;
+  --oz-space-5:      1.5rem;
+  --oz-space-6:      2rem;
+  --oz-space-8:      3rem;
+
+  /* Radius */
+  --oz-radius-sm:    4px;
+  --oz-radius-md:    6px;
+  --oz-radius-lg:    8px;
+  --oz-radius-xl:    12px;
+
+  /* Transitions */
+  --oz-t-fast:       0.10s ease;
+  --oz-t-base:       0.15s ease;
+  --oz-t-slow:       0.25s cubic-bezier(.4,0,.2,1);
+}
+
+/* ── 2. BUTTONS — 4 styly (primary, secondary, negative, ghost) ─── */
+/*
+   Pravidlo: max 1 .oz-btn-primary na obrazovce (jediné CTA).
+   Vše ostatní = secondary / ghost / negative.
+*/
+
+.oz-btn-primary,
+.oz-btn-secondary,
+.oz-btn-negative,
+.oz-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--oz-space-2);
+  font-family: inherit;
+  font-size: var(--oz-text-base);
+  line-height: 1.2;
+  border-radius: var(--oz-radius-lg);
+  cursor: pointer;
+  text-decoration: none;
+  user-select: none;
+  white-space: nowrap;
+  transition: background var(--oz-t-base), border-color var(--oz-t-base),
+              color var(--oz-t-base), transform var(--oz-t-fast);
+}
+.oz-btn-primary:focus-visible,
+.oz-btn-secondary:focus-visible,
+.oz-btn-negative:focus-visible,
+.oz-btn-ghost:focus-visible {
+  outline: 2px solid var(--oz-primary-40);
+  outline-offset: 2px;
+}
+.oz-btn-primary:active,
+.oz-btn-secondary:active,
+.oz-btn-negative:active {
+  transform: translateY(1px);
+}
+
+/* PRIMARY — solid, dominantní. Jen 1× na obrazovce. */
+.oz-btn-primary {
+  background: var(--oz-primary);
+  color: #fff;
+  border: 1px solid var(--oz-primary);
+  padding: 0.7rem 1.4rem;
+  font-weight: 600;
+}
+.oz-btn-primary:hover {
+  background: var(--oz-primary-dark);
+  border-color: var(--oz-primary-dark);
+}
+
+/* SECONDARY — outline, neutrální, hlavní pracovní akce */
+.oz-btn-secondary {
+  background: transparent;
+  color: var(--oz-text);
+  border: 1px solid var(--oz-border);
+  padding: 0.6rem 1.2rem;
+  font-weight: 500;
+}
+.oz-btn-secondary:hover {
+  border-color: var(--oz-primary-40);
+  background: var(--oz-primary-50);
+  color: var(--oz-primary);
+}
+
+/* NEGATIVE — pro odmítavé akce. Subtle, neukřičet. */
+.oz-btn-negative {
+  background: transparent;
+  color: var(--oz-text-3);
+  border: 1px solid var(--oz-border);
+  padding: 0.5rem 1rem;
+  font-size: var(--oz-text-sm);
+  font-weight: 500;
+}
+.oz-btn-negative:hover {
+  color: var(--oz-error);
+  border-color: var(--oz-error);
+  background: var(--oz-error-50);
+}
+
+/* GHOST — ikony, edit, ne-akce */
+.oz-btn-ghost {
+  background: transparent;
+  color: var(--oz-text-3);
+  border: 1px solid transparent;
+  padding: 0.4rem 0.6rem;
+  font-size: var(--oz-text-sm);
+}
+.oz-btn-ghost:hover {
+  background: var(--oz-border-soft);
+  color: var(--oz-text);
+}
+
+/* Velikosti — modifikátory */
+.oz-btn-lg  { padding: 0.9rem 1.6rem;  font-size: var(--oz-text-lg); }
+.oz-btn-sm  { padding: 0.4rem 0.85rem; font-size: var(--oz-text-sm); }
+.oz-btn-icon{
+  padding: 0.5rem;
+  width: 2.4rem; height: 2.4rem;
+  font-size: var(--oz-text-lg);
+}
+
+/* Disabled stav (sdílený) */
+.oz-btn-primary:disabled,
+.oz-btn-secondary:disabled,
+.oz-btn-negative:disabled,
+.oz-btn-ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ── 3. TABS ──────────────────────────────────────────────────────── */
+/*
+   Aktivní = primary color + bottom border + light bg pill.
+   Neaktivní = opacity 0.55, bez borderu.
+*/
+.oz-tabs {
+  display: flex;
+  gap: 0.1rem;
+  border-bottom: 2px solid var(--oz-border);
+  margin-bottom: var(--oz-space-4);
+}
+.oz-tab {
+  padding: 0.55rem 1rem;
+  color: var(--oz-text-3);
+  opacity: 0.55;
+  font-weight: 500;
+  font-size: var(--oz-text-base);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  border-radius: var(--oz-radius-md) var(--oz-radius-md) 0 0;
+  cursor: pointer;
+  text-decoration: none;
+  transition: opacity var(--oz-t-base), color var(--oz-t-base),
+              background var(--oz-t-base);
+}
+.oz-tab:hover {
+  opacity: 0.9;
+  color: var(--oz-text);
+  background: var(--oz-border-soft);
+}
+.oz-tab--active {
+  opacity: 1;
+  color: var(--oz-primary);
+  border-bottom-color: var(--oz-primary);
+  background: var(--oz-primary-50);
+  font-weight: 700;
+}
+.oz-tab__badge {
+  display: inline-block;
+  font-size: var(--oz-text-xs);
+  font-weight: 600;
+  margin-left: var(--oz-space-2);
+  background: rgba(255,255,255,0.08);
+  color: var(--oz-text-3);
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  opacity: 0.7;
+  transition: opacity var(--oz-t-base);
+}
+.oz-tab--active .oz-tab__badge {
+  background: var(--oz-primary-20);
+  color: var(--oz-primary);
+  opacity: 1;
+}
+
+/* ── 4. BADGES — 4 styly ───────────────────────────────────────────── */
+/*
+   Pravidlo: badge = strukturní info (region, stav). NE upozornění.
+   Pro upozornění použij ikonu vedle.
+*/
+.oz-badge {
+  display: inline-block;
+  font-size: var(--oz-text-xs);
+  font-weight: 600;
+  padding: 0.18rem 0.5rem;
+  border-radius: var(--oz-radius-sm);
+  background: rgba(255,255,255,0.06);
+  color: var(--oz-text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.oz-badge--primary  { background: var(--oz-primary-20);  color: var(--oz-primary); }
+.oz-badge--warning  { background: var(--oz-warning-50);  color: var(--oz-warning); }
+.oz-badge--error    { background: var(--oz-error-50);    color: var(--oz-error); }
+
+/* Pillová varianta (zaokrouhlená) — pro counts */
+.oz-badge--pill { border-radius: 999px; padding: 0.12rem 0.55rem; }
+
+/* ── 5. CARD KONTAKTU — 3 zóny (Header / Detail / Akce) ──────────── */
+/*
+   Layout pro call screen i pro queue položky.
+   Header dominantní, Detail sbalitelný, Akce hierarchické.
+*/
+.oz-card {
+  background: var(--oz-card);
+  border: 1px solid var(--oz-border);
+  border-radius: var(--oz-radius-lg);
+  padding: var(--oz-space-4) var(--oz-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--oz-space-4);
+  transition: background var(--oz-t-base), border-color var(--oz-t-base),
+              opacity var(--oz-t-base);
+}
+.oz-card:hover { background: var(--oz-card-hover); }
+
+/* Aktivní (zaměřený) card — ozdoba focus */
+.oz-card--active {
+  border-color: var(--oz-primary);
+  box-shadow: 0 0 0 1px var(--oz-primary-40), 0 4px 14px rgba(0,0,0,0.35);
+  background: var(--oz-primary-50);
+}
+
+/* Tlumený card (mimo focus) */
+.oz-card--muted { opacity: 0.55; }
+.oz-card--muted:hover { opacity: 0.85; }
+
+/* === HEADER === */
+.oz-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--oz-space-3);
+  flex-wrap: wrap;
+}
+.oz-card__title {
+  font-size: var(--oz-text-2xl);
+  font-weight: 700;
+  color: var(--oz-text);
+  line-height: 1.2;
+  margin: 0;
+}
+.oz-card__phone {
+  display: inline-block;
+  font-size: var(--oz-text-xl);
+  font-weight: 500;
+  color: var(--oz-primary);
+  text-decoration: none;
+  margin-top: var(--oz-space-1);
+  font-family: monospace;
+  letter-spacing: 0.02em;
+}
+.oz-card__phone:hover { text-decoration: underline; }
+.oz-card__header-meta {
+  display: flex;
+  gap: var(--oz-space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Subtle warning ikona vedle jména (chybný lead) */
+.oz-card__warning {
+  display: inline-flex;
+  align-items: center;
+  width: 1.4rem; height: 1.4rem;
+  border-radius: 50%;
+  background: var(--oz-error-50);
+  color: var(--oz-error);
+  font-size: var(--oz-text-sm);
+  margin-left: var(--oz-space-2);
+  cursor: help;
+}
+
+/* === DETAIL (sbalitelné) === */
+.oz-card__detail {
+  border-top: 1px solid var(--oz-border-soft);
+  padding-top: var(--oz-space-3);
+}
+.oz-card__detail summary {
+  list-style: none;
+  font-size: var(--oz-text-sm);
+  color: var(--oz-text-3);
+  cursor: pointer;
+  user-select: none;
+  padding: 0.2rem 0;
+}
+.oz-card__detail summary::-webkit-details-marker { display: none; }
+.oz-card__detail summary:before {
+  content: "▸ ";
+  display: inline-block;
+  margin-right: var(--oz-space-1);
+  transition: transform var(--oz-t-base);
+}
+.oz-card__detail[open] summary:before { content: "▾ "; }
+.oz-card__detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--oz-space-2) var(--oz-space-4);
+  margin-top: var(--oz-space-3);
+  font-size: var(--oz-text-sm);
+  color: var(--oz-text-3);
+}
+.oz-card__detail-grid dt {
+  font-size: var(--oz-text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--oz-text-3);
+  margin-bottom: var(--oz-space-1);
+}
+.oz-card__detail-grid dd {
+  font-size: var(--oz-text-sm);
+  color: var(--oz-text-2);
+  margin: 0;
+}
+
+/* === AKCE === */
+.oz-card__actions {
+  display: flex;
+  gap: var(--oz-space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.oz-card__actions--vertical { flex-direction: column; align-items: stretch; }
+.oz-card__actions-spacer { flex: 1; }
+
+/* === POZNÁMKA (textarea) === */
+.oz-note {
+  width: 100%;
+  min-height: 80px;
+  padding: var(--oz-space-3);
+  background: var(--oz-bg);
+  color: var(--oz-text);
+  border: 1px solid var(--oz-border);
+  border-radius: var(--oz-radius-md);
+  font-family: inherit;
+  font-size: var(--oz-text-base);
+  resize: vertical;
+  transition: border-color var(--oz-t-base), background var(--oz-t-base);
+}
+.oz-note:focus {
+  outline: none;
+  border-color: var(--oz-primary-40);
+  background: var(--oz-card);
+}
+.oz-note::placeholder { color: var(--oz-text-3); }
+
+/* ── 6. STATS — sbalené v <details> default zavřené ──────────────── */
+.oz-stats-details {
+  margin: var(--oz-space-4) 0;
+  border: 1px solid var(--oz-border);
+  border-radius: var(--oz-radius-lg);
+  overflow: hidden;
+}
+.oz-stats-details summary {
+  list-style: none;
+  font-size: var(--oz-text-sm);
+  color: var(--oz-text-3);
+  cursor: pointer;
+  padding: var(--oz-space-3) var(--oz-space-4);
+  user-select: none;
+  transition: background var(--oz-t-base), color var(--oz-t-base);
+}
+.oz-stats-details summary::-webkit-details-marker { display: none; }
+.oz-stats-details summary:hover {
+  background: var(--oz-border-soft);
+  color: var(--oz-text);
+}
+.oz-stats-details[open] summary {
+  border-bottom: 1px solid var(--oz-border);
+  color: var(--oz-text);
+}
+.oz-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--oz-space-3);
+  padding: var(--oz-space-4);
+}
+.oz-stat-card {
+  background: var(--oz-card);
+  border: 1px solid var(--oz-border);
+  border-radius: var(--oz-radius-md);
+  padding: var(--oz-space-3) var(--oz-space-4);
+}
+.oz-stat-card__value {
+  font-size: var(--oz-text-2xl);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--oz-text);
+}
+.oz-stat-card__value--primary { color: var(--oz-primary); }
+.oz-stat-card__value--warning { color: var(--oz-warning); }
+.oz-stat-card__value--error   { color: var(--oz-error); }
+.oz-stat-card__label {
+  margin-top: var(--oz-space-2);
+  font-size: var(--oz-text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--oz-text-3);
+}
+
+/* ── 7. SECTION HEADERS — pro queue (Renewals / Callbacks / Pending) ─ */
+.oz-section {
+  margin-bottom: var(--oz-space-5);
+}
+.oz-section__title {
+  display: flex;
+  align-items: center;
+  gap: var(--oz-space-2);
+  font-size: var(--oz-text-lg);
+  font-weight: 700;
+  color: var(--oz-text);
+  margin: 0 0 var(--oz-space-3);
+}
+.oz-section__count {
+  font-size: var(--oz-text-sm);
+  font-weight: 500;
+  color: var(--oz-text-3);
+}
+.oz-section--warning .oz-section__title { color: var(--oz-warning); }
+.oz-section--callback .oz-section__title { color: var(--oz-primary); }
+
+/* ── 8. EMPTY STATES ──────────────────────────────────────────────── */
+.oz-empty {
+  text-align: center;
+  padding: var(--oz-space-6) var(--oz-space-4);
+  color: var(--oz-text-3);
+  font-size: var(--oz-text-base);
+  border: 1px dashed var(--oz-border);
+  border-radius: var(--oz-radius-lg);
+}
+.oz-empty__icon {
+  font-size: 2.5rem;
+  margin-bottom: var(--oz-space-3);
+  opacity: 0.5;
+}
+
+/* ── 9. PAGE LAYOUT (queue / work) ────────────────────────────────── */
+.oz-page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: var(--oz-space-4);
+}
+.oz-page__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--oz-space-5);
+  gap: var(--oz-space-3);
+  flex-wrap: wrap;
+}
+.oz-page__title {
+  font-size: var(--oz-text-xl);
+  font-weight: 700;
+  color: var(--oz-text);
+  margin: 0;
+}
+.oz-page__subtitle {
+  font-size: var(--oz-text-sm);
+  color: var(--oz-text-3);
+}
+
+/* Call screen specific — wider card, focus mode */
+.oz-page--call {
+  max-width: 720px; /* užší = víc fokusu */
+}
+
+/* ── 10. RESPONSIVE ───────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .oz-card { padding: var(--oz-space-3); }
+  .oz-card__title { font-size: var(--oz-text-xl); }
+  .oz-card__phone { font-size: var(--oz-text-lg); }
+  .oz-btn-primary, .oz-btn-secondary, .oz-btn-negative {
+    padding: 0.55rem 1rem;
+    font-size: var(--oz-text-sm);
+  }
+  .oz-page { padding: var(--oz-space-3); }
+}

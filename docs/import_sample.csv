@@ -1,0 +1,6 @@
+firma;ico;adresa;telefon;email;kraj;operator;poznamka;datum_uzavreni;narozeniny_majitele
+ABC s.r.o.;12345678;Praha 1, Václavské nám. 1;731234567;info@abc.cz;Hl. m. Praha;O2;ukázka aktivního leadu - bez uzavření;;
+Servis Novák;87654321;Brno, Hlavní 25;605555444;novak@servis.cz;Jihomoravský kraj;TM;ukázka uzavřené smlouvy z minulosti;15.03.2024;
+Pokrytí Plzeň s.r.o.;55512344;Plzeň, Sady 3;777888999;pokryti@plzen.cz;Plzeňský kraj;Vodafone;jen kontaktní údaje, neoslovené;;
+Veteran Petr Svoboda;;Ostrava-Poruba, Hlavní 12;601234567;p.svoboda@gmail.com;Moravskoslezský kraj;O2;dlouhý zákazník - smlouva už běží;01.06.2023;1965-04-12
+Test Letní;19283746;Olomouc, U mostu 8;608111222;letni@test.cz;Olomoucký kraj;TM;ručně přidaný řádek pro test importu;;
