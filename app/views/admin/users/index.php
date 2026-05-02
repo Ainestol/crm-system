@@ -46,6 +46,7 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
     $role   = (string) ($u['role'] ?? '');
     $canManage = crm_users_actor_can_manage_target((string) $actor['role'], $u);
     $isSelf = $uid === (int) ($actor['id'] ?? 0);
+    $isSuperadmin = (string) ($actor['role'] ?? '') === 'superadmin';
     ?>
     <div class="ucard <?= $aktivni ? '' : 'ucard--inactive' ?>">
         <div class="ucard__info">
@@ -69,6 +70,19 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
                 </form>
             <?php } ?>
         </div>
+        <?php if ($isSuperadmin && !$isSelf) { ?>
+        <div class="ucard__delete">
+            <form method="post" action="<?= crm_h(crm_url('/admin/users/delete')) ?>"
+                  class="inline-form"
+                  onsubmit="return confirm('⚠ TRVALE smazat uživatele „<?= addslashes((string)($u['jmeno'] ?? '')) ?>“?\n\nTato akce je NEVRATNÁ. Záznamy v deníku, audit logu a workflow_log zůstanou (user_id se vyprázdní), kontakty se odpojí od tohoto uživatele.\n\nKlikni OK pro potvrzení.');">
+                <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+                <input type="hidden" name="id" value="<?= $uid ?>">
+                <button type="submit" class="btn btn-danger btn-sm" style="background:#7a1a1a;border-color:#5a0a0a;">
+                    🗑 Smazat trvale
+                </button>
+            </form>
+        </div>
+        <?php } ?>
         <?php if ($aktivni && $canManage && !$isSelf) { ?>
         <div class="ucard__deactivate">
             <form method="post" action="<?= crm_h(crm_url('/admin/users/deactivate')) ?>"
@@ -178,6 +192,13 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
 .ucard__deactivate {
     border-top: 1px solid rgba(255,255,255,0.06);
     padding-top: 0.4rem; margin-top: 0.3rem;
+}
+.ucard__delete {
+    border-top: 1px dashed rgba(231,76,60,0.25);
+    padding-top: 0.4rem; margin-top: 0.3rem;
+}
+.ucard__delete .inline-form button {
+    width: 100%;
 }
 .ucard__deactivate .deactivate-form {
     display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;

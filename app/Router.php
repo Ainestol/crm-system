@@ -133,6 +133,13 @@ final class Router
             ],
             [
                 'method' => 'POST',
+                'path' => '/admin/users/delete',
+                'auth' => true,
+                'roles' => ['superadmin'],
+                'handler' => [AdminUsersController::class, 'postDelete'],
+            ],
+            [
+                'method' => 'POST',
                 'path' => '/admin/users/reset-password',
                 'auth' => true,
                 'roles' => ['majitel', 'superadmin'],

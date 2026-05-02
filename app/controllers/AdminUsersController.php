@@ -329,6 +329,79 @@ final class AdminUsersController
         crm_redirect('/admin/users');
     }
 
+    /**
+     * HARD DELETE — fyzicky smaže uživatele z DB.
+     * Pouze pro superadmina, nelze smazat sebe sama.
+     * FK: workflow_log.user_id → SET NULL, audit_log podobně.
+     * Před smazáním ošetřit assigned_caller_id / assigned_sales_id v contacts (SET NULL).
+     */
+    public function postDelete(): void
+    {
+        $actor = $this->actor();
+        // Hard delete povolen JEN pro superadmin
+        crm_require_roles($actor, ['superadmin']);
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            crm_flash_set('Neplatný CSRF token.');
+            crm_redirect('/admin/users');
+        }
+
+        $id = (int) ($_POST['id'] ?? 0);
+        if ($id <= 0) {
+            crm_flash_set('Neplatný cíl smazání.');
+            crm_redirect('/admin/users');
+        }
+        if ($id === (int) $actor['id']) {
+            crm_flash_set('⚠ Sebe sama smazat nemůžeš.');
+            crm_redirect('/admin/users');
+        }
+
+        $stmt = $this->pdo->prepare('SELECT id, jmeno, email, role FROM users WHERE id = :id LIMIT 1');
+        $stmt->execute(['id' => $id]);
+        $target = $stmt->fetch();
+        if (!is_array($target)) {
+            crm_flash_set('Uživatel neexistuje.');
+            crm_redirect('/admin/users');
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            // 1) Vyčistit FK reference v contacts (caller / sales) → SET NULL
+            $this->pdo->prepare(
+                'UPDATE contacts SET assigned_caller_id = NULL WHERE assigned_caller_id = :id'
+            )->execute(['id' => $id]);
+            $this->pdo->prepare(
+                'UPDATE contacts SET assigned_sales_id = NULL WHERE assigned_sales_id = :id'
+            )->execute(['id' => $id]);
+
+            // 2) Smazat user_regions záznamy
+            try {
+                $this->pdo->prepare('DELETE FROM user_regions WHERE user_id = :id')->execute(['id' => $id]);
+            } catch (\PDOException) { /* tabulka může chybět */ }
+
+            // 3) Zneplatnit API tokeny
+            api_auth_invalidate_user_tokens($this->pdo, $id);
+
+            // 4) Smazat samotného uživatele (workflow_log a audit_log mají FK SET NULL)
+            $this->pdo->prepare('DELETE FROM users WHERE id = :id')->execute(['id' => $id]);
+
+            $this->pdo->commit();
+        } catch (Throwable $e) {
+            $this->pdo->rollBack();
+            error_log('[AdminUsers::postDelete] ' . $e->getMessage());
+            crm_flash_set('Smazání selhalo: ' . $e->getMessage());
+            crm_redirect('/admin/users');
+        }
+
+        crm_audit_log($this->pdo, (int) $actor['id'], 'user_hard_delete', 'user', $id, [
+            'jmeno' => (string) ($target['jmeno'] ?? ''),
+            'email' => (string) ($target['email'] ?? ''),
+            'role'  => (string) ($target['role']  ?? ''),
+        ]);
+        crm_flash_set('🗑 Uživatel "' . ($target['jmeno'] ?? '') . '" byl trvale smazán.');
+        crm_redirect('/admin/users');
+    }
+
     public function postResetPassword(): void
     {
         $actor = $this->actor();
