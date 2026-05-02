@@ -131,7 +131,11 @@ final class AdminUsersController
         crm_audit_log($this->pdo, $actorId, 'user_create', 'user', $newId, ['email' => $email, 'role' => $role]);
         $mailOk = crm_mail_welcome_user($email, $jmeno, $plain);
         if (!$mailOk) {
-            crm_flash_set('Uživatel byl vytvořen, ale e-mail se nepodařilo odeslat (zkontrolujte SMTP).');
+            // SMTP zatím nenastaveno — ukaž heslo adminovi, ať ho může předat ručně
+            crm_flash_set('✓ Uživatel vytvořen. SMTP není nastaveno → předej heslo ručně:'
+                . "\n📧 Email: " . $email
+                . "\n🔑 Dočasné heslo: " . $plain
+                . "\n⚠ Při prvním přihlášení si uživatel musí heslo změnit.");
         } else {
             crm_flash_set('Uživatel byl vytvořen a přihlašovací údaje odeslány e-mailem.');
         }
