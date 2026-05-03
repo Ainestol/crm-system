@@ -112,6 +112,20 @@ final class Router
             ],
             [
                 'method' => 'GET',
+                'path' => '/admin/users/new-test',
+                'auth' => true,
+                'roles' => ['superadmin'],
+                'handler' => [AdminUsersController::class, 'getNewTest'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/users/new-test',
+                'auth' => true,
+                'roles' => ['superadmin'],
+                'handler' => [AdminUsersController::class, 'postNewTest'],
+            ],
+            [
+                'method' => 'GET',
                 'path' => '/admin/users/edit',
                 'auth' => true,
                 'roles' => ['majitel', 'superadmin'],
