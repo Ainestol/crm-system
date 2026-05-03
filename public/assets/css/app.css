@@ -130,6 +130,22 @@
   /* Legacy form input bg used by earlier overrides */
   --color-input-bg: #ffffff;
   --color-input-border: var(--color-border-strong);
+
+  /* ── COMPATIBILITY ALIASES ──
+   * Old admin views (datagrid, feed, duplicates, import, oz_targets, …)
+   * referenced --brand-primary and various --bo-* tokens which were never
+   * defined globally. Map them to the HANDOFF design system so every view
+   * picks up readable light-theme colors automatically. */
+  --brand-primary:  var(--color-badge-nove);
+  --bo-text:        var(--color-text);
+  --bo-text-2:      var(--color-text-muted);
+  --bo-text-3:      var(--color-text-light);
+  --bo-bg:          var(--color-card-bg);
+  --bo-surface:     var(--color-surface);
+  --bo-border:      var(--color-border);
+  --bo-success:     var(--color-badge-uzavreno);
+  --bo-warning:     var(--color-accent);
+  --bo-danger:      var(--color-badge-reklamace);
 }
 
 * { box-sizing: border-box; }

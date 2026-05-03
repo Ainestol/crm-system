@@ -15,11 +15,31 @@ $keyLabels = [
 $totalDuplicateRows = array_sum(array_column($summary, 'total_extra_rows'));
 ?>
 <style>
-.dup-wrap { padding: 1.5rem 1rem; max-width: 1200px; margin: 0 auto; }
-.dup-wrap h1 { margin: 0 0 0.5rem; font-size: 1.4rem; }
-.dup-wrap > .lead { color: var(--bo-text-3, #888); font-size: 0.9rem; margin-bottom: 1.5rem; }
-.dup-wrap .breadcrumb { margin-bottom: 0.8rem; font-size: 0.78rem; }
-.dup-wrap .breadcrumb a { color: var(--brand-primary, #5a6cff); text-decoration: none; }
+.dup-wrap { padding: 0.8rem 1rem 1.5rem; max-width: 1200px; margin: 0 auto; }
+.dup-wrap h1 { margin: 0 0 0.5rem; font-size: 1.4rem; color: var(--color-text); }
+.dup-wrap > .lead { color: var(--color-text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+.dup-wrap .breadcrumb {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    margin: -0.8rem -1rem 0.8rem;
+    padding: 0.55rem 1rem;
+    background: var(--color-card-bg);
+    border-bottom: 1px solid var(--color-border);
+    font-size: 0.78rem;
+    display: flex; gap: 0.4rem; flex-wrap: wrap;
+}
+.dup-wrap .breadcrumb a {
+    color: var(--color-badge-nove);
+    text-decoration: none;
+    padding: 0.25rem 0.6rem !important;
+    border-radius: var(--radius-btn) !important;
+    background: var(--color-badge-nove-bg) !important;
+    border: 1px solid #b5d4f4 !important;
+    font-weight: 600;
+}
+.dup-wrap .breadcrumb a:hover { background: #d4e5f7 !important; }
+.dup-wrap .breadcrumb a.is-current { background: var(--color-badge-nove) !important; color: #fff; border-color: var(--color-badge-nove) !important; }
 
 .dup-summary {
     display: grid;
@@ -30,77 +50,85 @@ $totalDuplicateRows = array_sum(array_column($summary, 'total_extra_rows'));
 .dup-tile {
     display: block;
     padding: 1rem 1.2rem;
-    border: 1px solid var(--bo-border, rgba(0,0,0,0.08));
+    border: 1px solid var(--color-border);
     border-radius: 10px;
-    background: var(--bo-surface, rgba(0,0,0,0.02));
+    background: var(--color-card-bg);
     color: inherit;
     text-decoration: none;
     transition: all 0.15s;
+    box-shadow: var(--shadow-card);
 }
-.dup-tile:hover { border-color: var(--brand-primary, #5a6cff); transform: translateY(-1px); }
-.dup-tile--active { border-color: var(--brand-primary, #5a6cff); background: rgba(90,108,255,0.08); }
-.dup-tile__title { font-size: 0.78rem; font-weight: 700; color: var(--bo-text-2, #aaa); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+.dup-tile:hover { border-color: var(--color-badge-nove); transform: translateY(-1px); box-shadow: var(--shadow-card-hover); }
+.dup-tile--active { border-color: var(--color-badge-nove); background: var(--color-badge-nove-bg); }
+.dup-tile__title { font-size: 0.78rem; font-weight: 700; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
 .dup-tile__count {
-    font-size: 1.6rem; font-weight: 800; color: var(--bo-text, #fff); line-height: 1;
+    font-size: 1.6rem; font-weight: 800; color: var(--color-text); line-height: 1;
 }
-.dup-tile__count--zero { color: var(--bo-success, #66bb6a); }
-.dup-tile__count--warn { color: var(--bo-warning, #f39c12); }
-.dup-tile__sub { font-size: 0.75rem; color: var(--bo-text-3, #888); margin-top: 0.4rem; }
+.dup-tile__count--zero { color: var(--color-badge-uzavreno); }
+.dup-tile__count--warn { color: var(--color-accent); }
+.dup-tile__sub { font-size: 0.75rem; color: var(--color-text-light); margin-top: 0.4rem; }
 
 .dup-empty {
     padding: 3rem 1rem;
     text-align: center;
-    color: var(--bo-text-3);
-    background: rgba(102,187,106,0.04);
-    border: 1px dashed rgba(102,187,106,0.3);
+    color: var(--color-text-muted);
+    background: var(--color-badge-uzavreno-bg);
+    border: 1px dashed #86efac;
     border-radius: 10px;
 }
 .dup-empty__icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
 
 .dup-groups { display: flex; flex-direction: column; gap: 1rem; }
 .dup-group {
-    border: 1px solid var(--bo-border, rgba(0,0,0,0.08));
-    border-left: 4px solid var(--bo-warning, #f39c12);
+    border: 1px solid var(--color-border);
+    border-left: 4px solid var(--color-accent);
     border-radius: 8px;
-    background: var(--bo-surface, rgba(0,0,0,0.02));
+    background: var(--color-card-bg);
     overflow: hidden;
+    box-shadow: var(--shadow-card);
 }
 .dup-group__header {
     padding: 0.6rem 0.9rem;
-    background: rgba(243,156,18,0.06);
+    background: var(--color-badge-callback-bg);
     font-size: 0.85rem;
-    border-bottom: 1px solid var(--bo-border, rgba(0,0,0,0.06));
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-badge-callback-text);
     display: flex;
     gap: 1rem;
     align-items: center;
     flex-wrap: wrap;
 }
 .dup-group__key { font-weight: 800; font-family: 'Consolas', 'Monaco', monospace; }
-.dup-group__count { font-size: 0.72rem; color: var(--bo-warning, #f39c12); padding: 0.15rem 0.6rem; background: rgba(243,156,18,0.15); border-radius: 999px; font-weight: 700; }
+.dup-group__count { font-size: 0.72rem; color: var(--color-badge-callback-text); padding: 0.15rem 0.6rem; background: #ffffff; border-radius: 999px; font-weight: 700; border: 1px solid #fde68a; }
 
 .dup-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
-.dup-table th, .dup-table td { padding: 0.4rem 0.6rem; text-align: left; border-bottom: 1px solid var(--bo-border, rgba(0,0,0,0.05)); vertical-align: top; }
-.dup-table th { font-weight: 700; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--bo-text-2, #aaa); background: rgba(0,0,0,0.02); }
+.dup-table th, .dup-table td { padding: 0.5rem 0.6rem; text-align: left; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+.dup-table th { font-weight: 700; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted); background: var(--color-surface); }
 .dup-table tr:last-child td { border-bottom: 0; }
+.dup-table tr:hover td { background: var(--color-surface); }
 .dup-table .id-col { font-family: 'Consolas', 'Monaco', monospace; font-weight: 700; }
-.dup-table a { color: var(--brand-primary, #5a6cff); text-decoration: none; }
+.dup-table a { color: var(--color-badge-nove); text-decoration: none; font-weight: 600; }
 .dup-table a:hover { text-decoration: underline; }
 .dup-table .stav-pill {
     display: inline-block;
-    padding: 0.1rem 0.5rem;
+    padding: 0.15rem 0.55rem;
     font-size: 0.68rem;
     font-weight: 700;
     border-radius: 999px;
-    background: rgba(0,0,0,0.06);
-    color: var(--bo-text-2, #aaa);
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    border: 1px solid var(--color-border);
 }
-.dup-table .stav-pill--ok { background: rgba(102,187,106,0.15); color: #66bb6a; }
-.dup-table .stav-pill--bad { background: rgba(231,76,60,0.15); color: #e74c3c; }
+.dup-table .stav-pill--ok { background: var(--color-badge-uzavreno-bg); color: var(--color-badge-uzavreno-text); border-color: #bbf7d0; }
+.dup-table .stav-pill--bad { background: var(--color-badge-reklamace-bg); color: var(--color-badge-reklamace-text); border-color: #fca5a5; }
 
 .dup-flash {
-    padding: 0.6rem 1rem; border-radius: 6px;
-    background: rgba(90,108,255,0.1); border: 1px solid rgba(90,108,255,0.25);
-    margin-bottom: 1rem; font-size: 0.85rem;
+    padding: 0.7rem 1rem; border-radius: var(--radius-card);
+    background: var(--color-badge-nove-bg);
+    border: 1px solid #b5d4f4;
+    border-left: 4px solid var(--color-badge-nove);
+    color: var(--color-badge-nove-text);
+    margin-bottom: 1rem; font-size: 0.85rem; font-weight: 500;
 }
 @media (max-width: 1000px) {
     .dup-summary { grid-template-columns: 1fr 1fr; }
@@ -118,11 +146,12 @@ $totalDuplicateRows = array_sum(array_column($summary, 'total_extra_rows'));
 
 <section class="dup-wrap">
     <div class="breadcrumb">
-        <a href="<?= crm_h(crm_url('/dashboard')) ?>" style="padding:0.25rem 0.55rem;border-radius:6px;background:rgba(90,108,255,0.1);border:1px solid rgba(90,108,255,0.25);">← Dashboard</a>
-        &nbsp;
-        <a href="<?= crm_h(crm_url('/admin/datagrid')) ?>" style="padding:0.25rem 0.55rem;border-radius:6px;background:rgba(90,108,255,0.1);border:1px solid rgba(90,108,255,0.25);">📊 Live datagrid</a>
-        &nbsp;
-        <a href="<?= crm_h(crm_url('/admin/import')) ?>" style="padding:0.25rem 0.55rem;border-radius:6px;background:rgba(90,108,255,0.1);border:1px solid rgba(90,108,255,0.25);">📥 Import</a>
+        <a href="<?= crm_h(crm_url('/dashboard')) ?>">← Dashboard</a>
+        <a href="#" class="is-current">🕵 Audit duplicit</a>
+        <a href="<?= crm_h(crm_url('/admin/feed')) ?>">📰 Activity feed</a>
+        <a href="<?= crm_h(crm_url('/admin/datagrid')) ?>">📊 Live datagrid</a>
+        <a href="<?= crm_h(crm_url('/admin/import')) ?>">📥 Import</a>
+        <a href="<?= crm_h(crm_url('/admin/users')) ?>">👥 Uživatelé</a>
     </div>
 
     <h1>🕵 Audit duplicit v databázi</h1>
