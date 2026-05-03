@@ -56,7 +56,7 @@ function renderSnap(array $snap): string {
 .preview-meta {
     display: flex; gap: 0.5rem 1rem; flex-wrap: wrap;
     font-size: 0.82rem; color: var(--muted);
-    border-bottom: 1px solid rgba(255,255,255,0.08);
+    border-bottom: 1px solid rgba(0,0,0,0.08);
     padding-bottom: 0.7rem; margin-bottom: 1rem;
 }
 .preview-meta strong { color: var(--text); }
@@ -66,8 +66,8 @@ function renderSnap(array $snap): string {
     gap: 0.6rem; margin-bottom: 1.2rem;
 }
 .preview-stat {
-    background: var(--card); border: 1px solid rgba(255,255,255,0.08);
-    border-left: 4px solid rgba(255,255,255,0.18);
+    background: var(--card); border: 1px solid rgba(0,0,0,0.08);
+    border-left: 4px solid rgba(0,0,0,0.18);
     border-radius: 8px; padding: 0.7rem 0.9rem;
 }
 .preview-stat__val { font-size: 1.5rem; font-weight: 700; line-height: 1; }
@@ -85,7 +85,7 @@ function renderSnap(array $snap): string {
 .preview-stat--ban   .preview-stat__val { color: #9b59b6; }
 
 .preview-section {
-    background: var(--card); border: 1px solid rgba(255,255,255,0.08);
+    background: var(--card); border: 1px solid rgba(0,0,0,0.08);
     border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 0.85rem;
 }
 .preview-section__title {
@@ -97,15 +97,15 @@ function renderSnap(array $snap): string {
 .preview-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
 .preview-table th, .preview-table td {
     padding: 0.32rem 0.55rem; text-align: left;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
+    border-bottom: 1px solid rgba(0,0,0,0.05);
     vertical-align: top;
 }
 .preview-table th {
     color: var(--muted); font-size: 0.66rem; text-transform: uppercase;
     letter-spacing: 0.04em; font-weight: 600;
-    background: rgba(255,255,255,0.02);
+    background: rgba(0,0,0,0.02);
 }
-.preview-table tbody tr:hover td { background: rgba(255,255,255,0.02); }
+.preview-table tbody tr:hover td { background: rgba(0,0,0,0.02); }
 .preview-table .row-num {
     font-family: monospace; color: var(--accent); font-weight: 700; width: 4rem;
 }
@@ -115,7 +115,7 @@ function renderSnap(array $snap): string {
 
 .preview-scroll {
     max-height: 280px; overflow-y: auto; border-radius: 6px;
-    border: 1px solid rgba(255,255,255,0.06);
+    border: 1px solid rgba(0,0,0,0.06);
 }
 
 .preview-actions {
@@ -130,12 +130,12 @@ function renderSnap(array $snap): string {
 .preview-actions__choice label {
     display: flex; align-items: flex-start; gap: 0.55rem; cursor: pointer;
     padding: 0.4rem 0.55rem; border-radius: 6px;
-    border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(0,0,0,0.08);
+    background: rgba(0,0,0,0.02);
     transition: background 0.15s, border-color 0.15s;
 }
 .preview-actions__choice label:hover {
-    background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.14);
+    background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.14);
 }
 .preview-actions__choice input[type=radio]:checked + .choice-content {
     color: var(--text);
@@ -148,8 +148,8 @@ function renderSnap(array $snap): string {
     margin: 0.8rem 0;
     padding: 0.75rem 0.85rem;
     border-radius: 8px;
-    background: rgba(255,255,255,0.025);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(0,0,0,0.025);
+    border: 1px solid rgba(0,0,0,0.08);
 }
 .dup-block__title {
     font-size: 0.82rem;
@@ -486,7 +486,7 @@ function renderSnap(array $snap): string {
                                 class="dup-select"
                                 style="width:100%;font-size:0.74rem;padding:0.3rem 0.4rem;
                                        background:var(--bg);color:var(--text);
-                                       border:1px solid rgba(255,255,255,0.15);border-radius:5px;">
+                                       border:1px solid rgba(0,0,0,0.15);border-radius:5px;">
                             <option value="merge">🔀 Sloučit kontakty</option>
                             <option value="add">➕ Ponechat odděleně</option>
                             <option value="skip">⏭ Přeskočit duplicitu</option>
@@ -608,14 +608,14 @@ function renderSnap(array $snap): string {
 .strat-card {
     display: flex; flex-direction: column; gap: 0.3rem;
     padding: 0.7rem 0.85rem;
-    background: rgba(255,255,255,0.02);
-    border: 1.5px solid rgba(255,255,255,0.10);
+    background: rgba(0,0,0,0.02);
+    border: 1.5px solid rgba(0,0,0,0.10);
     border-radius: 8px;
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
     position: relative;
 }
-.strat-card:hover { border-color: rgba(255,255,255,0.20); background: rgba(255,255,255,0.04); }
+.strat-card:hover { border-color: rgba(0,0,0,0.20); background: rgba(0,0,0,0.04); }
 .strat-card input[type=radio] {
     position: absolute; top: 0.7rem; right: 0.7rem;
     accent-color: #2ecc71;
@@ -661,7 +661,7 @@ function renderSnap(array $snap): string {
 /* ── Dup blocks ── */
 .dup-block {
     margin-top: 1rem; padding: 0.7rem 0.9rem;
-    background: rgba(255,255,255,0.02);
+    background: rgba(0,0,0,0.02);
     border: 1px solid rgba(241,196,15,0.25);
     border-left: 4px solid #f1c40f;
     border-radius: 0 8px 8px 0;

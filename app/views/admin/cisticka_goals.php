@@ -23,15 +23,15 @@ declare(strict_types=1);
     margin: 0.6rem 0 1rem;
 }
 .goal-row {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(0,0,0,0.03);
+    border: 1px solid rgba(0,0,0,0.08);
     border-left: 3px solid rgba(46,204,113,0.5);
     border-radius: 8px;
     padding: 0.6rem 0.85rem;
     display: flex; flex-direction: column; gap: 0.4rem;
 }
 .goal-row--completed { border-left-color: #2ecc71; background: rgba(46,204,113,0.06); }
-.goal-row--off       { border-left-color: rgba(255,255,255,0.12); opacity: 0.7; }
+.goal-row--off       { border-left-color: rgba(0,0,0,0.12); opacity: 0.7; }
 
 .goal-row__head {
     display: flex; align-items: center; gap: 0.55rem;
@@ -41,7 +41,7 @@ declare(strict_types=1);
     width: 90px;
     padding: 0.35rem 0.55rem;
     background: var(--bg); color: var(--text);
-    border: 1px solid rgba(255,255,255,0.18);
+    border: 1px solid rgba(0,0,0,0.18);
     border-radius: 5px;
     font-size: 0.95rem; font-weight: 700;
     text-align: right;
@@ -62,7 +62,7 @@ declare(strict_types=1);
     width: 56px;
     padding: 0.22rem 0.4rem;
     background: var(--bg); color: var(--text);
-    border: 1px solid rgba(255,255,255,0.18);
+    border: 1px solid rgba(0,0,0,0.18);
     border-radius: 4px;
     font-size: 0.82rem; font-weight: 700;
     text-align: center;
@@ -74,7 +74,7 @@ declare(strict_types=1);
 
 .goal-row__bar {
     height: 8px; border-radius: 4px;
-    background: rgba(255,255,255,0.07);
+    background: rgba(0,0,0,0.07);
     overflow: hidden;
     position: relative;
 }
@@ -100,8 +100,8 @@ declare(strict_types=1);
 /* ── Měsíční přepínač + bannery ─────────────────────────────────── */
 .month-switch {
     display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(0,0,0,0.03);
+    border: 1px solid rgba(0,0,0,0.08);
     border-radius: 8px;
     padding: 0.55rem 0.75rem;
     margin-bottom: 0.8rem;
@@ -112,7 +112,7 @@ declare(strict_types=1);
 .month-switch select {
     padding: 0.35rem 0.55rem;
     background: var(--bg); color: var(--text);
-    border: 1px solid rgba(255,255,255,0.18);
+    border: 1px solid rgba(0,0,0,0.18);
     border-radius: 5px;
     font-size: 0.9rem; font-weight: 600;
     min-width: 180px;

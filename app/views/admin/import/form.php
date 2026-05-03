@@ -11,11 +11,11 @@ declare(strict_types=1);
 .import-row label { font-size: 0.85rem; color: var(--text); font-weight: 600; }
 
 .import-drop {
-    border: 2px dashed rgba(255,255,255,0.18);
+    border: 2px dashed rgba(0,0,0,0.18);
     border-radius: 10px;
     padding: 1.4rem 1rem;
     text-align: center;
-    background: rgba(255,255,255,0.02);
+    background: rgba(0,0,0,0.02);
     cursor: pointer;
     transition: border-color 0.18s, background 0.18s;
 }
@@ -42,7 +42,7 @@ declare(strict_types=1);
 }
 .import-progress__pct { font-weight: 700; color: var(--accent); }
 .import-progress__bar {
-    height: 16px; background: rgba(255,255,255,0.08);
+    height: 16px; background: rgba(0,0,0,0.08);
     border-radius: 8px; overflow: hidden;
     position: relative;
 }
@@ -153,7 +153,7 @@ declare(strict_types=1);
     </form>
 
     <!-- ── Pokročilé akce: RESET databáze (skryté pod details) ───────── -->
-    <details style="margin-top:2rem;border-top:1px solid rgba(255,255,255,0.08);padding-top:1rem;">
+    <details style="margin-top:2rem;border-top:1px solid rgba(0,0,0,0.08);padding-top:1rem;">
         <summary style="cursor:pointer;font-size:0.82rem;color:#e74c3c;font-weight:600;user-select:none;">
             ⚠ Pokročilé akce — Reset všech kontaktů
         </summary>

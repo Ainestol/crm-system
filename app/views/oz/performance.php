@@ -45,12 +45,12 @@ $barFill = $barMax > 0 ? min(100, (int) round($teamBmsl / $barMax * 100)) : 0;
 .perf-month-select  {
     font-size: 0.8rem; padding: 0.25rem 0.45rem;
     background: var(--bg); color: var(--text);
-    border: 1px solid rgba(255,255,255,0.15); border-radius: 5px;
+    border: 1px solid rgba(0,0,0,0.15); border-radius: 5px;
 }
 
 /* ── Stage progress bar ── */
 .oz-stage-wrap {
-    background: var(--card); border: 1px solid rgba(255,255,255,0.07);
+    background: var(--card); border: 1px solid rgba(0,0,0,0.07);
     border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1.2rem;
 }
 .oz-stage-wrap__title {
@@ -59,7 +59,7 @@ $barFill = $barMax > 0 ? min(100, (int) round($teamBmsl / $barMax * 100)) : 0;
 }
 .oz-stage-bar-outer {
     position: relative; height: 22px;
-    background: rgba(255,255,255,0.07); border-radius: 12px;
+    background: rgba(0,0,0,0.07); border-radius: 12px;
     overflow: visible; margin-bottom: 2rem;
 }
 .oz-stage-bar-fill {
@@ -78,7 +78,7 @@ $barFill = $barMax > 0 ? min(100, (int) round($teamBmsl / $barMax * 100)) : 0;
 .oz-stage-marker {
     position: absolute; top: -4px; bottom: -4px;
     width: 2px; border-radius: 1px;
-    background: rgba(255,255,255,0.25);
+    background: rgba(0,0,0,0.25);
     pointer-events: none;
 }
 .oz-stage-marker--done  { background: rgba(46,204,113,0.7); }
@@ -95,7 +95,7 @@ $barFill = $barMax > 0 ? min(100, (int) round($teamBmsl / $barMax * 100)) : 0;
 .oz-stage-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.4rem; }
 .oz-stage-chip {
     font-size: 0.72rem; padding: 0.2rem 0.65rem; border-radius: 20px;
-    border: 1px solid rgba(255,255,255,0.1);
+    border: 1px solid rgba(0,0,0,0.1);
     color: var(--muted);
 }
 .oz-stage-chip--done {
@@ -112,7 +112,7 @@ $barFill = $barMax > 0 ? min(100, (int) round($teamBmsl / $barMax * 100)) : 0;
 
 /* ── Tabulka OZ ── */
 .perf-table-wrap {
-    background: var(--card); border: 1px solid rgba(255,255,255,0.07);
+    background: var(--card); border: 1px solid rgba(0,0,0,0.07);
     border-radius: 10px; overflow: hidden;
 }
 .perf-table {
@@ -121,19 +121,19 @@ $barFill = $barMax > 0 ? min(100, (int) round($teamBmsl / $barMax * 100)) : 0;
 .perf-table th {
     padding: 0.5rem 0.9rem; text-align: left;
     font-size: 0.67rem; text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--muted); border-bottom: 1px solid rgba(255,255,255,0.07);
+    color: var(--muted); border-bottom: 1px solid rgba(0,0,0,0.07);
     white-space: nowrap;
 }
 .perf-table td {
     padding: 0.55rem 0.9rem;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(0,0,0,0.04);
     vertical-align: middle;
 }
 .perf-table tbody tr:last-child td { border-bottom: none; }
-.perf-table tbody tr:hover td { background: rgba(255,255,255,0.02); }
+.perf-table tbody tr:hover td { background: rgba(0,0,0,0.02); }
 .perf-table__me td { background: rgba(155,89,182,0.06) !important; }
 .perf-table__team td {
-    border-top: 2px solid rgba(255,255,255,0.12);
+    border-top: 2px solid rgba(0,0,0,0.12);
     font-weight: 700; color: var(--text);
 }
 .perf-rank { font-size: 0.7rem; color: var(--muted); }
@@ -146,7 +146,7 @@ $barFill = $barMax > 0 ? min(100, (int) round($teamBmsl / $barMax * 100)) : 0;
 .perf-bar-cell { min-width: 120px; }
 .perf-mini-bar {
     height: 6px; border-radius: 3px;
-    background: rgba(255,255,255,0.07);
+    background: rgba(0,0,0,0.07);
     overflow: hidden;
 }
 .perf-mini-bar__fill {

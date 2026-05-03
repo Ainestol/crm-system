@@ -22,7 +22,7 @@ $czechMonths = ['','Leden','Únor','Březen','Duben','Květen','Červen',
 .stages-month-sel {
     font-size: 0.8rem; padding: 0.25rem 0.45rem;
     background: var(--bg); color: var(--text);
-    border: 1px solid rgba(255,255,255,0.15); border-radius: 5px;
+    border: 1px solid rgba(0,0,0,0.15); border-radius: 5px;
 }
 
 /* Přidat form */
@@ -36,7 +36,7 @@ $czechMonths = ['','Leden','Únor','Březen','Duben','Květen','Červen',
 .stages-add-form__input {
     font-size: 0.82rem; padding: 0.3rem 0.55rem;
     background: var(--bg); color: var(--text);
-    border: 1px solid rgba(255,255,255,0.15); border-radius: 6px;
+    border: 1px solid rgba(0,0,0,0.15); border-radius: 6px;
 }
 .stages-add-form__input:focus { outline: none; border-color: rgba(155,89,182,0.5); }
 
@@ -44,7 +44,7 @@ $czechMonths = ['','Leden','Únor','Březen','Duben','Květen','Červen',
 .stages-list { display: flex; flex-direction: column; gap: 0.5rem; }
 .stages-item {
     display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
-    background: var(--card); border: 1px solid rgba(255,255,255,0.07);
+    background: var(--card); border: 1px solid rgba(0,0,0,0.07);
     border-radius: 8px; padding: 0.6rem 0.9rem;
 }
 .stages-item__num {

@@ -308,7 +308,7 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
             <select id="caller-month-filter" name="month_key"
                     onchange="this.form.submit()"
                     style="background:var(--bg);color:var(--text);
-                           border:1px solid rgba(255,255,255,0.15);border-radius:6px;
+                           border:1px solid rgba(0,0,0,0.15);border-radius:6px;
                            padding:0.25rem 0.55rem;font-size:0.78rem;cursor:pointer;
                            font-family:inherit;">
                 <?php foreach ($tabMonthOptions as $opt) { ?>
@@ -405,7 +405,7 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
 
                 <!-- Můj existující komentář -->
                 <?php if ($myComment !== '') { ?>
-                <div style="background:rgba(255,255,255,0.04);border-radius:5px;
+                <div style="background:rgba(0,0,0,0.04);border-radius:5px;
                             padding:0.3rem 0.55rem;font-size:0.75rem;">
                     <span style="color:var(--muted);font-size:0.65rem;">Můj komentář: </span>
                     <em style="color:var(--text);"><?= crm_h($myComment) ?></em>
@@ -686,7 +686,7 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
 
                                 <?php if ($lastLabel !== '') { ?>
                                     <div style="font-size:0.72rem;color:var(--text);
-                                                border-top:1px dashed rgba(255,255,255,0.08);padding-top:0.25rem;">
+                                                border-top:1px dashed rgba(0,0,0,0.08);padding-top:0.25rem;">
                                         <span style="color:var(--muted);">Naposledy:</span>
                                         <strong style="color:<?= $brColor ?>;"><?= crm_h($lastLabel) ?></strong>
                                         <?php if (is_array($phLast) && !empty($phLast['firma'])) { ?>

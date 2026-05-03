@@ -30,9 +30,9 @@ $totalDuplicateRows = array_sum(array_column($summary, 'total_extra_rows'));
 .dup-tile {
     display: block;
     padding: 1rem 1.2rem;
-    border: 1px solid var(--bo-border, rgba(255,255,255,0.08));
+    border: 1px solid var(--bo-border, rgba(0,0,0,0.08));
     border-radius: 10px;
-    background: var(--bo-surface, rgba(255,255,255,0.02));
+    background: var(--bo-surface, rgba(0,0,0,0.02));
     color: inherit;
     text-decoration: none;
     transition: all 0.15s;
@@ -59,17 +59,17 @@ $totalDuplicateRows = array_sum(array_column($summary, 'total_extra_rows'));
 
 .dup-groups { display: flex; flex-direction: column; gap: 1rem; }
 .dup-group {
-    border: 1px solid var(--bo-border, rgba(255,255,255,0.08));
+    border: 1px solid var(--bo-border, rgba(0,0,0,0.08));
     border-left: 4px solid var(--bo-warning, #f39c12);
     border-radius: 8px;
-    background: var(--bo-surface, rgba(255,255,255,0.02));
+    background: var(--bo-surface, rgba(0,0,0,0.02));
     overflow: hidden;
 }
 .dup-group__header {
     padding: 0.6rem 0.9rem;
     background: rgba(243,156,18,0.06);
     font-size: 0.85rem;
-    border-bottom: 1px solid var(--bo-border, rgba(255,255,255,0.06));
+    border-bottom: 1px solid var(--bo-border, rgba(0,0,0,0.06));
     display: flex;
     gap: 1rem;
     align-items: center;
@@ -79,8 +79,8 @@ $totalDuplicateRows = array_sum(array_column($summary, 'total_extra_rows'));
 .dup-group__count { font-size: 0.72rem; color: var(--bo-warning, #f39c12); padding: 0.15rem 0.6rem; background: rgba(243,156,18,0.15); border-radius: 999px; font-weight: 700; }
 
 .dup-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
-.dup-table th, .dup-table td { padding: 0.4rem 0.6rem; text-align: left; border-bottom: 1px solid var(--bo-border, rgba(255,255,255,0.05)); vertical-align: top; }
-.dup-table th { font-weight: 700; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--bo-text-2, #aaa); background: rgba(255,255,255,0.02); }
+.dup-table th, .dup-table td { padding: 0.4rem 0.6rem; text-align: left; border-bottom: 1px solid var(--bo-border, rgba(0,0,0,0.05)); vertical-align: top; }
+.dup-table th { font-weight: 700; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--bo-text-2, #aaa); background: rgba(0,0,0,0.02); }
 .dup-table tr:last-child td { border-bottom: 0; }
 .dup-table .id-col { font-family: 'Consolas', 'Monaco', monospace; font-weight: 700; }
 .dup-table a { color: var(--brand-primary, #5a6cff); text-decoration: none; }
@@ -91,7 +91,7 @@ $totalDuplicateRows = array_sum(array_column($summary, 'total_extra_rows'));
     font-size: 0.68rem;
     font-weight: 700;
     border-radius: 999px;
-    background: rgba(255,255,255,0.06);
+    background: rgba(0,0,0,0.06);
     color: var(--bo-text-2, #aaa);
 }
 .dup-table .stav-pill--ok { background: rgba(102,187,106,0.15); color: #66bb6a; }

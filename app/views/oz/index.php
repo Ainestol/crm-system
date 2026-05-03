@@ -44,7 +44,7 @@ $totalValid = $totalReceived - $totalFlagged;
 /* Souhrn */
 .oz-summary { display:flex; gap:0.75rem; flex-wrap:wrap; margin-bottom:1.2rem; }
 .oz-scard {
-    background:var(--card); border:1px solid rgba(255,255,255,0.08);
+    background:var(--card); border:1px solid rgba(0,0,0,0.08);
     border-radius:10px; padding:0.65rem 1rem; flex:1; min-width:110px;
 }
 .oz-scard__val { font-size:1.45rem; font-weight:700; line-height:1; }
@@ -55,7 +55,7 @@ $totalValid = $totalReceived - $totalFlagged;
 
 /* Region karta */
 .oz-region-card {
-    background:var(--card); border:1px solid rgba(255,255,255,0.07);
+    background:var(--card); border:1px solid rgba(0,0,0,0.07);
     border-radius:10px; overflow:hidden; margin-bottom:0.85rem;
 }
 .oz-region-card--no-target { opacity:0.75; }
@@ -64,7 +64,7 @@ $totalValid = $totalReceived - $totalFlagged;
     padding:0.65rem 1rem; gap:0.5rem; flex-wrap:wrap; cursor:pointer;
     user-select:none;
 }
-.oz-region-top:hover { background:rgba(255,255,255,0.02); }
+.oz-region-top:hover { background:rgba(0,0,0,0.02); }
 .oz-region-name { font-weight:700; font-size:0.9rem; }
 .oz-region-right { display:flex; align-items:center; gap:0.7rem; flex-wrap:wrap; }
 .oz-region-count { font-size:0.88rem; font-weight:600; }
@@ -74,15 +74,15 @@ $totalValid = $totalReceived - $totalFlagged;
 .oz-region-count--empty { color:var(--muted); }
 .oz-region-toggle { font-size:0.72rem; color:var(--muted); }
 
-.oz-bar-track { height:6px; background:rgba(255,255,255,0.08); margin:0 1rem 0.7rem; border-radius:3px; }
+.oz-bar-track { height:6px; background:rgba(0,0,0,0.08); margin:0 1rem 0.7rem; border-radius:3px; }
 .oz-bar-fill { height:100%; border-radius:3px; transition:width 0.5s ease; }
 .oz-bar-fill--ok    { background:linear-gradient(90deg,#2ecc71,#27ae60); }
 .oz-bar-fill--warn  { background:linear-gradient(90deg,#f0a030,#e67e22); }
 .oz-bar-fill--over  { background:linear-gradient(90deg,#3498db,#2980b9); }
-.oz-bar-fill--empty { background:rgba(255,255,255,0.15); }
+.oz-bar-fill--empty { background:rgba(0,0,0,0.15); }
 
 /* Kontakty v regionu */
-.oz-contact-list { display:none; border-top:1px solid rgba(255,255,255,0.06); }
+.oz-contact-list { display:none; border-top:1px solid rgba(0,0,0,0.06); }
 .oz-contact-list.open { display:block; }
 
 .oz-contact-table {
@@ -90,12 +90,12 @@ $totalValid = $totalReceived - $totalFlagged;
 }
 .oz-contact-table th,
 .oz-contact-table td {
-    padding:0.3rem 1rem; border-bottom:1px solid rgba(255,255,255,0.04);
+    padding:0.3rem 1rem; border-bottom:1px solid rgba(0,0,0,0.04);
     text-align:left; vertical-align:top;
 }
 .oz-contact-table th {
     font-size:0.68rem; text-transform:uppercase; letter-spacing:0.05em;
-    color:var(--muted); background:rgba(255,255,255,0.02);
+    color:var(--muted); background:rgba(0,0,0,0.02);
     font-weight:600; padding:0.4rem 1rem;
 }
 .oz-contact-table tr:last-child td { border-bottom:none; }
@@ -112,7 +112,7 @@ $totalValid = $totalReceived - $totalFlagged;
 .oz-flag-input {
     font-size:0.72rem; padding:0.2rem 0.4rem;
     background:var(--bg); color:var(--text);
-    border:1px solid rgba(255,255,255,0.15); border-radius:4px;
+    border:1px solid rgba(0,0,0,0.15); border-radius:4px;
     width:180px;
 }
 .oz-flag-input:focus { outline:none; border-color:#e74c3c; }
@@ -125,11 +125,11 @@ $totalValid = $totalReceived - $totalFlagged;
 .btn-flag:hover { background:rgba(231,76,60,0.28); }
 .btn-unflag {
     font-size:0.7rem; padding:0.15rem 0.45rem;
-    background:rgba(255,255,255,0.06); color:var(--muted);
-    border:1px solid rgba(255,255,255,0.12); border-radius:4px;
+    background:rgba(0,0,0,0.06); color:var(--muted);
+    border:1px solid rgba(0,0,0,0.12); border-radius:4px;
     cursor:pointer;
 }
-.btn-unflag:hover { background:rgba(255,255,255,0.12); }
+.btn-unflag:hover { background:rgba(0,0,0,0.12); }
 .oz-flag-reason-text { font-size:0.7rem; color:#e74c3c; font-style:italic; }
 
 .oz-no-contacts { color:var(--muted); padding:0.6rem 1rem; font-size:0.78rem; }
@@ -138,7 +138,7 @@ $totalValid = $totalReceived - $totalFlagged;
 .oz-toolbar {
     display:flex; align-items:center; gap:0.7rem;
     flex-wrap:wrap; margin-bottom:1.2rem;
-    padding-bottom:0.85rem; border-bottom:1px solid rgba(255,255,255,0.08);
+    padding-bottom:0.85rem; border-bottom:1px solid rgba(0,0,0,0.08);
 }
 .oz-toolbar__month {
     display:flex; align-items:center; gap:0.4rem;
@@ -156,7 +156,7 @@ $totalValid = $totalReceived - $totalFlagged;
 /* Sbalitelný stats panel */
 .oz-stats-collapse {
     margin:0 0 1rem;
-    border:1px solid rgba(255,255,255,0.08);
+    border:1px solid rgba(0,0,0,0.08);
     border-radius:8px;
     overflow:hidden;
 }
@@ -178,14 +178,14 @@ $totalValid = $totalReceived - $totalFlagged;
     text-align:right;
 }
 .oz-stats-collapse > summary::-webkit-details-marker { display:none; }
-.oz-stats-collapse > summary:hover { background:rgba(255,255,255,0.04); color:var(--text); }
+.oz-stats-collapse > summary:hover { background:rgba(0,0,0,0.04); color:var(--text); }
 .oz-stats-collapse > summary:before {
     content:"▸"; transition: transform 0.15s;
     grid-column:1; justify-self:start;
     color:var(--muted);
 }
 .oz-stats-collapse[open] > summary:before { content:"▾"; }
-.oz-stats-collapse[open] > summary { border-bottom:1px solid rgba(255,255,255,0.06); color:var(--text); }
+.oz-stats-collapse[open] > summary { border-bottom:1px solid rgba(0,0,0,0.06); color:var(--text); }
 .oz-stats-collapse__inline {
     font-size:0.78rem; color:var(--muted); font-weight:500;
 }
@@ -387,7 +387,7 @@ $totalValid = $totalReceived - $totalFlagged;
                             <?= $pmPct ?> %
                         </span>
                     </div>
-                    <div style="height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;">
+                    <div style="height:6px;background:rgba(0,0,0,0.08);border-radius:3px;overflow:hidden;">
                         <div style="height:100%;width:<?= $pmPct ?>%;
                                     background:<?= $pmDone ? '#2ecc71' : 'linear-gradient(90deg, #f1c40f, #f39c12)' ?>;
                                     transition:width 0.5s;"></div>
@@ -435,7 +435,7 @@ $totalValid = $totalReceived - $totalFlagged;
                         </span>
                     </div>
                     <?php if ($isNext || $stDone1) { ?>
-                    <div style="height:5px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;">
+                    <div style="height:5px;background:rgba(0,0,0,0.08);border-radius:3px;overflow:hidden;">
                         <div style="height:100%;width:<?= $stPct ?>%;
                                     background:<?= $stDone1 ? '#2ecc71' : '#3498db' ?>;
                                     transition:width 0.5s;"></div>

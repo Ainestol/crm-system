@@ -26,7 +26,7 @@ foreach ($ozUsers as $u) {
 .ms-sel {
     font-size:.8rem; padding:.25rem .45rem;
     background:var(--bg); color:var(--text);
-    border:1px solid rgba(255,255,255,.15); border-radius:5px;
+    border:1px solid rgba(0,0,0,.15); border-radius:5px;
 }
 
 .ms-add-form {
@@ -39,14 +39,14 @@ foreach ($ozUsers as $u) {
 .ms-add-form__input {
     font-size:.82rem; padding:.3rem .55rem;
     background:var(--bg); color:var(--text);
-    border:1px solid rgba(255,255,255,.15); border-radius:6px;
+    border:1px solid rgba(0,0,0,.15); border-radius:6px;
 }
 .ms-add-form__input:focus { outline:none; border-color:rgba(155,89,182,.5); }
 
 .ms-list { display:flex; flex-direction:column; gap:.5rem; }
 .ms-item {
     display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;
-    background:var(--card); border:1px solid rgba(255,255,255,.07);
+    background:var(--card); border:1px solid rgba(0,0,0,.07);
     border-radius:8px; padding:.6rem .9rem;
 }
 .ms-item__label  { font-size:.85rem; font-weight:600; flex:1; }

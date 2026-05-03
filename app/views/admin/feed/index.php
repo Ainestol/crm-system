@@ -24,8 +24,8 @@
 .feed-toolbar {
     display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center;
     padding: 0.6rem 0.85rem;
-    background: var(--bo-surface, rgba(255,255,255,0.02));
-    border: 1px solid var(--bo-border, rgba(255,255,255,0.08));
+    background: var(--bo-surface, rgba(0,0,0,0.02));
+    border: 1px solid var(--bo-border, rgba(0,0,0,0.08));
     border-radius: 8px;
     margin-bottom: 0.8rem;
 }
@@ -53,12 +53,12 @@
     background: rgba(102,187,106,0.15);
     color: var(--bo-success, #66bb6a);
 }
-.feed-status--paused { background: rgba(255,255,255,0.06); color: var(--bo-text-3, #888); }
+.feed-status--paused { background: rgba(0,0,0,0.06); color: var(--bo-text-3, #888); }
 .feed-status--loading { background: rgba(90,108,255,0.15); color: var(--brand-primary, #5a6cff); }
 
 .feed-list {
-    background: var(--bo-surface, rgba(255,255,255,0.02));
-    border: 1px solid var(--bo-border, rgba(255,255,255,0.08));
+    background: var(--bo-surface, rgba(0,0,0,0.02));
+    border: 1px solid var(--bo-border, rgba(0,0,0,0.08));
     border-left: 4px solid var(--brand-primary, #5a6cff);
     border-radius: 8px;
     overflow: hidden;
@@ -72,10 +72,10 @@
 
 .feed-item {
     padding: 0.85rem 1.1rem;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(0,0,0,0.04);
     transition: background 0.2s;
 }
-.feed-item:hover { background: rgba(255,255,255,0.03); }
+.feed-item:hover { background: rgba(0,0,0,0.03); }
 .feed-item:last-child { border-bottom: 0; }
 .feed-item--new { animation: feed-flash 2.8s ease-out; }
 @keyframes feed-flash {
@@ -111,7 +111,7 @@
     padding: 0.1rem 0.55rem;
     font-size: 0.7rem; font-weight: 700;
     border-radius: 999px;
-    background: rgba(255,255,255,0.07);
+    background: rgba(0,0,0,0.07);
     color: var(--bo-text-2, #aaa);
 }
 .feed-stav--ok    { background: rgba(102,187,106,0.18); color: #66bb6a; }

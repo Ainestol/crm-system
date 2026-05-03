@@ -32,7 +32,7 @@ $totalPayout   = $totalValid * $rewardPerWin;
 /* Souhrnné karty */
 .ozd-summary { display:flex; gap:0.75rem; flex-wrap:wrap; margin-bottom:1.4rem; }
 .ozd-scard {
-    background:var(--card); border:1px solid rgba(255,255,255,0.08);
+    background:var(--card); border:1px solid rgba(0,0,0,0.08);
     border-radius:10px; padding:0.65rem 1rem; flex:1; min-width:110px;
 }
 .ozd-scard__val { font-size:1.4rem; font-weight:700; line-height:1; color:var(--text); }
@@ -46,7 +46,7 @@ $totalPayout   = $totalValid * $rewardPerWin;
 .ozd-caller__header {
     display:flex; align-items:center; justify-content:space-between;
     flex-wrap:wrap; gap:0.5rem;
-    background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+    background:rgba(0,0,0,0.04); border:1px solid rgba(0,0,0,0.08);
     border-radius:8px 8px 0 0; padding:0.6rem 0.9rem;
     font-weight:700;
 }
@@ -63,11 +63,11 @@ $totalPayout   = $totalValid * $rewardPerWin;
 }
 
 /* Region skupina */
-.ozd-region { border:1px solid rgba(255,255,255,0.06); border-top:none; }
+.ozd-region { border:1px solid rgba(0,0,0,0.06); border-top:none; }
 .ozd-region:last-child { border-radius:0 0 8px 8px; }
 .ozd-region__header {
     display:flex; align-items:center; justify-content:space-between;
-    background:rgba(255,255,255,0.025); padding:0.35rem 0.9rem;
+    background:rgba(0,0,0,0.025); padding:0.35rem 0.9rem;
     font-size:0.72rem; font-weight:700; text-transform:uppercase;
     letter-spacing:0.05em; color:var(--muted);
 }
@@ -79,12 +79,12 @@ $totalPayout   = $totalValid * $rewardPerWin;
 }
 .ozd-contacts-table th,
 .ozd-contacts-table td {
-    padding:0.3rem 0.9rem; border-bottom:1px solid rgba(255,255,255,0.04);
+    padding:0.3rem 0.9rem; border-bottom:1px solid rgba(0,0,0,0.04);
     text-align:left; vertical-align:middle;
 }
 .ozd-contacts-table th { color:var(--muted); font-weight:600; font-size:0.7rem; }
 .ozd-contacts-table tr:last-child td { border-bottom:none; }
-.ozd-contacts-table tr:hover td { background:rgba(255,255,255,0.02); }
+.ozd-contacts-table tr:hover td { background:rgba(0,0,0,0.02); }
 
 .ozd-flag-badge {
     display:inline-block; font-size:0.65rem; padding:0.1rem 0.4rem;
@@ -104,13 +104,13 @@ $totalPayout   = $totalValid * $rewardPerWin;
 }
 .ozd-payout-table th,
 .ozd-payout-table td {
-    padding:0.4rem 0.7rem; border:1px solid rgba(255,255,255,0.07);
+    padding:0.4rem 0.7rem; border:1px solid rgba(0,0,0,0.07);
     text-align:center;
 }
-.ozd-payout-table th { background:rgba(255,255,255,0.05); font-weight:700; font-size:0.75rem; }
+.ozd-payout-table th { background:rgba(0,0,0,0.05); font-weight:700; font-size:0.75rem; }
 .ozd-payout-table th:first-child,
 .ozd-payout-table td:first-child { text-align:left; }
-.ozd-payout-table tfoot td { font-weight:700; background:rgba(255,255,255,0.04); }
+.ozd-payout-table tfoot td { font-weight:700; background:rgba(0,0,0,0.04); }
 .ozd-payout-table .green { color:#2ecc71; font-weight:700; }
 .ozd-payout-table .red   { color:#e74c3c; }
 .ozd-payout-table .payout{ color:#3498db; font-weight:700; }

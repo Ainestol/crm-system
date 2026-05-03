@@ -17,8 +17,8 @@ $base    = (float) ($reward['amount_czk'] ?? 0);
 $rate1   = $base * (1 + (float)$mg['bonus1_pct'] / 100);
 $rate2   = $base * (1 + (float)$mg['bonus1_pct'] / 100 + (float)$mg['bonus2_pct'] / 100);
 
-$inputStyle = 'width:100%;padding:0.5rem 0.7rem;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:#121a26;color:var(--text);box-sizing:border-box;';
-$fsStyle    = 'border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:1rem 1.2rem;margin-bottom:1.2rem;';
+$inputStyle = 'width:100%;padding:0.5rem 0.7rem;border-radius:7px;border:1px solid rgba(0,0,0,0.15);background:#ffffff;color:var(--text);box-sizing:border-box;';
+$fsStyle    = 'border:1px solid rgba(0,0,0,0.1);border-radius:8px;padding:1rem 1.2rem;margin-bottom:1.2rem;';
 $legStyle   = 'font-size:0.85rem;color:var(--muted);padding:0 0.4rem;';
 ?>
 <section class="card">

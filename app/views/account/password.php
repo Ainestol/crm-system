@@ -35,7 +35,7 @@ declare(strict_types=1);
             <input type="password" name="current_password" required autocomplete="current-password"
                    style="padding:0.55rem 0.7rem;font-size:0.9rem;
                           background:var(--bg);color:var(--text);
-                          border:1px solid rgba(255,255,255,0.18);border-radius:6px;">
+                          border:1px solid rgba(0,0,0,0.18);border-radius:6px;">
         </label>
 
         <label style="display:flex;flex-direction:column;gap:0.3rem;font-size:0.85rem;">
@@ -43,7 +43,7 @@ declare(strict_types=1);
             <input type="password" name="new_password" required minlength="10" autocomplete="new-password"
                    style="padding:0.55rem 0.7rem;font-size:0.9rem;
                           background:var(--bg);color:var(--text);
-                          border:1px solid rgba(255,255,255,0.18);border-radius:6px;">
+                          border:1px solid rgba(0,0,0,0.18);border-radius:6px;">
             <small style="font-size:0.72rem;color:var(--muted);">
                 Min. 10 znaků, alespoň jedno písmeno a jedna číslice.
             </small>
@@ -54,7 +54,7 @@ declare(strict_types=1);
             <input type="password" name="new_password2" required minlength="10" autocomplete="new-password"
                    style="padding:0.55rem 0.7rem;font-size:0.9rem;
                           background:var(--bg);color:var(--text);
-                          border:1px solid rgba(255,255,255,0.18);border-radius:6px;">
+                          border:1px solid rgba(0,0,0,0.18);border-radius:6px;">
         </label>
 
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.3rem;">
