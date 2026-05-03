@@ -22,14 +22,14 @@
   --color-accent:               #e8920a;
   --color-accent-dark:          #c97d09;
 
-  /* ── POZADÍ ── */
-  --color-page-bg:              #eef1f6;
+  /* ── POZADÍ (page-bg trochu tmavší pro lepší kontrast s bílými kartami) ── */
+  --color-page-bg:              #e1e7ef;
   --color-card-bg:              #ffffff;
-  --color-surface:              #f5f7fa;
+  --color-surface:              #f0f3f8;
 
-  /* ── BORDERY ── */
-  --color-border:               #dde3ec;
-  --color-border-strong:        #c4cdd9;
+  /* ── BORDERY (posíleno pro lepší kontrast na light pozadí) ── */
+  --color-border:               #c4cdd9;
+  --color-border-strong:        #94a3b8;
 
   /* ── TEXT ── */
   --color-text:                 #1f2937;
@@ -726,7 +726,7 @@ input[type="submit"] {
 .region-box {
   margin-top: 1.5rem;
   padding-top: 1.25rem;
-  border-top: 1px solid rgba(255,255,255,0.08);
+  border-top: 1px solid rgba(0,0,0,0.08);
 }
 .region-box h2 { margin: 0 0 0.75rem; font-size: 1.05rem; color: var(--muted); font-weight: 600; }
 .region-form { margin-top: 0.5rem; }
@@ -777,21 +777,21 @@ input[type="submit"] {
 .anniv-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 .anniv-table th, .anniv-table td {
     padding: 0.4rem 0.55rem; text-align: left;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
+    border-bottom: 1px solid rgba(0,0,0,0.05);
     vertical-align: middle;
 }
 .anniv-table th {
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
     color: var(--muted); font-weight: 700;
-    background: rgba(255,255,255,0.02);
+    background: rgba(0,0,0,0.02);
 }
-.anniv-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+.anniv-table tbody tr:hover { background: rgba(0,0,0,0.03); }
 .anniv-row--urgent { background: rgba(231,76,60,0.06); }
 .anniv-row--soon   { background: rgba(243,156,18,0.05); }
 .anniv-days-pill {
     display: inline-block;
     padding: 0.1rem 0.5rem; font-size: 0.68rem; font-weight: 700;
-    border-radius: 999px; background: rgba(255,255,255,0.07);
+    border-radius: 999px; background: rgba(0,0,0,0.07);
     color: var(--muted);
 }
 .anniv-days-pill--urgent { background: rgba(231,76,60,0.18); color: #e74c3c; }
@@ -826,7 +826,7 @@ input[type="submit"] {
   color: var(--muted);
   padding: 0.25rem 0 0.25rem 0.7rem;
   margin-bottom: 0.55rem;
-  border-left: 3px solid rgba(255,255,255,0.18);
+  border-left: 3px solid rgba(0,0,0,0.18);
 }
 .dash-section__title--admin { color: var(--accent); border-left-color: rgba(61,139,253,0.55); }
 .dash-section__title--clean { color: #f0a030;       border-left-color: rgba(240,160,48,0.55); }
@@ -842,7 +842,7 @@ input[type="submit"] {
   flex: 1; min-width: 140px; max-width: 220px;
   padding: 0.8rem 1rem;
   background: var(--card);
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid rgba(0,0,0,0.08);
   border-radius: 12px;
   text-decoration: none; color: var(--text);
   transition: border-color 0.18s, box-shadow 0.18s, transform 0.12s;
@@ -866,16 +866,16 @@ input[type="submit"] {
 
 .table-wrap { overflow-x: auto; margin-top: 0.5rem; }
 .table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-.table th, .table td { padding: 0.5rem 0.45rem; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: left; vertical-align: top; }
+.table th, .table td { padding: 0.5rem 0.45rem; border-bottom: 1px solid rgba(0,0,0,0.08); text-align: left; vertical-align: top; }
 .table th { color: var(--muted); font-weight: 600; }
-.subrow td { background: rgba(0,0,0,0.15); border-bottom: 1px solid rgba(255,255,255,0.06); }
+.subrow td { background: rgba(0,0,0,0.15); border-bottom: 1px solid rgba(0,0,0,0.06); }
 .deactivate-form { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; margin-top: 0.25rem; }
 .inline-label { font-size: 0.85rem; color: var(--muted); display: inline-flex; gap: 0.35rem; align-items: center; }
 .inline-label select { min-width: 140px; }
 .inline-form { display: inline; margin-left: 0.35rem; }
 .link-btn { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; font: inherit; }
 .btn-danger { background: #b23a3a; }
-.fieldset { border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 0.75rem 1rem; margin: 0.5rem 0; }
+.fieldset { border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; padding: 0.75rem 1rem; margin: 0.5rem 0; }
 .fieldset legend { padding: 0 0.35rem; color: var(--muted); font-size: 0.85rem; }
 .check { display: inline-flex; align-items: center; gap: 0.35rem; margin-right: 0.75rem; font-size: 0.9rem; }
 .small-list { margin: 0.5rem 0 1rem 1.25rem; color: var(--muted); font-size: 0.9rem; }
@@ -899,7 +899,7 @@ textarea { width: 100%; max-width: 560px; padding: 0.55rem 0.65rem; border-radiu
 }
 
 /* ── Taby ── */
-.tabs { display: flex; gap: 0.1rem; margin: 1rem 0 0.5rem; border-bottom: 2px solid rgba(255,255,255,0.1); }
+.tabs { display: flex; gap: 0.1rem; margin: 1rem 0 0.5rem; border-bottom: 2px solid rgba(0,0,0,0.1); }
 
 /*
    Tab UX hierarchy:
@@ -926,18 +926,18 @@ textarea { width: 100%; max-width: 560px; padding: 0.55rem 0.65rem; border-radiu
 .tab:hover {
   color: var(--text);
   opacity: 0.92;
-  background: rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.04);
 }
 .tab--active {
   color: var(--accent);
   border-bottom-color: var(--accent);
-  background: rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.06);
   opacity: 1;
   font-weight: 700;
 }
 .tab--active:hover {
   /* Aktivní tab hover — jen jemné zvýraznění bg, jinak už je 100 % výrazný. */
-  background: rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.08);
 }
 .tab--callback.tab--active { color: #f0a030; border-bottom-color: #f0a030; }
 
@@ -948,7 +948,7 @@ textarea { width: 100%; max-width: 560px; padding: 0.55rem 0.65rem; border-radiu
 */
 .badge {
   font-size: 0.75rem;
-  background: rgba(255,255,255,0.1);
+  background: rgba(0,0,0,0.1);
   padding: 0.1rem 0.45rem;
   border-radius: 10px;
   margin-left: 0.3rem;
@@ -972,8 +972,8 @@ textarea { width: 100%; max-width: 560px; padding: 0.55rem 0.65rem; border-radiu
   gap: 1rem;
   padding: 0.75rem 1rem;
   border-radius: 8px;
-  border-left: 4px solid rgba(255,255,255,0.1);
-  background: rgba(255,255,255,0.03);
+  border-left: 4px solid rgba(0,0,0,0.1);
+  background: rgba(0,0,0,0.03);
   /* UX hierarchy: ne-aktivní řádky šeptají (opacity 0.55).
      1. řádek (anebo klik-aktivovaný) je dominantní (.contact-row--active). */
   opacity: 0.55;
@@ -981,7 +981,7 @@ textarea { width: 100%; max-width: 560px; padding: 0.55rem 0.65rem; border-radiu
   transition: opacity 0.18s, background 0.15s, border-color 0.15s, outline-color 0.18s, box-shadow 0.18s, transform 0.18s;
 }
 .contact-row:hover {
-  background: rgba(255,255,255,0.05);
+  background: rgba(0,0,0,0.05);
   opacity: 0.85;
   cursor: pointer;
 }
@@ -1061,7 +1061,7 @@ textarea { width: 100%; max-width: 560px; padding: 0.55rem 0.65rem; border-radiu
 .callback-fields, .sales-fields {
   display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center;
   padding: 0.5rem;
-  background: rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.04);
   border-radius: 6px;
   width: 100%;
 }
@@ -1123,11 +1123,11 @@ textarea { width: 100%; max-width: 560px; padding: 0.55rem 0.65rem; border-radiu
   font-size: 0.78rem;
   font-weight: 600;
   cursor: pointer;
-  background: rgba(255,255,255,0.1);
+  background: rgba(0,0,0,0.1);
   color: var(--text);
   transition: background 0.15s;
 }
-.btn-loss-sub:hover     { background: rgba(255,255,255,0.18); }
+.btn-loss-sub:hover     { background: rgba(0,0,0,0.18); }
 .btn-loss-izolace       { background: rgba(155,89,182,0.3); color: #c39bd3; }
 .btn-loss-izolace:hover { background: rgba(155,89,182,0.5); }
 .btn-loss-chybny        { background: rgba(127,140,141,0.3); color: #aab7b8; }
@@ -1153,14 +1153,14 @@ textarea { width: 100%; max-width: 560px; padding: 0.55rem 0.65rem; border-radiu
     border-left: 3px solid rgba(231,76,60,0.35);
 }
 /* Loss menu – rejection reason dropdown */
-.input-rejection        { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.15);
+.input-rejection        { background: rgba(0,0,0,0.07); border: 1px solid rgba(0,0,0,0.15);
                           color: var(--text); padding: 0.3rem 0.5rem; border-radius: 6px;
                           font-size: 0.85rem; margin: 0.4rem 0; width: 100%; }
-/* Native select option – čitelné i v tmavém módu */
-select option           { background: #1a2332; color: var(--text); }
+/* Native select option – čitelné v light tématu */
+select option           { background: #ffffff; color: var(--color-text); }
 select option:hover,
 select option:focus,
-select option:checked   { background: #2a3a55; }
+select option:checked   { background: var(--color-surface); color: var(--color-text); }
 .loss-btn-row           { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.3rem; }
 /* Nedovoláno info na kartě */
 .contact-nedovolano-count { font-size: 0.8rem; color: #e67e22; margin-top: 0.2rem; }
@@ -1251,8 +1251,8 @@ select option:checked   { background: #2a3a55; }
 .progress-panel {
   flex: 1 1 260px;
   padding: 0.6rem 0.85rem;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(0,0,0,0.04);
+  border: 1px solid rgba(0,0,0,0.1);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
@@ -1275,7 +1275,7 @@ select option:checked   { background: #2a3a55; }
 .progress-track  {
   position: relative;
   height: 12px;
-  background: rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.08);
   border-radius: 6px;
   overflow: visible;
 }
@@ -1336,8 +1336,8 @@ select option:checked   { background: #2a3a55; }
 }
 .month-tier--active {
   color: var(--text);
-  background: rgba(255,255,255,0.06);
-  border-color: rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.06);
+  border-color: rgba(0,0,0,0.12);
   font-weight: 600;
 }
 .month-tier--done {
@@ -1389,7 +1389,7 @@ select option:checked   { background: #2a3a55; }
   line-height: 1.4;
 }
 .btn-inline-save   { background: #2ecc71; color: #fff; }
-.btn-inline-cancel { background: rgba(255,255,255,0.1); color: var(--muted); }
+.btn-inline-cancel { background: rgba(0,0,0,0.1); color: var(--muted); }
 
 /* ── Kalendář callbacků ── */
 .cal-nav {
@@ -1399,11 +1399,11 @@ select option:checked   { background: #2a3a55; }
 .cal-nav-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; border-radius: 8px;
-  background: rgba(255,255,255,0.07); color: var(--text);
+  background: rgba(0,0,0,0.07); color: var(--text);
   text-decoration: none; font-size: 1.3rem; font-weight: 700;
   transition: background 0.15s;
 }
-.cal-nav-btn:hover { background: rgba(255,255,255,0.15); }
+.cal-nav-btn:hover { background: rgba(0,0,0,0.15); }
 .cal-month-label { font-size: 1.1rem; font-weight: 700; min-width: 160px; text-align: center; }
 
 .cal-grid {
@@ -1416,8 +1416,8 @@ select option:checked   { background: #2a3a55; }
 }
 .cal-cell {
   min-height: 52px; border-radius: 7px;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.03);
+  border: 1px solid rgba(0,0,0,0.06);
   display: flex; flex-direction: column;
   align-items: center; justify-content: flex-start;
   padding: 0.35rem 0.25rem; position: relative;
@@ -1451,7 +1451,7 @@ select option:checked   { background: #2a3a55; }
 .cal-cb-item {
   display: flex; align-items: center; gap: 0.75rem;
   padding: 0.55rem 0.75rem; border-radius: 8px;
-  background: rgba(255,255,255,0.03); border-left: 3px solid #f0a030;
+  background: rgba(0,0,0,0.03); border-left: 3px solid #f0a030;
 }
 .cal-cb-item--urgent { border-left-color: #e74c3c; background: rgba(231,76,60,0.08); animation: pulse-border 1.5s infinite; }
 .cal-cb-time { text-align: center; min-width: 40px; }
@@ -1463,7 +1463,7 @@ select option:checked   { background: #2a3a55; }
 
 /* ── Čistička ── */
 .cist-stats { display:flex; gap:0.75rem; flex-wrap:wrap; margin:0.75rem 0; }
-.cist-stat-box { background:rgba(255,255,255,0.05); border-radius:8px;
+.cist-stat-box { background:rgba(0,0,0,0.05); border-radius:8px;
                  padding:0.6rem 1rem; text-align:center; min-width:90px; }
 .cist-stat-num  { display:block; font-size:1.6rem; font-weight:700; }
 .cist-stat-label{ display:block; font-size:0.75rem; color:var(--muted); margin-top:0.1rem; }
@@ -1474,15 +1474,15 @@ select option:checked   { background: #2a3a55; }
 /* Region filtr */
 .cist-region-filter { display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;
                       margin:1.1rem 0 0; padding:0.7rem 0.9rem;
-                      background:rgba(255,255,255,0.04); border-radius:10px;
-                      border:1px solid rgba(255,255,255,0.08); }
+                      background:rgba(0,0,0,0.04); border-radius:10px;
+                      border:1px solid rgba(0,0,0,0.08); }
 .cist-region-label  { font-size:0.8rem; color:var(--muted); font-weight:600;
                       text-transform:uppercase; letter-spacing:0.05em; margin-right:0.2rem; }
 .cist-region-btn    { display:inline-block; padding:0.45rem 1.1rem; border-radius:20px;
                       font-size:0.88rem; font-weight:600; cursor:pointer; text-decoration:none;
-                      color:var(--text); background:rgba(255,255,255,0.08);
+                      color:var(--text); background:rgba(0,0,0,0.08);
                       border:2px solid transparent; transition:all 0.18s; white-space:nowrap; }
-.cist-region-btn:hover { background:rgba(255,255,255,0.14); border-color:rgba(255,255,255,0.2); }
+.cist-region-btn:hover { background:rgba(0,0,0,0.14); border-color:rgba(0,0,0,0.2); }
 .cist-region-btn--active { background:var(--accent); color:#fff;
                             border-color:var(--accent); box-shadow:0 0 12px rgba(var(--accent-rgb,61,139,253),0.4); }
 .cist-region-cnt { font-size:0.72rem; font-weight:700; color:#2ecc71;
@@ -1490,27 +1490,27 @@ select option:checked   { background: #2a3a55; }
 /* Na záložce K ověření – modrá barva počtu kontaktů */
 .cist-region-cnt--new { color: var(--accent); }
 .cist-region-btn--active .cist-region-cnt,
-.cist-region-btn--active .cist-region-cnt--new { color:rgba(255,255,255,0.85); }
+.cist-region-btn--active .cist-region-cnt--new { color:rgba(0,0,0,0.85); }
 /* Topbar (info + paginace nahoře) */
 .cist-topbar { display:flex; align-items:center; justify-content:space-between;
                flex-wrap:wrap; gap:0.5rem; margin:0.6rem 0 0.3rem;
-               padding:0.5rem 0.7rem; background:rgba(255,255,255,0.03); border-radius:8px; }
+               padding:0.5rem 0.7rem; background:rgba(0,0,0,0.03); border-radius:8px; }
 /* Paginace s čísly stránek */
 .cist-page-btn { display:inline-flex; align-items:center; justify-content:center;
                  min-width:2rem; height:2rem; padding:0 0.35rem; border-radius:6px;
                  font-size:0.85rem; font-weight:600; cursor:pointer; text-decoration:none;
-                 color:var(--text); background:rgba(255,255,255,0.08);
+                 color:var(--text); background:rgba(0,0,0,0.08);
                  transition:background 0.15s; }
-.cist-page-btn:hover    { background:rgba(255,255,255,0.18); }
+.cist-page-btn:hover    { background:rgba(0,0,0,0.18); }
 .cist-page-current      { background:var(--accent) !important; color:#fff; cursor:default; }
 .cist-page-disabled     { opacity:0.3; cursor:default; background:none; }
 .cist-page-dots         { color:var(--muted); font-size:0.85rem; padding:0 0.15rem; }
 .cist-bulk-bar { display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;
-                 background:rgba(255,255,255,0.04); border-radius:8px;
+                 background:rgba(0,0,0,0.04); border-radius:8px;
                  padding:0.6rem 0.8rem; margin:0.75rem 0 0.4rem; }
 .cist-list { display:flex; flex-direction:column; gap:0.35rem; margin-top:0.4rem; }
 .cist-row  { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap;
-             gap:0.5rem; background:rgba(255,255,255,0.04); border-radius:8px;
+             gap:0.5rem; background:rgba(0,0,0,0.04); border-radius:8px;
              padding:0.55rem 0.85rem; border-left:3px solid transparent;
              opacity:0.55;                                  /* outdrženo — neaktivní řádek */
              transition: opacity 0.18s, transform 0.18s, box-shadow 0.18s;
@@ -1528,8 +1528,8 @@ select option:checked   { background: #2a3a55; }
     box-shadow: 0 4px 14px rgba(0,0,0,0.35);
 }
 /* Krátký flash po kliknutí (vizuální feedback) */
-@keyframes cist-flash-green { 0%,100%{background:rgba(255,255,255,0.04);} 50%{background:rgba(46,204,113,0.35);} }
-@keyframes cist-flash-red   { 0%,100%{background:rgba(255,255,255,0.04);} 50%{background:rgba(231,76,60,0.35);} }
+@keyframes cist-flash-green { 0%,100%{background:rgba(0,0,0,0.04);} 50%{background:rgba(46,204,113,0.35);} }
+@keyframes cist-flash-red   { 0%,100%{background:rgba(0,0,0,0.04);} 50%{background:rgba(231,76,60,0.35);} }
 .cist-row--flash-ok  { animation: cist-flash-green 0.45s ease-out; }
 .cist-row--flash-vf  { animation: cist-flash-red 0.45s ease-out; }
 .cist-info  { display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; flex:1; }
@@ -1541,7 +1541,7 @@ select option:checked   { background: #2a3a55; }
 .cist-kbd-hint {
     position: absolute; top: -7px; right: -7px;
     background: var(--bg); color: var(--muted);
-    border: 1px solid rgba(255,255,255,0.18); border-radius: 4px;
+    border: 1px solid rgba(0,0,0,0.18); border-radius: 4px;
     font-size: 0.6rem; font-weight: 700; padding: 0.05rem 0.32rem;
     line-height: 1; pointer-events: none;
 }
@@ -1571,8 +1571,8 @@ select option:checked   { background: #2a3a55; }
     gap: 0.4rem;
 }
 .cist-goal {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
+    background: rgba(0,0,0,0.03);
+    border: 1px solid rgba(0,0,0,0.06);
     border-radius: 6px;
     padding: 0.4rem 0.6rem;
     transition: background 0.4s, border-color 0.4s, opacity 0.4s, filter 0.4s;
@@ -1580,8 +1580,8 @@ select option:checked   { background: #2a3a55; }
 /* Splněný cíl = ZTMAVNUTO. Vizuálně ustupuje do pozadí, signalizuje
    adminovi "tohle je hotové, nastav nový cíl". */
 .cist-goal--done {
-    background: rgba(255,255,255,0.02);
-    border-color: rgba(255,255,255,0.08);
+    background: rgba(0,0,0,0.02);
+    border-color: rgba(0,0,0,0.08);
     opacity: 0.45;
     filter: grayscale(0.5);
 }
@@ -1600,7 +1600,7 @@ select option:checked   { background: #2a3a55; }
 }
 .cist-goal--done .cist-goal__done { color: var(--muted); }
 .cist-goal__bar {
-    height: 8px; background: rgba(255,255,255,0.08);
+    height: 8px; background: rgba(0,0,0,0.08);
     border-radius: 4px; overflow: hidden;
     margin: 0.3rem 0;
 }
@@ -1611,7 +1611,7 @@ select option:checked   { background: #2a3a55; }
     transition: width 0.5s cubic-bezier(.4,0,.2,1);
 }
 .cist-goal--done .cist-goal__fill {
-    background: rgba(255,255,255,0.18);  /* šedá náplň po splnění */
+    background: rgba(0,0,0,0.18);  /* šedá náplň po splnění */
 }
 .cist-goal__status {
     font-size: 0.66rem;
@@ -1648,7 +1648,7 @@ select option:checked   { background: #2a3a55; }
 }
 .cist-goal--readonly:hover {
     background: inherit;
-    border-color: rgba(255,255,255,0.06);
+    border-color: rgba(0,0,0,0.06);
     transform: none;
 }
 
@@ -1685,7 +1685,7 @@ select option:checked   { background: #2a3a55; }
     padding: 0.1rem 0.38rem;
     border-radius: 4px;
     margin-right: 0.35rem;
-    background: rgba(255,255,255,0.08);
+    background: rgba(0,0,0,0.08);
     color: var(--muted);
     font-family: monospace;
     letter-spacing: 0.3px;
@@ -1694,7 +1694,7 @@ select option:checked   { background: #2a3a55; }
 .cist-goal__priority--p2 { background: rgba(230,126,34,0.20); color: #e67e22; }
 .cist-goal__priority--p3 { background: rgba(241,196,15,0.18); color: #f1c40f; }
 .cist-goal__priority--p4,
-.cist-goal__priority--p5 { background: rgba(255,255,255,0.10); color: var(--text); }
+.cist-goal__priority--p5 { background: rgba(0,0,0,0.10); color: var(--text); }
 .cist-goal__priority--p6,
 .cist-goal__priority--p7,
 .cist-goal__priority--p8,
@@ -1741,8 +1741,8 @@ select option:checked   { background: #2a3a55; }
 /* ── Měsíční přepínač čističky (nad tiles) ─────────────────────── */
 .cist-month-switch {
     display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(0,0,0,0.03);
+    border: 1px solid rgba(0,0,0,0.08);
     border-radius: 8px;
     padding: 0.45rem 0.7rem;
     margin: 0.4rem 0 0.6rem;
@@ -1753,7 +1753,7 @@ select option:checked   { background: #2a3a55; }
 .cist-month-switch select {
     padding: 0.32rem 0.55rem;
     background: var(--bg); color: var(--text);
-    border: 1px solid rgba(255,255,255,0.18);
+    border: 1px solid rgba(0,0,0,0.18);
     border-radius: 5px;
     font-size: 0.86rem; font-weight: 600;
     min-width: 170px;
@@ -1763,7 +1763,7 @@ select option:checked   { background: #2a3a55; }
     outline: none; border-color: rgba(46,204,113,0.6);
 }
 .cist-month-switch select:hover {
-    background: rgba(255,255,255,0.04);
+    background: rgba(0,0,0,0.04);
 }
 .cist-month-badge {
     font-size: 0.68rem; font-weight: 700;
@@ -1787,8 +1787,8 @@ select option:checked   { background: #2a3a55; }
 /* Region filter — collapsible (default zavřený) */
 .cist-region-collapse {
     margin-top: 0.7rem;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(0,0,0,0.03);
+    border: 1px solid rgba(0,0,0,0.08);
     border-radius: 8px;
     padding: 0.4rem 0.7rem;
 }
@@ -1807,7 +1807,7 @@ select option:checked   { background: #2a3a55; }
 .cist-region-collapse[open] .cist-region-filter { margin-top: 0.5rem; }
 .cist-radio-btn { display:flex; align-items:center; gap:0.3rem; cursor:pointer;
                   padding:0.35rem 0.7rem; border-radius:6px; font-size:0.85rem;
-                  border:1px solid rgba(255,255,255,0.1); transition:background 0.15s; }
+                  border:1px solid rgba(0,0,0,0.1); transition:background 0.15s; }
 .cist-radio-btn input { display:none; }
 .cist-radio-vf { background:rgba(231,76,60,0.15); color:#e74c3c; }
 .cist-radio-vf:has(input:checked) { background:rgba(231,76,60,0.4); border-color:#e74c3c; }
@@ -1821,14 +1821,14 @@ select option:checked   { background: #2a3a55; }
 .op-vf      { background:rgba(231,76,60,0.25);  color:#e74c3c; }
 .op-tm      { background:rgba(233,30,140,0.25); color:#e91e8c; }
 .op-o2      { background:rgba(61,139,253,0.25); color:#3d8bfd; }
-.op-unknown { background:rgba(255,255,255,0.1); color:var(--muted); }
+.op-unknown { background:rgba(0,0,0,0.1); color:var(--muted); }
 .cist-tag   { font-size:0.8rem; padding:0.2rem 0.5rem; border-radius:4px; }
 .cist-tag-vf    { background:rgba(231,76,60,0.2);  color:#e74c3c; }
 .cist-tag-ready { background:rgba(46,204,113,0.2); color:#2ecc71; }
 .cist-verified-info { display:flex; align-items:center; gap:0.4rem; }
 .cist-footer { display:flex; align-items:center; justify-content:center;
                flex-wrap:wrap; gap:0.5rem; margin-top:0.75rem; padding-top:0.75rem;
-               border-top:1px solid rgba(255,255,255,0.07); }
+               border-top:1px solid rgba(0,0,0,0.07); }
 .cist-pagination { display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; }
 /* Tlačítka akcí čističky — VĚTŠÍ pro snadné kliknutí + position:relative
    pro umístění klávesového hintu v rohu */
@@ -1848,9 +1848,9 @@ select option:checked   { background: #2a3a55; }
 .btn-cist-sm { padding:0.2rem 0.55rem; font-size:0.75rem; }
 /* Undo tlačítko */
 .btn-cist-undo { padding:0.25rem 0.7rem; border:none; border-radius:6px; cursor:pointer;
-                 font-size:0.78rem; font-weight:600; background:rgba(255,255,255,0.1);
+                 font-size:0.78rem; font-weight:600; background:rgba(0,0,0,0.1);
                  color:var(--muted); transition:background 0.15s; }
-.btn-cist-undo:hover { background:rgba(255,255,255,0.2); color:var(--text); }
+.btn-cist-undo:hover { background:rgba(0,0,0,0.2); color:var(--text); }
 /* Badge po uložení jednoho kontaktu */
 .cist-done-badge { font-size:0.85rem; font-weight:600; opacity:0.8; padding:0.2rem 0.5rem; }
 /* Reclassify v záložce Zkontrolováno */
@@ -1858,7 +1858,7 @@ select option:checked   { background: #2a3a55; }
 .cist-verified-info { display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }
 /* Search */
 .search-form { display:flex; gap:0.5rem; margin:0.75rem 0; }
-.input-search { flex:1; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15);
+.input-search { flex:1; background:rgba(0,0,0,0.08); border:1px solid rgba(0,0,0,0.15);
                 color:var(--text); padding:0.55rem 0.85rem; border-radius:8px; font-size:1rem; }
 .input-search:focus { outline:none; border-color:var(--accent); }
 
@@ -1902,11 +1902,12 @@ select option:checked   { background: #2a3a55; }
    ŠNĚČÍ ZÁVODY 🐌
    ═══════════════════════════════════════════════════════════ */
 .snail-race {
-  background: var(--card);
-  border: 1px solid rgba(255,255,255,0.07);
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
   border-radius: 10px;
   padding: 0.75rem 1rem 0.85rem;
   margin-bottom: 1rem;
+  box-shadow: var(--shadow-card);
 }
 .snail-race__title {
   font-size: 0.82rem;
@@ -1960,8 +1961,9 @@ select option:checked   { background: #2a3a55; }
   top: 18px;                  /* hned pod spodní hranou emoji */
   left: 0;
   right: 10px;                /* místo pro šipku */
-  height: 1px;
-  background: rgba(255,255,255,0.22);
+  height: 2px;
+  background: var(--color-border-strong);
+  border-radius: 1px;
 }
 
 /* Šipka na konci tratě */
@@ -1970,7 +1972,7 @@ select option:checked   { background: #2a3a55; }
   position: absolute;
   top: 13px;
   right: 0;
-  border-left: 9px solid rgba(255,255,255,0.22);
+  border-left: 9px solid var(--color-border-strong);
   border-top: 6px solid transparent;
   border-bottom: 6px solid transparent;
 }
@@ -2031,16 +2033,16 @@ select option:checked   { background: #2a3a55; }
   gap: 0.75rem;
   margin-bottom: 1rem;
   padding: 0.75rem 1rem;
-  background: rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.04);
   border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.07);
+  border: 1px solid rgba(0,0,0,0.07);
 }
 .stats-filter-form { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .stats-filter-label { font-size: 0.85rem; color: var(--muted); white-space: nowrap; }
 .stats-month-select {
   padding: 0.4rem 0.65rem;
   border-radius: 7px;
-  border: 1px solid rgba(255,255,255,0.15);
+  border: 1px solid rgba(0,0,0,0.15);
   background: var(--color-input-bg);
   color: var(--text);
   font-size: 0.9rem;
@@ -2053,7 +2055,7 @@ select option:checked   { background: #2a3a55; }
   font-weight: 700;
   color: var(--accent);
   margin: 0.5rem 0 1.25rem;
-  border-bottom: 1px solid rgba(255,255,255,0.07);
+  border-bottom: 1px solid rgba(0,0,0,0.07);
   padding-bottom: 0.5rem;
 }
 
@@ -2065,8 +2067,8 @@ select option:checked   { background: #2a3a55; }
   margin-bottom: 1.75rem;
 }
 .stat-card {
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.09);
+  background: rgba(0,0,0,0.04);
+  border: 1px solid rgba(0,0,0,0.09);
   border-radius: 10px;
   padding: 0.9rem 0.75rem;
   text-align: center;
@@ -2100,7 +2102,7 @@ select option:checked   { background: #2a3a55; }
 .stat-card--izolace  .stat-card__num { color: #a855f7; }
 .stat-card--chybny   { border-color: #64748b55; }
 .stat-card--chybny   .stat-card__num { color: #64748b; }
-.stat-card--total    { border-color: rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); }
+.stat-card--total    { border-color: rgba(0,0,0,0.18); background: rgba(0,0,0,0.06); }
 .stat-card--total    .stat-card__num { color: var(--text); }
 .stat-card--rate     { border-color: #22c55e44; background: rgba(22,197,94,0.06); }
 .stat-card--rate     .stat-card__num { color: #22c55e; font-size: 1.6rem; }
@@ -2109,7 +2111,7 @@ select option:checked   { background: #2a3a55; }
 .stats-table-wrap {
   overflow-x: auto;
   border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.07);
+  border: 1px solid rgba(0,0,0,0.07);
 }
 .stats-table {
   width: 100%;
@@ -2120,10 +2122,10 @@ select option:checked   { background: #2a3a55; }
 .stats-table td {
   padding: 0.5rem 0.65rem;
   text-align: center;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(0,0,0,0.05);
 }
 .stats-table th {
-  background: rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.04);
   font-size: 0.78rem;
   color: var(--muted);
   text-transform: uppercase;
@@ -2134,10 +2136,10 @@ select option:checked   { background: #2a3a55; }
 .stats-td-day { text-align: left; min-width: 90px; }
 .stats-td-num { color: var(--muted); }
 .stats-td-total { font-weight: 700; color: var(--text); }
-.stats-row--weekend { background: rgba(255,255,255,0.02); }
+.stats-row--weekend { background: rgba(0,0,0,0.02); }
 .stats-row--weekend .stats-td-day { color: var(--muted); }
-.stats-row--total { background: rgba(255,255,255,0.05); }
-.stats-row--alt { background: rgba(255,255,255,0.015); }
+.stats-row--total { background: rgba(0,0,0,0.05); }
+.stats-row--alt { background: rgba(0,0,0,0.015); }
 .stats-dow { font-size: 0.72rem; color: var(--muted); margin-left: 0.35rem; }
 
 /* Barevné zvýraznění nenulových buněk v denní tabulce */
@@ -2171,7 +2173,7 @@ select option:checked   { background: #2a3a55; }
 .acol-rate-bar {
   flex: 1;
   height: 6px;
-  background: rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.08);
   border-radius: 3px;
   overflow: hidden;
   min-width: 50px;
@@ -2214,7 +2216,7 @@ select option:checked   { background: #2a3a55; }
   padding: 0.45rem 0.9rem;
   border-radius: 8px;
   border: 1px solid var(--color-input-border);
-  background: rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.04);
   color: var(--muted);
   text-decoration: none;
   font-size: 0.88rem;
@@ -2222,7 +2224,7 @@ select option:checked   { background: #2a3a55; }
   white-space: nowrap;
 }
 .team-stats-nav-btn:hover {
-  background: rgba(255,255,255,0.09);
+  background: rgba(0,0,0,0.09);
   color: var(--text);
 }
 .team-stats-nav-btn--active {
@@ -2298,3 +2300,54 @@ select option:checked   { background: #2a3a55; }
 }
 
 
+
+
+/* ============================================
+   DEFENSIVE OVERRIDES — light theme guarantees
+   These rules sit at the very end so they win
+   over any inline <style> blocks in views that
+   still assume dark theme.
+   ============================================ */
+
+/* Native selects — always light, always readable */
+select,
+select option {
+  background: #ffffff !important;
+  color: var(--color-text) !important;
+}
+select option:checked,
+select option:hover,
+select option:focus {
+  background: var(--color-surface) !important;
+  color: var(--color-text) !important;
+}
+
+/* Form inputs — always light */
+input[type="email"],
+input[type="password"],
+input[type="text"],
+input[type="number"],
+input[type="date"],
+input[type="datetime-local"],
+input[type="search"],
+input[type="tel"],
+input[type="url"],
+textarea {
+  background: #ffffff;
+  color: var(--color-text);
+}
+
+/* Card-class containers should always be light */
+.card,
+.crm-card,
+.bo-card,
+.oz-contact,
+.cist-card {
+  background: var(--color-card-bg);
+  color: var(--color-text);
+}
+
+/* Subrow strip on legacy tables — was dark on dark, now subtle gray */
+.subrow td {
+  background: var(--color-surface) !important;
+}

@@ -36,10 +36,10 @@ $allRegions = array_keys($allRegions);
     background:var(--card);
 }
 .ozt-table th, .ozt-table td {
-    padding:0.45rem 0.6rem; border:1px solid rgba(255,255,255,0.07);
+    padding:0.45rem 0.6rem; border:1px solid rgba(0,0,0,0.07);
     text-align:center; white-space:nowrap;
 }
-.ozt-table th { background:rgba(255,255,255,0.05); font-weight:700; }
+.ozt-table th { background:rgba(0,0,0,0.05); font-weight:700; }
 .ozt-table th.ozt-oz-col { text-align:left; min-width:130px; }
 .ozt-oz-name { font-weight:600; text-align:left; }
 
@@ -48,7 +48,7 @@ $allRegions = array_keys($allRegions);
 .ozt-input {
     width:4rem; text-align:center; padding:0.2rem 0.3rem;
     background:var(--bg); color:var(--text);
-    border:1px solid rgba(255,255,255,0.18); border-radius:4px;
+    border:1px solid rgba(0,0,0,0.18); border-radius:4px;
     font-size:0.8rem;
 }
 .ozt-input:focus { outline:none; border-color:var(--primary); }
@@ -59,7 +59,7 @@ $allRegions = array_keys($allRegions);
 .ozt-received--none { color:var(--muted); font-weight:400; }
 .ozt-flagged { font-size:0.68rem; color:#e74c3c; }
 .ozt-progress-bar {
-    width:4rem; height:4px; background:rgba(255,255,255,0.1);
+    width:4rem; height:4px; background:rgba(0,0,0,0.1);
     border-radius:2px; overflow:hidden;
 }
 .ozt-progress-fill { height:100%; border-radius:2px; transition:width 0.3s; }

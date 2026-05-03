@@ -77,7 +77,7 @@ $vfRate     = $totalActions > 0 ? round($summary['VF_SKIP'] / $totalActions * 10
             <span class="stat-card__num"><?= $totalActions ?></span>
             <span class="stat-card__label">Celkem zpracováno</span>
         </div>
-        <div class="stat-card" style="border-color:rgba(255,255,255,0.12);">
+        <div class="stat-card" style="border-color:rgba(0,0,0,0.12);">
             <span class="stat-card__num" style="color:var(--muted);"><?= $vfRate ?> %</span>
             <span class="stat-card__label">Podíl VF</span>
         </div>

@@ -28,14 +28,15 @@
   --bo-stav-uzavreno:  #2ecc71;   /* Uzavřeno (UZAVRENO) */
   --bo-stav-nezajem:   #e74c3c;   /* Nezájem */
 
-  --bo-bg:             #0d141f;
-  --bo-card:           #121a26;
-  --bo-card-hover:     #18222e;
-  --bo-border:         rgba(255,255,255,0.08);
-  --bo-border-soft:    rgba(255,255,255,0.04);
-  --bo-text:           #e6edf3;
-  --bo-text-2:         #a8b2c0;
-  --bo-text-3:         #6b7785;
+  /* Light-theme tokens (HANDOFF design system) */
+  --bo-bg:             #eef1f6;
+  --bo-card:           #ffffff;
+  --bo-card-hover:     #f5f7fa;
+  --bo-border:         #dde3ec;
+  --bo-border-soft:    #f0f2f5;
+  --bo-text:           #1f2937;
+  --bo-text-2:         #4b5563;
+  --bo-text-3:         #6b7280;
 
   --bo-radius-sm:      4px;
   --bo-radius-md:      6px;
@@ -106,13 +107,13 @@
 .bo-tab:hover {
   opacity: 0.92;
   color: var(--bo-text);
-  background: rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.04);
 }
 .bo-tab--active {
   opacity: 1;
   font-weight: 700;
-  background: rgba(255,255,255,0.06);
-  border-color: rgba(255,255,255,0.18);
+  background: rgba(0,0,0,0.06);
+  border-color: rgba(0,0,0,0.18);
   color: var(--bo-text);
   border-bottom: 2px solid currentColor;
   margin-bottom: -2px;
@@ -129,7 +130,7 @@
   font-weight: 700;
   padding: 0.1rem 0.4rem;
   border-radius: 999px;
-  background: rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.08);
   color: var(--bo-text-3);
   opacity: 0.7;
   transition: opacity var(--bo-t-base);
@@ -147,7 +148,7 @@
   gap: 0.4rem;
   margin: 0 0 1rem;
   padding: 0.35rem 0.6rem;
-  background: rgba(255,255,255,0.02);
+  background: rgba(0,0,0,0.02);
   border: 1px solid var(--bo-border);
   border-radius: var(--bo-radius-md);
   font-size: 0.78rem;
@@ -178,7 +179,7 @@
 .bo-sort-btn:hover {
   opacity: 1;
   color: var(--bo-text);
-  background: rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.04);
 }
 .bo-sort-btn--active {
   opacity: 1;
@@ -216,7 +217,7 @@
 }
 .bo-stats-collapse[open] > summary:before { content: "▾"; }
 .bo-stats-collapse > summary:hover {
-  background: rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.04);
   color: var(--bo-text);
 }
 .bo-stats-collapse[open] > summary {
@@ -266,12 +267,12 @@
 .bo-card {
   background: var(--bo-card);
   border: 1px solid var(--bo-border);
-  border-left: 4px solid rgba(255,255,255,0.12);
+  border-left: 4px solid rgba(0,0,0,0.12);
   border-radius: var(--bo-radius-lg);
   overflow: hidden;
   transition: border-left-color var(--bo-t-base), background var(--bo-t-base);
 }
-.bo-card:hover { background: rgba(255,255,255,0.025); }
+.bo-card:hover { background: rgba(0,0,0,0.025); }
 
 /* Stavová barva = JEN levý border (ne kolem celé karty) */
 .bo-card--priprava  { border-left-color: var(--bo-stav-priprava); }
@@ -298,7 +299,7 @@
   font-weight: 700;
   padding: 0.18rem 0.55rem;
   border-radius: var(--bo-radius-sm);
-  background: rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.08);
   color: var(--bo-text);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -310,7 +311,7 @@
 .bo-card__time-pill {
   font-size: 0.66rem;
   color: var(--bo-text-3);
-  background: rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.04);
   border: 1px solid var(--bo-border);
   border-radius: 10px;
   padding: 0.08rem 0.45rem;
@@ -383,7 +384,7 @@
 }
 .bo-note-block--oz .bo-note-block__label { color: var(--bo-stav-priprava); }
 .bo-note-block__entry {
-  background: rgba(255,255,255,0.03);
+  background: rgba(0,0,0,0.03);
   padding: 0.25rem 0.5rem;
   border-radius: var(--bo-radius-sm);
   font-size: 0.78rem;
@@ -468,7 +469,7 @@
   transition: background var(--bo-t-base);
 }
 .bo-section > summary::-webkit-details-marker { display: none; }
-.bo-section > summary:hover { background: rgba(255,255,255,0.04); }
+.bo-section > summary:hover { background: rgba(0,0,0,0.04); }
 .bo-section > summary:before {
   content: "▸";
   font-size: 0.7rem;
@@ -498,7 +499,7 @@
 
 .bo-section__body {
   padding: 0.55rem 0.85rem;
-  border-top: 1px solid rgba(255,255,255,0.05);
+  border-top: 1px solid rgba(0,0,0,0.05);
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
@@ -512,7 +513,7 @@
   font-size: 0.85rem;
   padding: 0.55rem 0.75rem;
   border-radius: var(--bo-radius-md);
-  background: rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.04);
   border: 1px solid var(--bo-border);
   transition: background var(--bo-t-base), border-color var(--bo-t-base);
   cursor: pointer;
@@ -532,7 +533,7 @@
   accent-color: #e91e8c;
 }
 .bo-cb-row--disabled { cursor: not-allowed; opacity: 0.7; }
-.bo-cb-row--disabled:hover { background: rgba(255,255,255,0.04); border-color: var(--bo-border); }
+.bo-cb-row--disabled:hover { background: rgba(0,0,0,0.04); border-color: var(--bo-border); }
 .bo-cb-done-tag {
   margin-left: auto;
   font-size: 0.65rem;
@@ -570,7 +571,7 @@
   gap: 0.5rem;
   align-items: baseline;
   padding: 0.3rem 0.5rem;
-  background: rgba(255,255,255,0.03);
+  background: rgba(0,0,0,0.03);
   border-radius: var(--bo-radius-sm);
   font-size: 0.78rem;
 }
@@ -734,7 +735,7 @@
 }
 .bo-btn-ghost:hover {
   color: var(--bo-text);
-  border-color: rgba(255,255,255,0.25);
+  border-color: rgba(0,0,0,0.25);
 }
 
 /* ── 8. INLINE FORMULÁŘE (důvod nezájem / vrácení OZ) ──────────── */
@@ -847,7 +848,7 @@
   padding: 2rem 1rem;
   text-align: center;
   color: var(--bo-text-3);
-  background: rgba(255,255,255,0.02);
+  background: rgba(0,0,0,0.02);
   border: 1px dashed var(--bo-border);
   border-radius: var(--bo-radius-lg);
   font-size: 0.9rem;

@@ -79,7 +79,7 @@ foreach (($pendingByCaller ?? []) as $pg) {
         flex-wrap: wrap;
         font-size: 0.82rem;">
     <span style="font-size:1.05rem;"><?= $pendingTotal > 0 ? '🔔' : '✨' ?></span>
-    <span style="color:rgba(255,255,255,0.85);flex:1;min-width:160px;">
+    <span style="color:rgba(0,0,0,0.85);flex:1;min-width:160px;">
         <?php if ($pendingTotal > 0) { ?>
             <strong style="color:#2ecc71;">Máš <?= $pendingTotal ?> čekající<?= $pendingTotal === 1 ? ' lead' : ($pendingTotal < 5 ? ' leady' : 'ch leadů') ?></strong>
             v nové pracovní ploše — přijmi je a začni řešit.
@@ -95,7 +95,7 @@ foreach (($pendingByCaller ?? []) as $pg) {
     </a>
     <button type="button" onclick="ozHideNewUiBanner()"
             style="background:transparent;border:none;
-                   color:rgba(255,255,255,0.4);padding:0.1rem 0.35rem;
+                   color:rgba(0,0,0,0.4);padding:0.1rem 0.35rem;
                    cursor:pointer;font-size:1rem;line-height:1;"
             title="Skrýt na 7 dní">
         ×
@@ -190,8 +190,8 @@ $renewalsForOz = $renewalsForOz ?? [];
     <details class="oz-race-collapse" style="margin-bottom:0.85rem;">
         <summary style="list-style:none;cursor:pointer;user-select:none;
                         padding:0.5rem 0.85rem;
-                        background:rgba(255,255,255,0.03);
-                        border:1px solid rgba(255,255,255,0.08);
+                        background:rgba(0,0,0,0.03);
+                        border:1px solid rgba(0,0,0,0.08);
                         border-radius:8px;
                         font-size:0.85rem;color:var(--muted);
                         display:flex;justify-content:space-between;align-items:center;
@@ -207,7 +207,7 @@ $renewalsForOz = $renewalsForOz ?? [];
     </details>
     <style>
         .oz-race-collapse > summary::-webkit-details-marker { display:none; }
-        .oz-race-collapse > summary:hover { background:rgba(255,255,255,0.06) !important; color:var(--text); }
+        .oz-race-collapse > summary:hover { background:rgba(0,0,0,0.06) !important; color:var(--text); }
         .oz-race-collapse[open] > summary span:last-child { display:none; }
     </style>
 
@@ -247,12 +247,12 @@ $renewalsForOz = $renewalsForOz ?? [];
          Tento hint se schová na 14 dní po prvním zavření (LocalStorage). ── -->
     <div id="oz-perf-moved-hint" style="display:none;margin-bottom:0.85rem;
                 font-size:0.75rem;color:var(--muted);
-                padding:0.35rem 0.7rem;background:rgba(255,255,255,0.02);
-                border-radius:6px;border:1px dashed rgba(255,255,255,0.08);
+                padding:0.35rem 0.7rem;background:rgba(0,0,0,0.02);
+                border-radius:6px;border:1px dashed rgba(0,0,0,0.08);
                 display:flex;align-items:center;gap:0.5rem;">
         <span>💡 Osobní milníky + týmové stage cíle se přesunuly do <strong>Moje kvóty</strong> (tlačítko nahoře vpravo).</span>
         <button type="button" onclick="ozHidePerfMovedHint()"
-                style="margin-left:auto;background:transparent;border:1px solid rgba(255,255,255,0.12);
+                style="margin-left:auto;background:transparent;border:1px solid rgba(0,0,0,0.12);
                        color:var(--muted);padding:0.15rem 0.45rem;border-radius:4px;
                        cursor:pointer;font-size:0.7rem;">×</button>
     </div>
@@ -487,7 +487,7 @@ $renewalsForOz = $renewalsForOz ?? [];
             <input type="hidden" name="tab" value="dokonceno">
             <select name="m"
                     style="background:var(--bg);color:var(--text);
-                           border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                           border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                            padding:0.25rem 0.5rem;font-size:0.78rem;font-family:inherit;cursor:pointer;">
                 <?php for ($mi = 1; $mi <= 12; $mi++) { ?>
                     <option value="<?= $mi ?>" <?= $mi === $curM ? 'selected' : '' ?>>
@@ -497,7 +497,7 @@ $renewalsForOz = $renewalsForOz ?? [];
             </select>
             <select name="y"
                     style="background:var(--bg);color:var(--text);
-                           border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                           border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                            padding:0.25rem 0.5rem;font-size:0.78rem;font-family:inherit;cursor:pointer;">
                 <?php
                 $thisYear = (int) date('Y');
@@ -579,12 +579,12 @@ $renewalsForOz = $renewalsForOz ?? [];
             <button type="submit"
                     title="<?= $isChild ? 'Připnout sub-záložku zpět do super-tabu' : 'Připnout záložku zpět do menu' ?>"
                     style="background:transparent;color:var(--muted);
-                           border:1px solid rgba(255,255,255,0.1);border-radius:4px;
+                           border:1px solid rgba(0,0,0,0.1);border-radius:4px;
                            padding:0.1rem 0.4rem;font-size:0.68rem;cursor:pointer;
                            font-family:inherit;
                            transition:color 0.15s, border-color 0.15s;"
-                    onmouseover="this.style.color='var(--text)';this.style.borderColor='rgba(255,255,255,0.3)';"
-                    onmouseout="this.style.color='var(--muted)';this.style.borderColor='rgba(255,255,255,0.1)';">
+                    onmouseover="this.style.color='var(--text)';this.style.borderColor='rgba(0,0,0,0.3)';"
+                    onmouseout="this.style.color='var(--muted)';this.style.borderColor='rgba(0,0,0,0.1)';">
                 + <?= crm_h($tabDef['label']) ?><?php if ($isChild) { ?><span style="opacity:0.6;font-size:0.6rem;"> ↳ <?= crm_h($superTabsDef[$tabDef['parent']]['label']) ?></span><?php } ?> (<?= $count ?>)
             </button>
         </form>
@@ -595,7 +595,7 @@ $renewalsForOz = $renewalsForOz ?? [];
     <!-- ── Vždy viditelný hint pro Rozpracované tab — vysvětlivka co tady patří ── -->
     <?php if ($tab === 'nove') { ?>
     <div style="margin-bottom:0.7rem;font-size:0.74rem;color:var(--muted);
-                padding:0.4rem 0.75rem;background:rgba(255,255,255,0.02);
+                padding:0.4rem 0.75rem;background:rgba(0,0,0,0.02);
                 border-radius:6px;border-left:3px solid rgba(230,176,32,0.4);">
         💡 <strong style="color:rgba(230,176,32,0.9);">Rozpracované</strong> = leady přijaté z queue, kterým ještě
         nepadlo rozhodnutí. Po kliknutí na akci (Nabídka, Schůzka, Callback, Šance, …) se přesunou do svého tabu.
@@ -725,8 +725,8 @@ $renewalsForOz = $renewalsForOz ?? [];
                 $stavChangedAt = (string) ($c['oz_stav_changed_at'] ?? '');
                 if ($stavChangedAt !== '') { ?>
                     <span style="font-size:0.66rem;color:var(--muted);
-                                 background:rgba(255,255,255,0.04);
-                                 border:1px solid rgba(255,255,255,0.08);border-radius:10px;
+                                 background:rgba(0,0,0,0.04);
+                                 border:1px solid rgba(0,0,0,0.08);border-radius:10px;
                                  padding:0.08rem 0.45rem;white-space:nowrap;"
                           title="V této záložce od: <?= crm_h(date('d.m.Y H:i', strtotime($stavChangedAt))) ?>">
                         🕒 v této záložce: <?= crm_h(ozElapsed($stavChangedAt)) ?>
@@ -939,7 +939,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                    id="oz-edit-firma-<?= $cId ?>"
                                    value="<?= crm_h((string)($c['firma'] ?? '')) ?>"
                                    style="background:var(--bg);color:var(--text);
-                                          border:1px solid rgba(255,255,255,0.15);border-radius:4px;
+                                          border:1px solid rgba(0,0,0,0.15);border-radius:4px;
                                           padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;">
                         </label>
                         <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--muted);">
@@ -947,7 +947,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                             <input type="text" name="telefon" maxlength="50"
                                    value="<?= crm_h((string)($c['telefon'] ?? '')) ?>"
                                    style="background:var(--bg);color:var(--text);
-                                          border:1px solid rgba(255,255,255,0.15);border-radius:4px;
+                                          border:1px solid rgba(0,0,0,0.15);border-radius:4px;
                                           padding:0.25rem 0.45rem;font-size:0.82rem;font-family:monospace;">
                         </label>
                         <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--muted);">
@@ -955,7 +955,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                             <input type="email" name="email" maxlength="200"
                                    value="<?= crm_h((string)($c['email'] ?? '')) ?>"
                                    style="background:var(--bg);color:var(--text);
-                                          border:1px solid rgba(255,255,255,0.15);border-radius:4px;
+                                          border:1px solid rgba(0,0,0,0.15);border-radius:4px;
                                           padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;">
                         </label>
                         <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--muted);">
@@ -965,7 +965,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                        id="oz-edit-ico-<?= $cId ?>"
                                        value="<?= crm_h(crm_normalize_ico((string)($c['ico'] ?? ''))) ?>"
                                        style="flex:1 1 auto;background:var(--bg);color:var(--text);
-                                              border:1px solid rgba(255,255,255,0.15);border-radius:4px;
+                                              border:1px solid rgba(0,0,0,0.15);border-radius:4px;
                                               padding:0.25rem 0.45rem;font-size:0.82rem;font-family:monospace;">
                                 <button type="button"
                                         onclick="ozAresLookup(<?= $cId ?>)"
@@ -986,7 +986,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                    value="<?= crm_h((string)($c['adresa'] ?? '')) ?>"
                                    placeholder="Ulice č.p., město, PSČ"
                                    style="background:var(--bg);color:var(--text);
-                                          border:1px solid rgba(255,255,255,0.15);border-radius:4px;
+                                          border:1px solid rgba(0,0,0,0.15);border-radius:4px;
                                           padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;">
                         </label>
 
@@ -1000,7 +1000,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                     onclick="ozContactEditToggle(<?= $cId ?>)"
                                     style="padding:0.3rem 0.7rem;font-size:0.75rem;
                                            background:transparent;color:var(--muted);
-                                           border:1px solid rgba(255,255,255,0.15);border-radius:4px;cursor:pointer;">
+                                           border:1px solid rgba(0,0,0,0.15);border-radius:4px;cursor:pointer;">
                                 Zrušit
                             </button>
                             <button type="submit"
@@ -1053,7 +1053,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                 if (false) { ?>
                 <!-- ══ Nabídnuté služby (Fáze 2 — CRUD) ══ -->
                 <div style="margin-top:0.5rem;padding:0.55rem 0.7rem;
-                            background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);
+                            background:rgba(0,0,0,0.03);border:1px solid rgba(0,0,0,0.08);
                             border-left:3px solid #3498db;border-radius:0 6px 6px 0;
                             display:flex;flex-direction:column;gap:0.4rem;">
 
@@ -1142,7 +1142,7 @@ $renewalsForOz = $renewalsForOz ?? [];
 
                             <?php if ($svcNote !== '') { ?>
                             <div style="font-size:0.72rem;color:var(--text);font-style:italic;
-                                        background:rgba(255,255,255,0.04);padding:0.2rem 0.4rem;border-radius:4px;">
+                                        background:rgba(0,0,0,0.04);padding:0.2rem 0.4rem;border-radius:4px;">
                                 <?= crm_h($svcNote) ?>
                             </div>
                             <?php } ?>
@@ -1159,7 +1159,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                 ?>
                                 <li style="display:flex;flex-direction:column;gap:0.2rem;font-size:0.74rem;
                                            padding:0.15rem 0.3rem;border-radius:3px;
-                                           background:rgba(255,255,255,0.02);">
+                                           background:rgba(0,0,0,0.02);">
                                     <div style="display:flex;align-items:center;gap:0.4rem;">
                                         <span style="color:var(--accent);font-family:monospace;"><?= crm_h($identifier) ?></span>
                                         <?php if ($hasOku) { ?>
@@ -1178,7 +1178,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                                     onclick="ozOkuToggle(<?= $itemId ?>)"
                                                     title="Klikněte pro doplnění OKU kódu"
                                                     style="margin-left:auto;font-size:0.66rem;color:var(--muted);
-                                                           background:transparent;border:1px dashed rgba(255,255,255,0.15);
+                                                           background:transparent;border:1px dashed rgba(0,0,0,0.15);
                                                            border-radius:3px;padding:0.1rem 0.4rem;
                                                            cursor:pointer;font-family:inherit;">
                                             + doplnit OKU
@@ -1212,7 +1212,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                                     onclick="ozOkuToggle(<?= $itemId ?>)"
                                                     style="font-size:0.7rem;padding:0.2rem 0.55rem;
                                                            background:transparent;color:var(--muted);
-                                                           border:1px solid rgba(255,255,255,0.15);border-radius:4px;cursor:pointer;">
+                                                           border:1px solid rgba(0,0,0,0.15);border-radius:4px;cursor:pointer;">
                                                 Zrušit
                                             </button>
                                         </form>
@@ -1243,7 +1243,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                             id="oz-offered-edit-type-<?= $svcId ?>"
                                             onchange="ozOfferedEditTypeChanged(<?= $svcId ?>)"
                                             style="flex:0 0 140px;background:var(--bg);color:var(--text);
-                                                   border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                                                   border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                                                    padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;">
                                         <?php foreach (crm_offered_services_catalog() as $tKey => $tDef) { ?>
                                             <option value="<?= crm_h($tKey) ?>" <?= $tKey === $svcType ? 'selected' : '' ?>>
@@ -1255,7 +1255,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                             id="oz-offered-edit-label-<?= $svcId ?>"
                                             data-current-label="<?= crm_h($svcLabel) ?>"
                                             style="flex:1 1 220px;min-width:200px;background:var(--bg);color:var(--text);
-                                                   border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                                                   border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                                                    padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;">
                                         <option value="<?= crm_h($svcLabel) ?>" selected><?= crm_h($svcLabel) ?></option>
                                     </select>
@@ -1268,7 +1268,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                         <select name="modem_label"
                                                 id="oz-offered-edit-modem-<?= $svcId ?>"
                                                 style="width:100%;background:var(--bg);color:var(--text);
-                                                       border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                                                       border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                                                        padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;">
                                             <option value="" <?= $modemLabel === '' ? 'selected' : '' ?>>— Bez modemu —</option>
                                             <?php foreach (crm_offered_services_modems() as $modemOpt) { ?>
@@ -1283,7 +1283,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                            min="0" max="999999" step="1"
                                            placeholder="Cena (Kč)"
                                            style="flex:0 0 110px;background:var(--bg);color:var(--text);
-                                                  border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                                                  border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                                                   padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;">
                                 </div>
 
@@ -1292,7 +1292,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                           placeholder="Poznámka (volitelné)"
                                           rows="1"
                                           style="background:var(--bg);color:var(--text);
-                                                 border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                                                 border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                                                  padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;
                                                  resize:vertical;"><?= crm_h($svcNote) ?></textarea>
 
@@ -1302,7 +1302,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                             onclick="ozOfferedEditToggle(<?= $svcId ?>)"
                                             style="padding:0.3rem 0.7rem;font-size:0.75rem;
                                                    background:transparent;color:var(--muted);
-                                                   border:1px solid rgba(255,255,255,0.15);border-radius:5px;cursor:pointer;">
+                                                   border:1px solid rgba(0,0,0,0.15);border-radius:5px;cursor:pointer;">
                                         Zrušit
                                     </button>
                                     <button type="submit"
@@ -1334,7 +1334,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                         id="oz-offered-type-<?= $cId ?>"
                                         onchange="ozOfferedTypeChanged(<?= $cId ?>)"
                                         style="flex:0 0 140px;background:var(--bg);color:var(--text);
-                                               border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                                               border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                                                padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;">
                                     <option value="">— Typ —</option>
                                     <?php foreach (crm_offered_services_catalog() as $tKey => $tDef) { ?>
@@ -1344,7 +1344,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                 <select name="service_label" required disabled
                                         id="oz-offered-label-<?= $cId ?>"
                                         style="flex:1 1 220px;min-width:200px;background:var(--bg);color:var(--text);
-                                               border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                                               border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                                                padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;">
                                     <option value="">— Nejprve vyberte typ —</option>
                                 </select>
@@ -1357,7 +1357,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                     <select name="modem_label"
                                             id="oz-offered-modem-<?= $cId ?>"
                                             style="width:100%;background:var(--bg);color:var(--text);
-                                                   border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                                                   border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                                                    padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;">
                                         <option value="">— Bez modemu —</option>
                                         <?php foreach (crm_offered_services_modems() as $modemOpt) { ?>
@@ -1369,7 +1369,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                        min="0" max="999999" step="1"
                                        placeholder="Cena (Kč)"
                                        style="flex:0 0 110px;background:var(--bg);color:var(--text);
-                                              border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                                              border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                                               padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;">
                             </div>
 
@@ -1378,7 +1378,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                       placeholder="Tel. číslo / adresa — jedno na řádek (např. 731170559)"
                                       rows="2"
                                       style="background:var(--bg);color:var(--text);
-                                             border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                                             border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                                              padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;
                                              resize:vertical;"></textarea>
 
@@ -1387,7 +1387,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                       placeholder="Poznámka (volitelné)"
                                       rows="1"
                                       style="background:var(--bg);color:var(--text);
-                                             border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                                             border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                                              padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;
                                              resize:vertical;"></textarea>
 
@@ -1397,7 +1397,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                         onclick="ozOfferedToggleForm(<?= $cId ?>)"
                                         style="padding:0.3rem 0.7rem;font-size:0.75rem;
                                                background:transparent;color:var(--muted);
-                                               border:1px solid rgba(255,255,255,0.15);border-radius:5px;cursor:pointer;">
+                                               border:1px solid rgba(0,0,0,0.15);border-radius:5px;cursor:pointer;">
                                     Zrušit
                                 </button>
                                 <button type="submit"
@@ -1453,7 +1453,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                             onclick="ozOfferIdToggle(<?= $cId ?>)"
                             title="Přidat ID nabídky"
                             style="background:transparent;color:var(--muted);
-                                   border:1px dashed rgba(255,255,255,0.2);border-radius:4px;
+                                   border:1px dashed rgba(0,0,0,0.2);border-radius:4px;
                                    padding:0.15rem 0.55rem;font-size:0.72rem;cursor:pointer;
                                    font-family:inherit;">
                         + zadat ID nabídky
@@ -1486,7 +1486,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                         onclick="ozOfferIdToggle(<?= $cId ?>)"
                         style="font-size:0.72rem;padding:0.2rem 0.6rem;
                                background:transparent;color:var(--muted);
-                               border:1px solid rgba(255,255,255,0.15);border-radius:4px;cursor:pointer;">
+                               border:1px solid rgba(0,0,0,0.15);border-radius:4px;cursor:pointer;">
                     Zrušit
                 </button>
             </form>
@@ -1527,8 +1527,8 @@ $renewalsForOz = $renewalsForOz ?? [];
                 foreach ($rows as [$field, $val, $label, $hint, $ozCanCheck]) {
                     $disabled = !$ozCanCheck || $isUzavreno;
                     $isChecked = $val === 1;
-                    $rowBg     = $isChecked ? 'rgba(233,30,140,0.14)' : 'rgba(255,255,255,0.03)';
-                    $rowBorder = $isChecked ? 'rgba(233,30,140,0.45)' : 'rgba(255,255,255,0.10)';
+                    $rowBg     = $isChecked ? 'rgba(233,30,140,0.14)' : 'rgba(0,0,0,0.03)';
+                    $rowBorder = $isChecked ? 'rgba(233,30,140,0.45)' : 'rgba(0,0,0,0.10)';
                     $titleSuffix = ($disabled && !$isUzavreno) ? ' · jen BO může měnit' : '';
                 ?>
                 <label style="flex:1 1 130px;min-width:130px;display:flex;align-items:center;gap:0.4rem;
@@ -1558,7 +1558,7 @@ $renewalsForOz = $renewalsForOz ?? [];
             </div><!-- /.oz-bo-checks -->
             <?php if ($cbPodpis === 1 && $cbPodpisAt !== '') { ?>
                 <div style="font-size:0.66rem;color:var(--muted);font-style:italic;
-                            border-top:1px dashed rgba(255,255,255,0.07);
+                            border-top:1px dashed rgba(0,0,0,0.07);
                             margin-top:0.35rem;padding-top:0.3rem;">
                     💰 Podpis potvrzen <?= crm_h(ozElapsed($cbPodpisAt)) ?> · BMSL se počítá od této chvíle.
                 </div>
@@ -1608,7 +1608,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                 <?php } ?>
                 <span id="oz-actions-toggle-<?= $cId ?>"
                       style="font-size:0.7rem;color:var(--muted);font-weight:400;
-                             background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);
+                             background:rgba(0,0,0,0.05);border:1px solid rgba(0,0,0,0.1);
                              border-radius:4px;padding:0.1rem 0.45rem;flex:0 0 auto;">
                     <?= $deníkOpen ? '▲ sbalit' : '▼ rozbalit' ?>
                 </span>
@@ -1628,13 +1628,13 @@ $renewalsForOz = $renewalsForOz ?? [];
                        value="<?= crm_h(date('Y-m-d')) ?>"
                        required
                        style="flex:0 0 140px;background:var(--bg);color:var(--text);
-                              border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                              border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                               padding:0.3rem 0.5rem;font-size:0.78rem;font-family:inherit;">
                 <input type="text" name="action_text"
                        required maxlength="1000"
                        placeholder="Popis úkonu (např. telefonát, schůzka, doplnění OKU…)"
                        style="flex:1 1 320px;min-width:220px;background:var(--bg);color:var(--text);
-                              border:1px solid rgba(255,255,255,0.15);border-radius:5px;
+                              border:1px solid rgba(0,0,0,0.15);border-radius:5px;
                               padding:0.3rem 0.55rem;font-size:0.78rem;font-family:inherit;">
                 <button type="submit"
                         style="padding:0.3rem 0.85rem;font-size:0.75rem;font-weight:700;
@@ -1700,7 +1700,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                     <span style="flex:1 1 auto;color:var(--text);white-space:pre-wrap;"><?= crm_h($actText) ?></span>
                     <span style="flex:0 0 auto;font-size:0.66rem;color:var(--muted);
                                  padding:0.05rem 0.4rem;border-radius:3px;
-                                 background:rgba(255,255,255,0.04);"
+                                 background:rgba(0,0,0,0.04);"
                           title="Autor: <?= crm_h($actAuthor) ?><?= $roleLabel !== '' ? ' (' . crm_h($roleLabel) . ')' : '' ?>">
                         <?= $roleIcon ?> <?= crm_h($actAuthor) ?>
                     </span>
@@ -1759,12 +1759,12 @@ $renewalsForOz = $renewalsForOz ?? [];
                         onclick="ozNoteExpand(<?= $cId ?>)"
                         style="display:block;width:100%;text-align:left;
                                background:transparent;color:var(--muted);
-                               border:1px dashed rgba(255,255,255,0.15);border-radius:5px;
+                               border:1px dashed rgba(0,0,0,0.15);border-radius:5px;
                                padding:0.4rem 0.65rem;font-size:0.78rem;cursor:pointer;
                                font-family:inherit;font-style:italic;
                                transition:border-color 0.15s, color 0.15s;"
-                        onmouseover="this.style.borderColor='rgba(255,255,255,0.3)';this.style.color='var(--text)';"
-                        onmouseout="this.style.borderColor='rgba(255,255,255,0.15)';this.style.color='var(--muted)';">
+                        onmouseover="this.style.borderColor='rgba(0,0,0,0.3)';this.style.color='var(--text)';"
+                        onmouseout="this.style.borderColor='rgba(0,0,0,0.15)';this.style.color='var(--muted)';">
                     📝 + Přidat krátkou poznámku k akci
                     <span style="opacity:0.6;font-size:0.7rem;">(volitelné — hlavní komunikace v Pracovním deníku výše)</span>
                 </button>
@@ -1776,7 +1776,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                             title="Sbalit poznámku"
                             style="position:absolute;top:0.25rem;right:0.4rem;z-index:2;
                                    background:rgba(0,0,0,0.4);color:var(--muted);
-                                   border:1px solid rgba(255,255,255,0.15);border-radius:4px;
+                                   border:1px solid rgba(0,0,0,0.15);border-radius:4px;
                                    padding:0.05rem 0.4rem;font-size:0.7rem;cursor:pointer;
                                    font-family:inherit;line-height:1;">
                         × sbalit
@@ -1935,7 +1935,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                             title="Uloží do Callbacků bez konkrétního termínu — kontakt zůstane na konci seznamu"
                             style="font-size:0.78rem;padding:0.35rem 0.85rem;
                                    background:transparent;color:var(--muted);
-                                   border:1px dashed rgba(255,255,255,0.2);border-radius:5px;cursor:pointer;
+                                   border:1px dashed rgba(0,0,0,0.2);border-radius:5px;cursor:pointer;
                                    font-family:inherit;">
                         🕓 Bez data
                     </button>
@@ -2058,7 +2058,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                                 onclick="ozPredatBoDialogToggle(<?= $cId ?>)"
                                 style="padding:0.35rem 0.85rem;font-size:0.78rem;
                                        background:transparent;color:var(--muted);
-                                       border:1px solid rgba(255,255,255,0.15);border-radius:5px;cursor:pointer;">
+                                       border:1px solid rgba(0,0,0,0.15);border-radius:5px;cursor:pointer;">
                             Zrušit
                         </button>
                         <button type="submit"
@@ -2137,7 +2137,7 @@ $renewalsForOz = $renewalsForOz ?? [];
 
             <!-- Komentář navolávačky -->
             <?php if ($callerComment !== '') { ?>
-            <div style="background:rgba(255,255,255,0.04);border-radius:5px;
+            <div style="background:rgba(0,0,0,0.04);border-radius:5px;
                         padding:0.35rem 0.6rem;font-size:0.78rem;
                         border-left:2px solid rgba(52,152,219,0.5);">
                 <span style="font-size:0.65rem;text-transform:uppercase;color:#3498db;
@@ -2148,7 +2148,7 @@ $renewalsForOz = $renewalsForOz ?? [];
 
             <!-- Vaše předchozí odpověď (pokud existuje) -->
             <?php if ($ozComment !== '') { ?>
-            <div style="background:rgba(255,255,255,0.04);border-radius:5px;
+            <div style="background:rgba(0,0,0,0.04);border-radius:5px;
                         padding:0.35rem 0.6rem;font-size:0.78rem;
                         border-left:2px solid rgba(243,156,18,0.5);">
                 <span style="font-size:0.65rem;text-transform:uppercase;color:var(--oz-reklamace);

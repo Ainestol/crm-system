@@ -146,7 +146,21 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
 }
 .role-section--empty { display: none; }
 
-/* Dvousloupcový layout */
+/* Management role-sections — grid na PC, stack na mobilu */
+.users-mgmt-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+@media (max-width: 1100px) {
+    .users-mgmt-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+    .users-mgmt-grid { grid-template-columns: 1fr; }
+}
+
+/* Dvousloupcový layout — Navolávačky | Obchodáci */
 .users-two-col {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -157,10 +171,11 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
     .users-two-col { grid-template-columns: 1fr; }
 }
 .col-panel {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.07);
+    background: var(--color-card-bg);
+    border: 1px solid var(--color-border);
     border-radius: 10px;
     padding: 0.9rem 1rem 0.6rem;
+    box-shadow: var(--shadow-card);
 }
 .col-panel__header {
     display: flex; align-items: center; gap: 0.5rem;
@@ -171,14 +186,15 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
 
 /* Karta uživatele */
 .ucard {
-    background: var(--card);
-    border: 1px solid rgba(255,255,255,0.07);
+    background: var(--color-card-bg);
+    border: 1px solid var(--color-border);
     border-radius: 8px;
     padding: 0.65rem 0.85rem;
     margin-bottom: 0.5rem;
-    transition: border-color 0.15s;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    box-shadow: var(--shadow-card);
 }
-.ucard:hover { border-color: rgba(255,255,255,0.15); }
+.ucard:hover { border-color: var(--color-border-strong); box-shadow: var(--shadow-card-hover); }
 .ucard--inactive { opacity: 0.45; }
 .ucard__info { margin-bottom: 0.4rem; }
 .ucard__name {
@@ -204,7 +220,7 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
     display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.3rem;
 }
 .ucard__deactivate {
-    border-top: 1px solid rgba(255,255,255,0.06);
+    border-top: 1px solid rgba(0,0,0,0.06);
     padding-top: 0.4rem; margin-top: 0.3rem;
 }
 /* Smazat trvale — malé ikonkové tlačítko (2-step inline confirm) */
@@ -244,7 +260,7 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
 .ucard__reassign-select {
     font-size: 0.72rem; padding: 0.2rem 0.4rem;
     background: var(--bg); color: var(--text);
-    border: 1px solid rgba(255,255,255,0.15); border-radius: 4px;
+    border: 1px solid rgba(0,0,0,0.15); border-radius: 4px;
 }
 </style>
 
@@ -265,7 +281,8 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
         <a class="btn btn-secondary" href="<?= crm_h(crm_url('/dashboard')) ?>">Zpět na dashboard</a>
     </div>
 
-    <!-- ── Management: Majitel → Superadmin → Backoffice → Čistička ── -->
+    <!-- ── Management: Majitel → Superadmin → Backoffice → Čistička (4-col grid na PC) ── -->
+    <div class="users-mgmt-grid">
     <?php foreach (['majitel', 'superadmin', 'backoffice', 'cisticka'] as $role) {
         $meta  = $roleMeta[$role];
         $usersInGroup = $groups[$role];
@@ -285,6 +302,7 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
         <?php } ?>
     </div>
     <?php } ?>
+    </div>
 
     <!-- ── Dvousloupcový layout: Navolávačky | Obchodáci ── -->
     <div class="users-two-col">

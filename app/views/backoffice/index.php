@@ -206,7 +206,7 @@ if (!function_exists('boElapsed')) {
                         }
                     ?>
                     <details id="c-<?= $cId ?>" class="bo-card bo-card--nezajem"
-                             style="background:rgba(255,255,255,0.02);">
+                             style="background:rgba(0,0,0,0.02);">
                         <summary style="cursor:pointer;padding:0.5rem 0.75rem;
                                         display:flex;align-items:center;gap:0.7rem;flex-wrap:wrap;list-style:none;">
                             <span style="font-size:0.65rem;color:var(--bo-text-3);">▶</span>
