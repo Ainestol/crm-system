@@ -10,70 +10,98 @@
 <script src="https://cdn.jsdelivr.net/npm/gridjs/dist/gridjs.umd.js"></script>
 
 <style>
-.dg-wrap { padding: 1.2rem 1rem; max-width: 1400px; margin: 0 auto; }
-.dg-wrap h1 { margin: 0 0 0.4rem; font-size: 1.35rem; }
-.dg-wrap .lead { color: var(--bo-text-3, #888); font-size: 0.85rem; margin-bottom: 1rem; }
-.dg-breadcrumb { margin-bottom: 0.8rem; font-size: 0.78rem; }
-.dg-breadcrumb a { color: var(--brand-primary, #5a6cff); text-decoration: none; padding: 0.25rem 0.55rem; border-radius: 6px; background: rgba(90,108,255,0.1); border: 1px solid rgba(90,108,255,0.25); }
-.dg-breadcrumb a:hover { background: rgba(90,108,255,0.18); }
+.dg-wrap { padding: 0.8rem 1rem 1.2rem; max-width: 1400px; margin: 0 auto; }
+.dg-wrap h1 { margin: 0 0 0.4rem; font-size: 1.35rem; color: var(--color-text); }
+.dg-wrap .lead { color: var(--color-text-muted); font-size: 0.85rem; margin-bottom: 1rem; }
+.dg-breadcrumb {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    margin: -0.8rem -1rem 0.8rem;
+    padding: 0.55rem 1rem;
+    background: var(--color-card-bg);
+    border-bottom: 1px solid var(--color-border);
+    font-size: 0.78rem;
+    display: flex; gap: 0.4rem; flex-wrap: wrap;
+}
+.dg-breadcrumb a {
+    color: var(--color-badge-nove);
+    text-decoration: none;
+    padding: 0.25rem 0.6rem;
+    border-radius: var(--radius-btn);
+    background: var(--color-badge-nove-bg);
+    border: 1px solid #b5d4f4;
+    font-weight: 600;
+}
+.dg-breadcrumb a:hover { background: #d4e5f7; }
+.dg-breadcrumb a.is-current { background: var(--color-badge-nove); color: #fff; border-color: var(--color-badge-nove); }
 
 .dg-toolbar {
     display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center;
-    padding: 0.6rem 0.8rem;
-    background: var(--bo-surface, rgba(0,0,0,0.02));
-    border: 1px solid var(--bo-border, rgba(0,0,0,0.08));
+    padding: 0.7rem 0.95rem;
+    background: var(--color-card-bg);
+    border: 1px solid var(--color-border);
     border-radius: 8px;
     margin-bottom: 0.8rem;
+    box-shadow: var(--shadow-card);
 }
 .dg-toolbar__info {
     flex: 1 1 auto;
     font-size: 0.85rem;
-    color: var(--bo-text-2, #aaa);
+    color: var(--color-text-muted);
 }
-.dg-toolbar__info strong { color: var(--bo-text, #fff); }
+.dg-toolbar__info strong { color: var(--color-text); }
 .dg-toolbar__refresh-status {
     display: inline-block;
     margin-left: 0.4rem;
-    padding: 0.1rem 0.5rem;
+    padding: 0.15rem 0.55rem;
     font-size: 0.7rem;
+    font-weight: 700;
     border-radius: 999px;
-    background: rgba(102,187,106,0.15);
-    color: var(--bo-success, #66bb6a);
+    background: var(--color-badge-uzavreno-bg);
+    color: var(--color-badge-uzavreno);
+    border: 1px solid #bbf7d0;
 }
 .dg-toolbar__refresh-status--paused {
-    background: rgba(0,0,0,0.06);
-    color: var(--bo-text-3, #888);
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    border-color: var(--color-border);
 }
 .dg-toolbar__refresh-status--loading {
-    background: rgba(90,108,255,0.15);
-    color: var(--brand-primary, #5a6cff);
+    background: var(--color-badge-nove-bg);
+    color: var(--color-badge-nove);
+    border-color: #b5d4f4;
 }
 .dg-toolbar label {
-    display: flex; gap: 0.3rem; align-items: center;
-    font-size: 0.8rem; color: var(--bo-text-2, #aaa); cursor: pointer;
+    display: flex; gap: 0.35rem; align-items: center;
+    font-size: 0.8rem; color: var(--color-text-muted); cursor: pointer;
+    font-weight: 500;
 }
 .dg-toolbar select, .dg-toolbar input[type=text] {
-    padding: 0.3rem 0.5rem;
-    background: var(--bo-bg);
-    color: var(--bo-text);
-    border: 1px solid var(--bo-border);
-    border-radius: 6px;
+    padding: 0.4rem 0.65rem;
+    background: #ffffff;
+    color: var(--color-text);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-btn);
     font-size: 0.82rem;
+    font-family: var(--font-main);
 }
 .dg-toolbar button {
     padding: 0.4rem 0.8rem;
-    border: 1px solid var(--bo-border);
-    background: rgba(0,0,0,0.04);
-    color: var(--bo-text);
-    border-radius: 6px;
+    border: 1px solid var(--color-border-strong);
+    background: var(--color-btn-bg);
+    color: var(--color-text);
+    border-radius: var(--radius-btn);
     cursor: pointer;
     font-size: 0.82rem;
+    font-weight: 500;
+    font-family: var(--font-main);
 }
-.dg-toolbar button:hover { background: rgba(0,0,0,0.08); }
+.dg-toolbar button:hover { background: var(--color-border); }
 .dg-toolbar button.primary {
-    background: var(--brand-primary, #5a6cff);
+    background: var(--color-badge-nove);
     color: #fff;
-    border-color: var(--brand-primary, #5a6cff);
+    border-color: var(--color-badge-nove);
 }
 
 /* ── Grid.js: Excel-like LIGHT theme uvnitř tmavé stránky ──
@@ -342,12 +370,11 @@
 <section class="dg-wrap">
     <div class="dg-breadcrumb">
         <a href="<?= crm_h(crm_url('/dashboard')) ?>">← Dashboard</a>
-        &nbsp;
+        <a href="#" class="is-current">📊 Live datagrid</a>
         <a href="<?= crm_h(crm_url('/admin/feed')) ?>">📰 Activity feed</a>
-        &nbsp;
         <a href="<?= crm_h(crm_url('/admin/duplicates')) ?>">🕵 Audit duplicit</a>
-        &nbsp;
         <a href="<?= crm_h(crm_url('/admin/import')) ?>">📥 Import</a>
+        <a href="<?= crm_h(crm_url('/admin/users')) ?>">👥 Uživatelé</a>
     </div>
 
     <h1>📊 Live datagrid</h1>

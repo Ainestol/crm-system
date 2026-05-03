@@ -46,7 +46,7 @@ function ozqElapsed(?string $dt): string {
         </div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
             <a href="<?= crm_h(crm_url('/oz')) ?>" class="oz-btn-secondary oz-btn-sm">📊 Dashboard</a>
-            <a href="<?= crm_h(crm_url('/oz/leads')) ?>" class="oz-btn-ghost oz-btn-sm" title="Klasický view (legacy)">Stará pracovní plocha</a>
+            <a href="<?= crm_h(crm_url('/oz/leads')) ?>" class="oz-btn-ghost oz-btn-sm" title="Otevřít plnou pracovní plochu se všemi taby">💼 Pracovní plocha →</a>
         </div>
     </div>
 

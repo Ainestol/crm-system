@@ -40,7 +40,29 @@ declare(strict_types=1);
     display: flex; justify-content: space-between; align-items: baseline;
     font-size: 0.8rem; margin-bottom: 0.35rem;
 }
-.import-progress__pct { font-weight: 700; color: var(--accent); }
+.import-progress__pct { font-weight: 700; color: var(--color-badge-nove); }
+
+/* Sticky admin breadcrumb */
+.admin-breadcrumb {
+    position: sticky; top: 0; z-index: 20;
+    margin: -0.8rem -1rem 0.8rem;
+    padding: 0.55rem 1rem;
+    background: var(--color-card-bg);
+    border-bottom: 1px solid var(--color-border);
+    font-size: 0.78rem;
+    display: flex; gap: 0.4rem; flex-wrap: wrap;
+}
+.admin-breadcrumb a {
+    color: var(--color-badge-nove);
+    text-decoration: none;
+    padding: 0.25rem 0.6rem;
+    border-radius: var(--radius-btn);
+    background: var(--color-badge-nove-bg);
+    border: 1px solid #b5d4f4;
+    font-weight: 600;
+}
+.admin-breadcrumb a:hover { background: #d4e5f7; }
+.admin-breadcrumb a.is-current { background: var(--color-badge-nove); color: #fff; border-color: var(--color-badge-nove); }
 .import-progress__bar {
     height: 16px; background: rgba(0,0,0,0.08);
     border-radius: 8px; overflow: hidden;
@@ -65,10 +87,13 @@ declare(strict_types=1);
 </style>
 
 <section class="card import-card">
-    <div style="margin-bottom:0.8rem;font-size:0.78rem;display:flex;gap:0.4rem;flex-wrap:wrap;">
-        <a href="<?= crm_h(crm_url('/dashboard')) ?>" style="color:var(--brand-primary,#5a6cff);text-decoration:none;padding:0.25rem 0.55rem;border-radius:6px;background:rgba(90,108,255,0.1);border:1px solid rgba(90,108,255,0.25);">← Dashboard</a>
-        <a href="<?= crm_h(crm_url('/admin/datagrid')) ?>" style="color:var(--brand-primary,#5a6cff);text-decoration:none;padding:0.25rem 0.55rem;border-radius:6px;background:rgba(90,108,255,0.1);border:1px solid rgba(90,108,255,0.25);">📊 Live datagrid</a>
-        <a href="<?= crm_h(crm_url('/admin/duplicates')) ?>" style="color:var(--brand-primary,#5a6cff);text-decoration:none;padding:0.25rem 0.55rem;border-radius:6px;background:rgba(90,108,255,0.1);border:1px solid rgba(90,108,255,0.25);">🕵 Audit duplicit</a>
+    <div class="admin-breadcrumb">
+        <a href="<?= crm_h(crm_url('/dashboard')) ?>">← Dashboard</a>
+        <a href="#" class="is-current">📥 Import</a>
+        <a href="<?= crm_h(crm_url('/admin/feed')) ?>">📰 Activity feed</a>
+        <a href="<?= crm_h(crm_url('/admin/datagrid')) ?>">📊 Live datagrid</a>
+        <a href="<?= crm_h(crm_url('/admin/duplicates')) ?>">🕵 Audit duplicit</a>
+        <a href="<?= crm_h(crm_url('/admin/users')) ?>">👥 Uživatelé</a>
     </div>
     <h1>📥 Import kontaktů</h1>
 
