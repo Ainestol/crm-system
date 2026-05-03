@@ -143,6 +143,99 @@ final class AdminUsersController
         crm_redirect('/admin/users');
     }
 
+    /** Role povolené pro testovací účet (tester nemůže být admin). */
+    private const TEST_ACCOUNT_ROLES = ['obchodak', 'navolavacka', 'cisticka', 'backoffice'];
+
+    public function getNewTest(): void
+    {
+        $actor = $this->actor();
+        crm_require_roles($actor, ['superadmin']);
+        $flash = crm_flash_take();
+        $title = 'Nový testovací účet';
+        $csrf = crm_csrf_token();
+        $roleOptions = self::TEST_ACCOUNT_ROLES;
+        $testDomain = CRM_TEST_ACCOUNT_DOMAIN;
+        ob_start();
+        require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'users' . DIRECTORY_SEPARATOR . 'new_test.php';
+        $content = (string) ob_get_clean();
+        require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . 'layout' . DIRECTORY_SEPARATOR . 'base.php';
+    }
+
+    public function postNewTest(): void
+    {
+        $actor = $this->actor();
+        crm_require_roles($actor, ['superadmin']);
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            crm_flash_set('Neplatný CSRF token.');
+            crm_redirect('/admin/users/new-test');
+        }
+
+        $username = strtolower(trim((string) ($_POST['username'] ?? '')));
+        $jmeno = trim((string) ($_POST['jmeno'] ?? ''));
+        $role = (string) ($_POST['role'] ?? '');
+        $password = (string) ($_POST['password'] ?? '');
+        $passwordConfirm = (string) ($_POST['password_confirm'] ?? '');
+
+        if ($username === '' || !preg_match('/^[a-z0-9][a-z0-9._-]{1,31}$/', $username)) {
+            crm_flash_set('Přihlašovací jméno: 2–32 znaků, povolené a–z, 0–9, tečka, podtržítko, pomlčka.');
+            crm_redirect('/admin/users/new-test');
+        }
+        if ($jmeno === '') {
+            $jmeno = $username;
+        }
+        if (!in_array($role, self::TEST_ACCOUNT_ROLES, true)) {
+            crm_flash_set('Vyberte platnou roli pro testovací účet.');
+            crm_redirect('/admin/users/new-test');
+        }
+        if (strlen($password) < 6) {
+            crm_flash_set('Heslo musí mít alespoň 6 znaků.');
+            crm_redirect('/admin/users/new-test');
+        }
+        if ($password !== $passwordConfirm) {
+            crm_flash_set('Hesla se neshodují.');
+            crm_redirect('/admin/users/new-test');
+        }
+
+        $email = $username . '@' . CRM_TEST_ACCOUNT_DOMAIN;
+
+        $chk = $this->pdo->prepare('SELECT COUNT(*) FROM users WHERE email = :e');
+        $chk->execute(['e' => $email]);
+        if ((int) $chk->fetchColumn() > 0) {
+            crm_flash_set('Testovací účet s tímto jménem již existuje.');
+            crm_redirect('/admin/users/new-test');
+        }
+
+        $hash = crm_auth_password_hash_new($password);
+        $actorId = (int) $actor['id'];
+
+        try {
+            $ins = $this->pdo->prepare(
+                'INSERT INTO users (jmeno, email, heslo_hash, role, primary_region, aktivni, totp_secret, totp_enabled, must_change_password, created_at, deactivated_at, created_by)
+                 VALUES (:jm, :em, :hh, :rl, NULL, 1, NULL, 0, 0, NOW(3), NULL, :cb)'
+            );
+            $ins->execute([
+                'jm' => $jmeno,
+                'em' => $email,
+                'hh' => $hash,
+                'rl' => $role,
+                'cb' => $actorId,
+            ]);
+            $newId = (int) $this->pdo->lastInsertId();
+        } catch (Throwable $e) {
+            error_log('[AdminUsers::postNewTest] ' . $e->getMessage() . ' | ' . $e->getFile() . ':' . $e->getLine());
+            crm_flash_set('Vytvoření testovacího účtu se nezdařilo. Detail: ' . $e->getMessage());
+            crm_redirect('/admin/users/new-test');
+        }
+
+        crm_audit_log($this->pdo, $actorId, 'user_create_test', 'user', $newId, ['email' => $email, 'role' => $role]);
+
+        crm_flash_set('✓ Testovací účet vytvořen — předej testerovi:'
+            . "\n👤 Login: " . $email
+            . "\n🔑 Heslo: " . $password
+            . "\n🎭 Role: " . $role);
+        crm_redirect('/admin/users');
+    }
+
     public function getEdit(): void
     {
         $actor = $this->actor();

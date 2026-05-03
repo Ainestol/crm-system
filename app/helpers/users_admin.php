@@ -104,6 +104,16 @@ function crm_user_regions_replace(PDO $pdo, int $userId, array $regions): void
     }
 }
 
+/** Doména používaná pro testovací účty (login je `username@test.local`). */
+const CRM_TEST_ACCOUNT_DOMAIN = 'test.local';
+
+/** Vrátí true, pokud uživatel je testovací účet (login končí na @test.local). */
+function crm_user_is_test_account(array $user): bool
+{
+    $email = strtolower((string) ($user['email'] ?? ''));
+    return str_ends_with($email, '@' . CRM_TEST_ACCOUNT_DOMAIN);
+}
+
 function crm_generate_temp_password(int $length = 14): string
 {
     $alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';

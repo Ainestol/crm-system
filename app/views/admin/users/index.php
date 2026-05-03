@@ -47,10 +47,16 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
     $canManage = crm_users_actor_can_manage_target((string) $actor['role'], $u);
     $isSelf = $uid === (int) ($actor['id'] ?? 0);
     $isSuperadmin = (string) ($actor['role'] ?? '') === 'superadmin';
+    $isTestAccount = crm_user_is_test_account($u);
     ?>
-    <div class="ucard <?= $aktivni ? '' : 'ucard--inactive' ?>">
+    <div class="ucard <?= $aktivni ? '' : 'ucard--inactive' ?> <?= $isTestAccount ? 'ucard--test' : '' ?>">
         <div class="ucard__info">
-            <div class="ucard__name"><?= crm_h((string) ($u['jmeno'] ?? '')) ?></div>
+            <div class="ucard__name">
+                <?= crm_h((string) ($u['jmeno'] ?? '')) ?>
+                <?php if ($isTestAccount) { ?>
+                    <span class="ucard__badge ucard__badge--test" title="Testovací účet (login končí na @test.local)">🧪 TEST</span>
+                <?php } ?>
+            </div>
             <div class="ucard__email"><?= crm_h((string) ($u['email'] ?? '')) ?></div>
             <?php if (!$aktivni) { ?>
                 <span class="ucard__badge ucard__badge--inactive">Deaktivovaný</span>
@@ -185,6 +191,15 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
     display: inline-block; font-size: 0.65rem; background: rgba(231,76,60,0.2);
     color: #e74c3c; border-radius: 4px; padding: 0.1rem 0.4rem; margin-top: 0.2rem;
 }
+.ucard__badge--test {
+    display: inline-block; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em;
+    background: rgba(241,196,15,0.18); color: #f1c40f;
+    border: 1px solid rgba(241,196,15,0.4); border-radius: 4px;
+    padding: 0.05rem 0.35rem; margin-left: 0.4rem; vertical-align: middle;
+}
+.ucard--test {
+    border-left: 3px solid #f1c40f;
+}
 .ucard__actions {
     display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.3rem;
 }
@@ -242,6 +257,9 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
 
     <div class="users-toolbar">
         <a class="btn" href="<?= crm_h(crm_url('/admin/users/new')) ?>">+ Nový uživatel</a>
+        <?php if (((string) ($actor['role'] ?? '')) === 'superadmin') { ?>
+            <a class="btn btn-secondary" href="<?= crm_h(crm_url('/admin/users/new-test')) ?>" title="Účet pro testera bez emailu, login @test.local">🧪 Testovací účet</a>
+        <?php } ?>
         <a class="btn btn-secondary" href="<?= crm_h(crm_url('/admin/import')) ?>">CSV import kontaktů</a>
         <a class="btn btn-secondary" href="<?= crm_h(crm_url('/admin/oz-targets')) ?>">🎯 Kvóty OZ</a>
         <a class="btn btn-secondary" href="<?= crm_h(crm_url('/dashboard')) ?>">Zpět na dashboard</a>
