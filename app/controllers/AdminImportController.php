@@ -92,6 +92,7 @@ final class AdminImportController
         ob_start();
         require dirname(__DIR__) . '/views/admin/import/form.php';
         $content = (string) ob_get_clean();
+        $user = $actor; // alias pro layout/base.php (sidebar + topbar)
         require dirname(__DIR__) . '/views/layout/base.php';
     }
 
@@ -226,6 +227,7 @@ final class AdminImportController
         ob_start();
         require dirname(__DIR__) . '/views/admin/import/preview.php';
         $content = (string) ob_get_clean();
+        $user = $actor; // alias pro layout/base.php (sidebar + topbar)
         require dirname(__DIR__) . '/views/layout/base.php';
     }
 

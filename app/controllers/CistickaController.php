@@ -77,11 +77,30 @@ final class CistickaController
         // Goal-driven regions: kraje, kde má čistička v AKTUÁLNÍM měsíci
         // nastavený cíl (target > 0). Tyto OVERRIDE user_regions filter
         // pro K-ověření tab (NIKOLI pro tiles — ty jsou ze switched-to období).
+        //
+        // ROZDĚLENO na DVĚ kategorie:
+        //   $goalRegions     — AKTIVNÍ (target > 0 a JEŠTĚ NESPLNĚNÉ) → filtr K-ověření
+        //   $goalRegionsAll  — VŠECHNY s cílem (vč. splněných)        → tile UI
+        //   $completedRegions — splněné (done >= target)               → strict empty když user klikne
+        //
+        // Důsledek: jakmile čistička splní 10/10 v Praze, kontakty z Prahy se
+        // přestanou objevovat ve fronte K ověření. Tile "Praha 10/10 ✓ Hotovo"
+        // zůstává viditelný (pro přehled), ale klikem se nic nenahraje.
         /** @var list<string> $goalRegions */
-        $goalRegions = [];
+        $goalRegions      = [];
+        /** @var list<string> $goalRegionsAll */
+        $goalRegionsAll   = [];
+        /** @var list<string> $completedRegions */
+        $completedRegions = [];
         foreach ($currentRegionGoals as $g) {
-            if ((int) $g['target'] > 0) {
-                $goalRegions[] = (string) $g['region'];
+            $tgt = (int) ($g['target'] ?? 0);
+            if ($tgt <= 0) continue;
+            $reg = (string) $g['region'];
+            $goalRegionsAll[] = $reg;
+            if (!empty($g['completed'])) {
+                $completedRegions[] = $reg;
+            } else {
+                $goalRegions[] = $reg;   // aktivní (= ještě nesplněné)
             }
         }
         $hasGoals = $goalRegions !== [];
@@ -103,10 +122,11 @@ final class CistickaController
         $hasEffectiveRegions = $effectiveRegions !== [];
 
         // Dostupné regiony pro filtr UI (tiles čističky a starý spodní filtr).
-        // Když existují goals → přesně goal regions (i ty s 0 NEW kontakty).
+        // Když existují goals → goalRegionsAll (vč. splněných — tile "Praha 10/10 ✓"
+        // musí být vidět i po splnění, aby čistička viděla, že kraj je hotový).
         // Jinak fallback: regiony s NEW kontaktem v rámci user_regions.
-        if ($hasGoals) {
-            $availableRegions = $goalRegions;
+        if ($goalRegionsAll !== []) {
+            $availableRegions = $goalRegionsAll;
         } elseif ($hasUserRegions) {
             $placeholders = implode(',', array_fill(0, count($userRegions), '?'));
             $avStmt = $this->pdo->prepare(
@@ -175,10 +195,16 @@ final class CistickaController
             $regionInSql = "AND region IN ($ph)";
         }
 
-        // Strict mode: K-ověření tab + žádné goals → prázdný list bez SQL query.
-        // (Vyhne se nezamýšlenému "WHERE stav='NEW'" bez region filtru, který
-        // by vrátil všechno.)
-        $strictEmpty = ($tab === 'overit' && !$hasGoals);
+        // Strict mode: prázdný list bez SQL query, když:
+        //   1) K-ověření tab + žádné goals → bez goals čistička nemá co dělat
+        //   2) K-ověření tab + user vybral SPLNĚNÝ region → kraj má 10/10, žádné
+        //      další kontakty se neobjevují (byť ve frontě by ještě fyzicky byly).
+        //
+        // Tile "Praha 10/10 ✓" zůstává klikatelné, ale klik vrátí empty + hlášku.
+        $clickedCompleted = ($tab === 'overit'
+                             && $selectedRegion !== ''
+                             && in_array($selectedRegion, $completedRegions, true));
+        $strictEmpty = ($tab === 'overit' && !$hasGoals) || $clickedCompleted;
 
         if ($strictEmpty) {
             $contacts   = [];
@@ -287,6 +313,40 @@ final class CistickaController
         );
         $zkontTotalStmt->execute(['uid' => $cistickaId]);
         $zkontrolovaneTotal = (int) $zkontTotalStmt->fetchColumn();
+
+        // ── Widget Moje výplata: měsíční počet ověření + sazba + Kč ──
+        // URL parametry ?cw_year &cw_month umožňují navigaci v historii.
+        // Default = aktuální měsíc. Po kliknutí ←/→ se přepočte query níže.
+        $this->ensureRewardsTable();
+        $cwCurYear  = (int) date('Y');
+        $cwCurMonth = (int) date('n');
+        $cwYear     = max(2024, min(2030, (int) ($_GET['cw_year']  ?? $cwCurYear)));
+        $cwMonth    = max(1,    min(12,   (int) ($_GET['cw_month'] ?? $cwCurMonth)));
+        $cwIsCurrent = ($cwYear === $cwCurYear && $cwMonth === $cwCurMonth);
+
+        // Počet ověření této čističky za vybraný měsíc — DISTINCT contact_id
+        // (kdyby čistička stejný kontakt ověřila víckrát, počítá se 1×).
+        // Bere READY i VF_SKIP — obě se proplácí.
+        $cwCntStmt = $this->pdo->prepare(
+            "SELECT
+                COUNT(DISTINCT contact_id)                                            AS total,
+                COUNT(DISTINCT CASE WHEN new_status = 'READY'   THEN contact_id END)  AS ready_count,
+                COUNT(DISTINCT CASE WHEN new_status = 'VF_SKIP' THEN contact_id END)  AS vf_count
+             FROM workflow_log
+             WHERE user_id = :uid
+               AND new_status IN ('READY', 'VF_SKIP')
+               AND YEAR(created_at)  = :y
+               AND MONTH(created_at) = :m"
+        );
+        $cwCntStmt->execute(['uid' => $cistickaId, 'y' => $cwYear, 'm' => $cwMonth]);
+        $cwCounts = $cwCntStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'ready_count' => 0, 'vf_count' => 0];
+        $cwTotalCount = (int) ($cwCounts['total'] ?? 0);
+        $cwReadyCount = (int) ($cwCounts['ready_count'] ?? 0);
+        $cwVfCount    = (int) ($cwCounts['vf_count']    ?? 0);
+
+        // Sazba — current rate (může být null pokud žádná aktivní)
+        $cwRate         = $this->currentRewardRate();
+        $cwEarnings     = ($cwRate !== null) ? round($cwTotalCount * $cwRate, 2) : 0.0;
 
         $title = 'Ověřování kontaktů';
         ob_start();
@@ -820,6 +880,70 @@ final class CistickaController
      * Migrace jsou idempotentní — všechny ALTER/UPDATE jsou v try/catch a při
      * opakovaném volání se nestaly žádné škody.
      */
+    /**
+     * Auto-create cisticka_rewards_config (idempotentní).
+     * Volá se před každou prací se sazbou — kdyby majitel ještě nepustil
+     * migraci 008. Při prvním vytvoření vloží i seed 0.70 Kč.
+     */
+    private function ensureRewardsTable(): void
+    {
+        try {
+            $this->pdo->exec(
+                "CREATE TABLE IF NOT EXISTS `cisticka_rewards_config` (
+                  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                  `amount_czk` DECIMAL(8,4) NOT NULL,
+                  `valid_from` DATE NOT NULL,
+                  `valid_to`   DATE NULL DEFAULT NULL,
+                  PRIMARY KEY (`id`),
+                  KEY `idx_cisticka_rewards_valid` (`valid_from`, `valid_to`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+            );
+            // Seed: pokud je tabulka prázdná, vlož default sazbu 0.70 Kč.
+            $cnt = (int) $this->pdo->query('SELECT COUNT(*) FROM cisticka_rewards_config')->fetchColumn();
+            if ($cnt === 0) {
+                $this->pdo->exec(
+                    "INSERT INTO cisticka_rewards_config (amount_czk, valid_from, valid_to)
+                     VALUES (0.7000, CURDATE(), NULL)"
+                );
+            }
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+        }
+    }
+
+    /**
+     * Vrátí aktuální sazbu (NULL pokud není žádná aktivní).
+     * Aktivní = valid_from <= dnes a (valid_to IS NULL OR valid_to >= dnes).
+     */
+    private function currentRewardRate(): ?float
+    {
+        try {
+            $row = $this->pdo->query(
+                "SELECT amount_czk FROM cisticka_rewards_config
+                 WHERE valid_from <= CURDATE() AND (valid_to IS NULL OR valid_to >= CURDATE())
+                 ORDER BY valid_from DESC LIMIT 1"
+            )->fetchColumn();
+            return $row !== false ? (float) $row : null;
+        } catch (\PDOException) {
+            return null;
+        }
+    }
+
+    /** Načte celou historii sazeb (pro audit panel). */
+    private function rewardsHistory(): array
+    {
+        try {
+            $rows = $this->pdo->query(
+                "SELECT id, amount_czk, valid_from, valid_to
+                 FROM cisticka_rewards_config
+                 ORDER BY valid_from DESC, id DESC"
+            )->fetchAll(PDO::FETCH_ASSOC);
+            return is_array($rows) ? $rows : [];
+        } catch (\PDOException) {
+            return [];
+        }
+    }
+
     private function ensureRegionGoalsTable(): void
     {
         try {
@@ -1049,6 +1173,53 @@ final class CistickaController
         $actor = crm_require_user($this->pdo);
         crm_require_roles($actor, ['majitel', 'superadmin']);
         $this->ensureRegionGoalsTable();
+        $this->ensureRewardsTable();
+
+        // ── Sazba odměny čističky za jedno ověření (READY i VF_SKIP) ──
+        // Aktuální + historie pro audit (zobrazí se v <details> sekci nahoře view).
+        $cwCurrentRate = $this->currentRewardRate();      // float nebo null
+        $cwRateHistory = $this->rewardsHistory();         // list rows
+
+        // ── Admin přehled: všechny čističky × měsíc (kolik mají splatné teď) ──
+        // URL ?cw_year &cw_month přepíná měsíc; default = aktuální.
+        $cwCurY = (int) date('Y');
+        $cwCurM = (int) date('n');
+        $cwAdminYear  = max(2024, min(2030, (int) ($_GET['cw_year']  ?? $cwCurY)));
+        $cwAdminMonth = max(1,    min(12,   (int) ($_GET['cw_month'] ?? $cwCurM)));
+        $cwAdminIsCurrent = ($cwAdminYear === $cwCurY && $cwAdminMonth === $cwCurM);
+
+        // Najít všechny aktivní čističky a pro každou spočítat ověření v měsíci.
+        // LEFT JOIN se subquery na DISTINCT contact_id → každý kontakt 1× per čistička.
+        try {
+            $cwAllStmt = $this->pdo->prepare(
+                "SELECT u.id, u.jmeno,
+                        COALESCE(t.total, 0)   AS total,
+                        COALESCE(t.ready_n, 0) AS ready_count,
+                        COALESCE(t.vf_n, 0)    AS vf_count
+                 FROM users u
+                 LEFT JOIN (
+                     SELECT user_id,
+                            COUNT(DISTINCT contact_id) AS total,
+                            COUNT(DISTINCT CASE WHEN new_status = 'READY'   THEN contact_id END) AS ready_n,
+                            COUNT(DISTINCT CASE WHEN new_status = 'VF_SKIP' THEN contact_id END) AS vf_n
+                     FROM workflow_log
+                     WHERE new_status IN ('READY','VF_SKIP')
+                       AND YEAR(created_at)  = :y
+                       AND MONTH(created_at) = :m
+                     GROUP BY user_id
+                 ) t ON t.user_id = u.id
+                 WHERE u.role = 'cisticka' AND u.aktivni = 1
+                 ORDER BY total DESC, u.jmeno ASC"
+            );
+            $cwAllStmt->execute(['y' => $cwAdminYear, 'm' => $cwAdminMonth]);
+            $cwAllCisticky = $cwAllStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+            $cwAllCisticky = [];
+        }
+        // Spočítat agregát pro celý tým
+        $cwTeamTotal    = (int) array_sum(array_column($cwAllCisticky, 'total'));
+        $cwTeamEarnings = ($cwCurrentRate !== null) ? round($cwTeamTotal * $cwCurrentRate, 2) : 0.0;
 
         // Vybraný měsíc — z GET ?month_key=YYYY-MM, default = aktuální.
         $selectedPeriod = $this->parsePeriodKey((string) ($_GET['month_key'] ?? ''));
@@ -1092,11 +1263,12 @@ final class CistickaController
 
         $flash = crm_flash_take();
         $csrf  = crm_csrf_token();
-        $title = 'Cíle čističky podle krajů';
+        $title = 'Cíle a sazba čističky';
         ob_start();
         require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views'
               . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'cisticka_goals.php';
         $content = (string) ob_get_clean();
+        $user = $actor; // alias pro layout/base.php (sidebar + topbar)
         require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views'
               . DIRECTORY_SEPARATOR . 'layout' . DIRECTORY_SEPARATOR . 'base.php';
     }
@@ -1164,5 +1336,174 @@ final class CistickaController
         crm_flash_set('✓ Cíle uloženy pro ' . $this->monthLabelFromPeriod($period) . '.');
         // Redirect zpět na stejný měsíc, aby admin viděl uložené hodnoty.
         crm_redirect('/admin/cisticka-goals?month_key=' . $this->periodToKey($period));
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  POST /admin/cisticka-rewards/save
+    //
+    //  Změna sazby čističky za jedno ověření.
+    //  Princip: zachovat historii — neUPDATE-ujeme starý záznam, místo
+    //  toho ho uzavřeme (valid_to = včera) a vložíme nový (valid_from = dnes).
+    //  Tak když se kdykoli ohlédneme zpět, víme jaká sazba platila.
+    // ════════════════════════════════════════════════════════════════
+    public function postAdminRewards(): void
+    {
+        $actor = crm_require_user($this->pdo);
+        crm_require_roles($actor, ['majitel', 'superadmin']);
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            crm_flash_set('Neplatný CSRF token.');
+            crm_redirect('/admin/cisticka-goals');
+        }
+        $this->ensureRewardsTable();
+
+        $rateStr = trim((string) ($_POST['amount_czk'] ?? ''));
+        // Akceptujeme čárku i tečku (CZ konvence)
+        $rateStr = str_replace(',', '.', $rateStr);
+        if (!is_numeric($rateStr)) {
+            crm_flash_set('⚠ Sazba musí být číslo (např. 0,70).');
+            crm_redirect('/admin/cisticka-goals#cisticka-rewards');
+        }
+        $rate = (float) $rateStr;
+        if ($rate <= 0 || $rate > 100) {
+            crm_flash_set('⚠ Sazba musí být mezi 0 a 100 Kč. Zadali jste ' . $rateStr . '.');
+            crm_redirect('/admin/cisticka-goals#cisticka-rewards');
+        }
+        // Zaokrouhlit na 4 desetinná místa (DB column = DECIMAL(8,4))
+        $rate = round($rate, 4);
+
+        // Pokud sazba beze změny → nic nedělat (avoid duplicate history rows).
+        $current = $this->currentRewardRate();
+        if ($current !== null && abs($current - $rate) < 0.00005) {
+            crm_flash_set('Sazba se nezměnila.');
+            crm_redirect('/admin/cisticka-goals#cisticka-rewards');
+        }
+
+        try {
+            $this->pdo->beginTransaction();
+            // 1) Uzavřít všechny aktivně platící záznamy (valid_to NULL nebo budoucnost)
+            //    → valid_to = včera, ať historie nepřekrývá nový záznam.
+            $this->pdo->prepare(
+                "UPDATE cisticka_rewards_config
+                 SET valid_to = DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+                 WHERE valid_to IS NULL OR valid_to >= CURDATE()"
+            )->execute();
+            // 2) Vložit nový záznam s platností od dnes.
+            $this->pdo->prepare(
+                "INSERT INTO cisticka_rewards_config (amount_czk, valid_from, valid_to)
+                 VALUES (:r, CURDATE(), NULL)"
+            )->execute(['r' => $rate]);
+            $this->pdo->commit();
+        } catch (\PDOException $e) {
+            $this->pdo->rollBack();
+            crm_db_log_error($e, __METHOD__);
+            crm_flash_set('⚠ Chyba při uložení sazby. Zkuste to prosím znovu.');
+            crm_redirect('/admin/cisticka-goals#cisticka-rewards');
+        }
+
+        crm_audit_log(
+            $this->pdo, (int) $actor['id'],
+            'cisticka_reward_change', 'cisticka_rewards_config', null,
+            ['old_rate' => $current, 'new_rate' => $rate]
+        );
+
+        crm_flash_set(sprintf('✓ Sazba změněna na %s Kč/ověření.', number_format($rate, 2, ',', ' ')));
+        crm_redirect('/admin/cisticka-goals#cisticka-rewards');
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  GET /cisticka/payout/print
+    //
+    //  Standalone tisková stránka — kolik dostane čistička za měsíc.
+    //  Hard-locked: čistička vidí jen sebe; admin/majitel může přes
+    //  ?cisticka_id=N pro konkrétní čističku (analogie OZ self-print).
+    // ════════════════════════════════════════════════════════════════
+    public function getPayoutPrint(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['cisticka', 'majitel', 'superadmin']);
+        $this->ensureRewardsTable();
+
+        if ((string) ($user['role'] ?? '') === 'cisticka') {
+            $cistickaId = (int) $user['id'];
+        } else {
+            $cistickaId = (int) ($_GET['cisticka_id'] ?? $user['id']);
+        }
+
+        $year  = max(2024, min(2030, (int) ($_GET['year']  ?? date('Y'))));
+        $month = max(1,    min(12,   (int) ($_GET['month'] ?? date('n'))));
+
+        // Info o čističce
+        $uStmt = $this->pdo->prepare(
+            "SELECT id, jmeno FROM users WHERE id = :id AND role = 'cisticka' LIMIT 1"
+        );
+        $uStmt->execute(['id' => $cistickaId]);
+        $cisticka = $uStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$cisticka) {
+            http_response_code(404);
+            echo 'Čistička nenalezena.';
+            exit;
+        }
+
+        // Všechna ověření této čističky za měsíc — DISTINCT contact_id, nejnovější
+        // workflow_log řádek per kontakt (kdyby čistička přepnula stejný kontakt 2×,
+        // bere se POSLEDNÍ ověření = jak je výsledný stav teď).
+        $sqlEvents = $this->pdo->prepare(
+            "SELECT c.id            AS contact_id,
+                    c.firma,
+                    c.telefon,
+                    c.region,
+                    c.operator,
+                    wl.new_status,
+                    wl.created_at  AS verified_at
+             FROM workflow_log wl
+             INNER JOIN (
+                 SELECT contact_id, MAX(id) AS last_id
+                 FROM workflow_log
+                 WHERE user_id = :uid1
+                   AND new_status IN ('READY', 'VF_SKIP')
+                   AND YEAR(created_at)  = :y
+                   AND MONTH(created_at) = :m
+                 GROUP BY contact_id
+             ) last_per_contact ON last_per_contact.last_id = wl.id
+             INNER JOIN contacts c ON c.id = wl.contact_id
+             WHERE wl.user_id = :uid2
+             ORDER BY wl.created_at DESC, c.id DESC"
+        );
+        $sqlEvents->execute([
+            'uid1' => $cistickaId, 'uid2' => $cistickaId,
+            'y'    => $year,        'm'    => $month,
+        ]);
+        $events = $sqlEvents->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        // Seskupit per operator (O2 / Vodafone-skip / T-Mobile / jiný)
+        // pro přehlednost a per-operator counts.
+        $byOperator = [];
+        foreach ($events as $ev) {
+            $opRaw = (string) ($ev['operator'] ?? '');
+            $opUpper = strtoupper(trim($opRaw));
+            // Sjednotit varianty (VF / O2 / TM / atd.)
+            $opKey = match (true) {
+                $ev['new_status'] === 'VF_SKIP' || str_contains($opUpper, 'VODAFONE') || $opUpper === 'VF'
+                    => 'Vodafone (skip)',
+                str_contains($opUpper, 'O2')      => 'O2',
+                str_contains($opUpper, 'T-MOBILE') || str_contains($opUpper, 'T MOBILE') || $opUpper === 'TM'
+                    => 'T-Mobile',
+                $opUpper === ''                   => 'Neznámý',
+                default                           => $opUpper,
+            };
+            if (!isset($byOperator[$opKey])) {
+                $byOperator[$opKey] = ['name' => $opKey, 'count' => 0, 'events' => []];
+            }
+            $byOperator[$opKey]['count']++;
+            $byOperator[$opKey]['events'][] = $ev;
+        }
+        // Sort: podle count DESC
+        uasort($byOperator, fn($a, $b) => $b['count'] - $a['count']);
+
+        $rewardPerVerify = $this->currentRewardRate() ?? 0.0;
+
+        header('Content-Type: text/html; charset=UTF-8');
+        require dirname(__DIR__) . '/views/cisticka/payout_print.php';
+        exit;
     }
 }

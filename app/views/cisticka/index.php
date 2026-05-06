@@ -132,6 +132,140 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
         </div>
     </div>
 
+    <!-- ══════════════════════════════════════════════════════════════
+         WIDGET: Moje výplata — měsíční přehled co dostanu zaplaceno.
+         Sbalitelný (default sbalený, paměť přes localStorage),
+         měsíční navigace ←/→/Aktuální + tlačítko PDF výplaty.
+    ══════════════════════════════════════════════════════════════ -->
+    <?php
+    /** @var int        $cwYear */
+    /** @var int        $cwMonth */
+    /** @var bool       $cwIsCurrent */
+    /** @var int        $cwTotalCount */
+    /** @var int        $cwReadyCount */
+    /** @var int        $cwVfCount */
+    /** @var float|null $cwRate */
+    /** @var float      $cwEarnings */
+    $cwYear        = $cwYear        ?? (int) date('Y');
+    $cwMonth       = $cwMonth       ?? (int) date('n');
+    $cwIsCurrent   = $cwIsCurrent   ?? true;
+    $cwTotalCount  = $cwTotalCount  ?? 0;
+    $cwReadyCount  = $cwReadyCount  ?? 0;
+    $cwVfCount     = $cwVfCount     ?? 0;
+    $cwRate        = $cwRate        ?? null;
+    $cwEarnings    = $cwEarnings    ?? 0.0;
+    $cwMonthNames  = ['', 'Leden','Únor','Březen','Duben','Květen','Červen',
+                      'Červenec','Srpen','Září','Říjen','Listopad','Prosinec'];
+    $cwPrevM = $cwMonth - 1; $cwPrevY = $cwYear;
+    if ($cwPrevM < 1) { $cwPrevM = 12; $cwPrevY--; }
+    $cwNextM = $cwMonth + 1; $cwNextY = $cwYear;
+    if ($cwNextM > 12) { $cwNextM = 1; $cwNextY++; }
+    $cwMakeUrl = static fn(int $y, int $m): string =>
+        crm_url('/cisticka?cw_year=' . $y . '&cw_month=' . $m) . '#cw-widget';
+    ?>
+    <details id="cw-widget" class="cw-widget"
+             data-rate="<?= $cwRate !== null ? (string) $cwRate : '' ?>"
+             data-is-current="<?= $cwIsCurrent ? '1' : '0' ?>">
+        <summary class="cw-widget__summary">
+            <span class="cw-widget__title">💰 Moje výplata</span>
+            <span class="cw-widget__hint">
+                — <?= crm_h($cwMonthNames[$cwMonth] . ' ' . $cwYear) ?>
+                <?php if (!$cwIsCurrent) { ?>
+                    <span style="color:#d97706;font-weight:600;">(historický pohled)</span>
+                <?php } ?>
+            </span>
+            <span class="cw-widget__inline">
+                <strong id="cw-summary-total"><?= $cwTotalCount ?></strong> ověření
+                <?php if ($cwRate !== null) { ?>
+                    · <strong id="cw-summary-earnings" style="color:#16a34a;">
+                        <?= number_format($cwEarnings, 2, ',', ' ') ?> Kč
+                    </strong>
+                <?php } ?>
+            </span>
+            <span class="cw-widget__chevron">▾</span>
+        </summary>
+        <div class="cw-widget__body">
+            <div class="cw-month-nav">
+                <a href="<?= crm_h($cwMakeUrl($cwPrevY, $cwPrevM)) ?>"
+                   class="cw-month-btn" title="Předchozí měsíc">←</a>
+                <span class="cw-month-label">
+                    <?= crm_h($cwMonthNames[$cwMonth] . ' ' . $cwYear) ?>
+                </span>
+                <a href="<?= crm_h($cwMakeUrl($cwNextY, $cwNextM)) ?>"
+                   class="cw-month-btn" title="Další měsíc">→</a>
+                <?php if (!$cwIsCurrent) { ?>
+                    <a href="<?= crm_h($cwMakeUrl((int)date('Y'), (int)date('n'))) ?>"
+                       class="cw-month-btn cw-month-btn--current">Aktuální měsíc</a>
+                <?php } ?>
+                <a href="<?= crm_h(crm_url('/cisticka/payout/print?year=' . $cwYear . '&month=' . $cwMonth)) ?>"
+                   target="_blank" rel="noopener"
+                   class="cw-month-btn"
+                   style="margin-left:auto;background:#d4f4dd;color:#1f7a3a;border-color:#9fdcb1;font-weight:700;"
+                   title="Otevře tiskovou stránku s výplatou za <?= crm_h($cwMonthNames[$cwMonth] . ' ' . $cwYear) ?>">
+                    📄 Výplata (PDF)
+                </a>
+            </div>
+
+            <?php if ($cwRate === null) { ?>
+                <div class="cw-widget__empty">
+                    <strong>⚠ Sazba není nastavená.</strong>
+                    Požádej majitele, ať ji nastaví v <em>Cíle čističky podle krajů</em>.
+                </div>
+            <?php } elseif ($cwTotalCount === 0 && !$cwIsCurrent) { ?>
+                <!-- Historický měsíc bez dat: zobrazit empty state.
+                     Pro AKTUÁLNÍ měsíc s 0 ověřeními zobrazíme kartičky (s nulami)
+                     ať je co JS-em inkrementovat po prvním ověření. -->
+                <div class="cw-widget__empty">
+                    📭 V <?= crm_h($cwMonthNames[$cwMonth] . ' ' . $cwYear) ?> nemáš žádná ověření.
+                </div>
+            <?php } else { ?>
+                <div class="cw-widget__breakdown">
+                    <div class="cw-bd-card">
+                        <div class="cw-bd-num" id="cw-num-total"><?= $cwTotalCount ?></div>
+                        <div class="cw-bd-lbl">Ověření celkem</div>
+                    </div>
+                    <div class="cw-bd-card">
+                        <div class="cw-bd-num" id="cw-num-ready" style="color:#16a34a;"><?= $cwReadyCount ?></div>
+                        <div class="cw-bd-lbl">READY (TM, O2…)</div>
+                    </div>
+                    <div class="cw-bd-card">
+                        <div class="cw-bd-num" id="cw-num-vf" style="color:#dc2626;"><?= $cwVfCount ?></div>
+                        <div class="cw-bd-lbl">VF skip</div>
+                    </div>
+                    <div class="cw-bd-card">
+                        <div class="cw-bd-num">
+                            <?= number_format($cwRate, 2, ',', ' ') ?> Kč
+                        </div>
+                        <div class="cw-bd-lbl">Sazba / ověření</div>
+                    </div>
+                    <div class="cw-bd-card cw-bd-card--total">
+                        <div class="cw-bd-num" id="cw-num-earnings">
+                            <?= number_format($cwEarnings, 2, ',', ' ') ?> Kč
+                        </div>
+                        <div class="cw-bd-lbl">K vyplacení</div>
+                    </div>
+                </div>
+            <?php } ?>
+        </div>
+    </details>
+    <script>
+    (function () {
+        var KEY = 'cw_widget_open';
+        var el  = document.getElementById('cw-widget');
+        if (!el) return;
+        try {
+            if (localStorage.getItem(KEY) === '1') {
+                el.setAttribute('open', '');
+            } else {
+                el.removeAttribute('open');
+            }
+        } catch (e) {}
+        el.addEventListener('toggle', function () {
+            try { localStorage.setItem(KEY, el.open ? '1' : '0'); } catch (e) {}
+        });
+    })();
+    </script>
+
     <!-- ── Měsíční přepínač (read-only přehled cílů + progress) ─────────────
          Přepnutí na minulý / budoucí měsíc OVLIVNÍ POUZE TILES.
          K-ověření / Zkontrolováno seznamy zůstávají v aktuálním stavu —
@@ -362,10 +496,27 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
                     Jakmile majitel/admin nastaví cíle (Cíle čističky podle krajů), zobrazí se ti tady kontakty k ověření.
                 </p>
             </div>
-        <?php } elseif ($contacts === []) { ?>
-            <p class="muted" style="margin-top:1.5rem;">
-                ✅ Vše zkontrolováno<?php if ($selectedRegion !== '') { ?> v kraji <strong><?= crm_h(crm_region_label($selectedRegion)) ?></strong><?php } ?>.
-            </p>
+        <?php } elseif ($contacts === []) {
+            // Rozlišit dva typy "prázdné" stavu:
+            //  (a) selectedRegion je SPLNĚNÝ kraj → cíl splněn (10/10)
+            //  (b) jinak → vše zkontrolováno (kraj má méně NEW kontaktů než cíl)
+            $isCompletedClick = ($selectedRegion !== ''
+                                 && isset($completedRegions)
+                                 && in_array($selectedRegion, $completedRegions, true));
+        ?>
+            <?php if ($isCompletedClick) { ?>
+                <div style="margin-top:1.5rem;padding:1rem 1.2rem;
+                            background:#d4f4dd;border:1px solid #9fdcb1;border-left:4px solid #16a34a;
+                            border-radius:6px;color:#1f7a3a;">
+                    🎯 <strong>Cíl pro <?= crm_h(crm_region_label($selectedRegion)) ?> je splněn.</strong>
+                    Kontakty z tohoto kraje se už nezobrazují, dokud admin nenastaví novou kvótu.
+                    Zkus jiný kraj z tilů nahoře.
+                </div>
+            <?php } else { ?>
+                <p class="muted" style="margin-top:1.5rem;">
+                    ✅ Vše zkontrolováno<?php if ($selectedRegion !== '') { ?> v kraji <strong><?= crm_h(crm_region_label($selectedRegion)) ?></strong><?php } ?>.
+                </p>
+            <?php } ?>
         <?php } else { ?>
 
             <!-- Topbar: info + paginace nahoře -->
@@ -542,7 +693,7 @@ function cistVerify(contactId, action, btn) {
                     cistStartUndoCountdown(contactId);
                 }
 
-                cistUpdateStats(op, +1);
+                cistUpdateStats(op, +1, contactId);
             } else {
                 row.dataset.done = '0';
                 buttons.forEach(function(b) { b.disabled = false; });
@@ -581,7 +732,7 @@ function cistUndo(contactId, originalAction) {
 
                 // Určit jaký operator byl (abychom odečetli ze stats)
                 var wasOp = originalAction === 'vf_skip' ? 'VF' : (originalAction === 'tm' ? 'TM' : 'O2');
-                cistUpdateStats(wasOp, -1);
+                cistUpdateStats(wasOp, -1, contactId);
             } else {
                 if (btn) btn.disabled = false;
                 alert(data.error || 'Undo se nezdařilo.');
@@ -701,7 +852,14 @@ function cistReclassify(contactId, action, btn) {
 }
 
 /* ── Aktualizace statistik ────────────────────────────────────────── */
-function cistUpdateStats(op, delta) {
+// Globální set contact_id už započítaných do widgetu "Moje výplata".
+// Důvod: server-side query je COUNT(DISTINCT contact_id), tj. když čistička
+// stejný kontakt ověří 2× (TM → Zpět → O2), server počítá 1×, ale JS by
+// inkrementoval 2× → widget by ukazoval špatný počet a Kč.
+// Tento Set zajistí, že widget počítá per kontakt jen JEDNOU za session.
+window._cwAddedContactIds = window._cwAddedContactIds || new Set();
+
+function cistUpdateStats(op, delta, contactId) {
     var elTotal = document.getElementById('stat-total');
     var elReady = document.getElementById('stat-ready');
     var elVf    = document.getElementById('stat-vf');
@@ -720,8 +878,16 @@ function cistUpdateStats(op, delta) {
         if (elQueue) elQueue.textContent = Math.max(0, (parseInt(elQueue.textContent, 10) || 1) - 1);
         if (elNew)   elNew.textContent   = Math.max(0, (parseInt(elNew.textContent, 10)   || 1) - 1);
         // Zkontrolováno badge = all-time DISTINCT contact_id; verify nově ověřil,
-        // takže počet roste o 1.
-        if (elDone)  elDone.textContent  = (parseInt(elDone.textContent, 10) || 0) + 1;
+        // takže počet roste o 1. Ale POZOR: pokud byl kontakt už dříve verifikován
+        // a teď proběhne re-verify (po undo), server-side count se nemění (DISTINCT).
+        // Inkrementujeme jen poprvé per contactId.
+        if (contactId && !window._cwAddedContactIds.has(contactId)) {
+            if (elDone) elDone.textContent = (parseInt(elDone.textContent, 10) || 0) + 1;
+        }
+
+        // Live update widgetu "Moje výplata" — pošleme contactId, ať Set
+        // může deduplikovat opakované verify stejného kontaktu.
+        cwWidgetIncrement(op, contactId);
     } else {
         // Odebrání (undo) — vrací kontakt zpět do NEW.
         // POZN: stat-total / stat-ready / stat-vf jsou DNEŠNÍ stats (DATE = today).
@@ -741,7 +907,74 @@ function cistUpdateStats(op, delta) {
         // přidá NEW záznam, ale původní READY záznam v historii zůstává →
         // contact je STÁLE v COUNT(DISTINCT). Server-side count se nemění,
         // takže ani JS nesmí dekrementovat (jinak by badge desynced).
+
+        // Widget "Moje výplata": stejná logika — undo nesnižuje počet
+        // (původní záznam v historii zůstává, COUNT DISTINCT se nemění).
     }
+}
+
+/**
+ * Live update widgetu "Moje výplata" po úspěšném verify (READY / VF_SKIP).
+ *
+ * Deduplikace per contact_id:
+ *   Server-side query je COUNT(DISTINCT contact_id), tj. opakované ověření
+ *   stejného kontaktu (TM → Zpět → O2) server počítá 1×. Aby widget byl
+ *   v sync, držíme Set window._cwAddedContactIds — kontakt přidáme do
+ *   widgetu jen poprvé, opakované verify ignorujeme.
+ *
+ * Inkrementuje:
+ *   • cw-num-total       (celkem ověření)
+ *   • cw-num-ready / cw-num-vf  (per kategorie)
+ *   • cw-num-earnings    (count × rate, formátovaný v Kč)
+ *   • cw-summary-total / cw-summary-earnings  (čísla v sbaleném header)
+ *
+ * Nedělá nic, pokud widget zobrazuje historický měsíc (data-is-current="0").
+ *
+ * @param string op         'VF' nebo 'TM' / 'O2' / atd. (vše kromě VF jde do READY)
+ * @param int    contactId  ID kontaktu pro deduplikaci (volitelné — bez něj žádná dedup)
+ */
+function cwWidgetIncrement(op, contactId) {
+    var widget = document.getElementById('cw-widget');
+    if (!widget) return;
+    if (widget.getAttribute('data-is-current') !== '1') return; // historický pohled — nic
+    var rate = parseFloat(widget.getAttribute('data-rate'));
+    if (!isFinite(rate) || rate <= 0) return; // sazba není nastavená — widget je v empty state
+
+    // ── Deduplikace: pokud kontakt už byl počítán, neinkrementuj ──
+    // Tím sjednotíme widget se server-side COUNT(DISTINCT contact_id).
+    if (contactId) {
+        if (window._cwAddedContactIds.has(contactId)) {
+            // Kontakt už byl započítán dříve (např. TM → Zpět → O2).
+            // Nepřidáváme znovu — widget je in sync se serverem.
+            return;
+        }
+        window._cwAddedContactIds.add(contactId);
+    }
+
+    // Inkrementovat čísla v breakdown kartičkách
+    var elTotal    = document.getElementById('cw-num-total');
+    var elReady    = document.getElementById('cw-num-ready');
+    var elVf       = document.getElementById('cw-num-vf');
+    var elEarnings = document.getElementById('cw-num-earnings');
+
+    var newTotal = (elTotal ? (parseInt(elTotal.textContent, 10) || 0) : 0) + 1;
+    if (elTotal) elTotal.textContent = newTotal;
+    if (op === 'VF') {
+        if (elVf) elVf.textContent = (parseInt(elVf.textContent, 10) || 0) + 1;
+    } else {
+        if (elReady) elReady.textContent = (parseInt(elReady.textContent, 10) || 0) + 1;
+    }
+
+    // Přepočítat výdělek (formát "X,XX Kč" — non-breaking space tisíce)
+    var newEarnings = Math.round(newTotal * rate * 100) / 100;
+    var formatted = newEarnings.toFixed(2).replace('.', ',') + ' Kč';
+    if (elEarnings) elEarnings.textContent = formatted;
+
+    // Update i v sbaleném header (cw-widget__inline)
+    var elSumT = document.getElementById('cw-summary-total');
+    var elSumE = document.getElementById('cw-summary-earnings');
+    if (elSumT) elSumT.textContent = newTotal;
+    if (elSumE) elSumE.textContent = formatted;
 }
 
 /* ── Pomocná fetch funkce ─────────────────────────────────────────── */
@@ -889,6 +1122,16 @@ function cistGoalIncrement(region) {
                 }
                 break;
             }
+
+            // ── DOPLNĚK: jakmile čistička právě splnila kvótu, fade-out
+            // všech dalších NEW kontaktů z téhož kraje, ať je nemusí ručně
+            // klikat. Server-side filter ($completedRegions → strict empty)
+            // se aplikuje při dalším refreshi; tady jen synchronizujeme DOM.
+            cistRemoveContactsByRegion(region);
+
+            // Smazat NEW badge z tile (i když je completed, badge by mátl)
+            var badge = document.getElementById('goal-newcnt-' + region);
+            if (badge && badge.parentNode) badge.parentNode.removeChild(badge);
         } else {
             statusEl.innerHTML = '<span style="color:var(--muted);">Zbývá: '
                 + (target - done) + ' · ' + pct + ' %</span>';
@@ -898,6 +1141,55 @@ function cistGoalIncrement(region) {
     // Krátký flash pro vizuální feedback
     goal.classList.add('cist-goal--flash');
     setTimeout(function() { goal.classList.remove('cist-goal--flash'); }, 520);
+}
+
+/**
+ * Po splnění kvóty kraje — fade-out a odstraní z DOM všechny zbývající
+ * NEW kontakty (řádky `.cist-row[data-region=X]`) v záložce "K ověření".
+ *
+ * Důvod: jakmile cíl splněn, server-side filter je vyřadí. Když to neuděláme
+ * tady, čistička je vidí, klikne na ně, a my musíme řešit "už po deadlinu".
+ * Lepší UX: kontakty zmizí současně se splněním kvóty.
+ *
+ * @param string region  kód kraje (např. 'praha', 'jihocesky')
+ */
+function cistRemoveContactsByRegion(region) {
+    if (!region) return;
+    var rows = document.querySelectorAll('.cist-row[data-region="' + region + '"]');
+    if (!rows.length) return;
+
+    // Odečíst od stat-queue (zbývá k ověření) a tab-badge-new
+    var elQueue = document.getElementById('stat-queue');
+    var elNew   = document.getElementById('tab-badge-new');
+    var removeCount = 0;
+
+    rows.forEach(function(r) {
+        // Skip řádky které už jsou "done" (čekají na undo countdown)
+        if (r.dataset.done === '1') return;
+        removeCount++;
+        r.style.transition = 'opacity 0.4s, height 0.4s, padding 0.4s, margin 0.4s';
+        r.style.opacity = '0';
+        setTimeout(function() {
+            r.style.height = '0';
+            r.style.padding = '0';
+            r.style.margin = '0';
+            r.style.overflow = 'hidden';
+        }, 200);
+        setTimeout(function() {
+            if (r.parentNode) r.parentNode.removeChild(r);
+        }, 600);
+    });
+
+    if (removeCount > 0) {
+        if (elQueue) {
+            var q = parseInt(elQueue.textContent, 10) || 0;
+            elQueue.textContent = Math.max(0, q - removeCount);
+        }
+        if (elNew) {
+            var n = parseInt(elNew.textContent, 10) || 0;
+            elNew.textContent = Math.max(0, n - removeCount);
+        }
+    }
 }
 
 // Klávesové zkratky: 1 = VF, 2 = TM, 3 = O2, ↑ = předchozí, ↓ = další

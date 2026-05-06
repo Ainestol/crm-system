@@ -227,6 +227,234 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
 
     </div><!-- /.caller-topbar -->
 
+    <!-- ══════════════════════════════════════════════════════════════
+         WIDGET: Volné kvóty OZ × kraj  (read-only, sbalený default)
+
+         Pomáhá navolávačce vidět "kde mám ještě navolávat" — kdo
+         z OZ má v jakém kraji volné místo do naplnění měsíční kvóty.
+         Žádné akce — jen přehled. Data se počítají v
+         CallerController::index() jako $ozProgress[uid][region].
+         Po přidání kontaktu se přepočte při dalším refreshi stránky.
+    ══════════════════════════════════════════════════════════════ -->
+    <?php
+    // Měsíční navigace pro widget — proměnné nastavené v controlleru
+    /** @var int  $cqYear */
+    /** @var int  $cqMonth */
+    /** @var bool $cqIsCurrent */
+    $cqYear      = $cqYear      ?? (int) date('Y');
+    $cqMonth     = $cqMonth     ?? (int) date('n');
+    $cqIsCurrent = $cqIsCurrent ?? true;
+    $cqMonthNames = ['', 'Leden','Únor','Březen','Duben','Květen','Červen',
+                     'Červenec','Srpen','Září','Říjen','Listopad','Prosinec'];
+    $cqPrevM = $cqMonth - 1; $cqPrevY = $cqYear;
+    if ($cqPrevM < 1) { $cqPrevM = 12; $cqPrevY--; }
+    $cqNextM = $cqMonth + 1; $cqNextY = $cqYear;
+    if ($cqNextM > 12) { $cqNextM = 1; $cqNextY++; }
+    // Zachovat aktuální tab/region/page při navigaci.
+    // Anchor #cq-widget zajistí, že po reloadu browser scrollne přesně k widgetu —
+    // bez něho stránka skáče na top a widget "uskakuje".
+    $cqBaseQuery = ['tab' => $tab, 'page' => $page];
+    if ($selectedRegion !== '') { $cqBaseQuery['region'] = $selectedRegion; }
+    $cqMakeUrl = static fn(int $y, int $m): string =>
+        crm_url('/caller?' . http_build_query($cqBaseQuery + ['cq_year' => $y, 'cq_month' => $m]))
+        . '#cq-widget';
+    ?>
+    <?php
+    // Spočítat OZ-y, kteří mají něco v $ozProgress, a seřadit je podle jména
+    $cqOzList = [];
+    foreach ($allSalesList as $s) {
+        $sId = (int) ($s['id'] ?? 0);
+        if (isset($ozProgress[$sId])) {
+            $cqOzList[$sId] = (string) ($s['jmeno'] ?? '—');
+        }
+    }
+    // Spočítat regiony, které se objevují u kteréhokoli OZ (sloupce tabulky)
+    $cqRegionsSet = [];
+    foreach ($ozProgress as $regs) {
+        foreach ($regs as $r => $_) {
+            $cqRegionsSet[(string) $r] = true;
+        }
+    }
+    $cqRegions = array_keys($cqRegionsSet);
+    sort($cqRegions);
+
+    // Spočítat globální celkové ukazatele (kolik už je / kolik chybí)
+    $cqTotalRec = 0; $cqTotalTgt = 0;
+    foreach ($ozProgress as $regs) {
+        foreach ($regs as $d) {
+            $cqTotalRec += (int) ($d['received'] ?? 0);
+            $cqTotalTgt += (int) ($d['target']   ?? 0);
+        }
+    }
+    $cqTotalRem  = max(0, $cqTotalTgt - $cqTotalRec);
+    $cqHasData   = $ozProgress !== [];
+    // Widget se zobrazí VŽDY (i pro prázdné měsíce), ať uživatel může navigovat
+    // zpět na aktuální měsíc. Empty state je uvnitř těla.
+    ?>
+    <details id="cq-widget" class="cq-widget">
+        <summary class="cq-widget__summary">
+            <span class="cq-widget__title">📊 Volné kvóty OZ</span>
+            <span class="cq-widget__hint">
+                — <?= crm_h($cqMonthNames[$cqMonth] . ' ' . $cqYear) ?>
+                <?php if (!$cqIsCurrent) { ?>
+                    <span style="color:#d97706;font-weight:600;">(historický pohled)</span>
+                <?php } ?>
+            </span>
+            <?php if ($cqTotalTgt > 0) { ?>
+                <span class="cq-widget__inline">
+                    <strong><?= $cqTotalRec ?></strong> / <?= $cqTotalTgt ?>
+                    <?php if ($cqTotalRem > 0) { ?>
+                        · <span class="cq-widget__rem">zbývá <?= $cqTotalRem ?></span>
+                    <?php } else { ?>
+                        · <span style="color:#2ecc71;">✓ kvóty splněné</span>
+                    <?php } ?>
+                </span>
+            <?php } elseif (!$cqHasData) { ?>
+                <span class="cq-widget__inline" style="font-style:italic;color:var(--color-text-muted);">
+                    žádná data pro tento měsíc
+                </span>
+            <?php } ?>
+            <span class="cq-widget__chevron">▾</span>
+        </summary>
+        <div class="cq-widget__body">
+            <!-- Měsíční navigace (← / měsíc / → / Aktuální) + PDF export výplaty -->
+            <div class="cq-month-nav">
+                <a href="<?= crm_h($cqMakeUrl($cqPrevY, $cqPrevM)) ?>"
+                   class="cq-month-btn" title="Předchozí měsíc">←</a>
+                <span class="cq-month-label">
+                    <?= crm_h($cqMonthNames[$cqMonth] . ' ' . $cqYear) ?>
+                </span>
+                <a href="<?= crm_h($cqMakeUrl($cqNextY, $cqNextM)) ?>"
+                   class="cq-month-btn" title="Další měsíc">→</a>
+                <?php if (!$cqIsCurrent) { ?>
+                    <a href="<?= crm_h($cqMakeUrl((int)date('Y'), (int)date('n'))) ?>"
+                       class="cq-month-btn cq-month-btn--current">Aktuální měsíc</a>
+                <?php } ?>
+                <!-- PDF: kolik dostanu od kterého OZ za vybraný měsíc -->
+                <a href="<?= crm_h(crm_url('/caller/payout/print?year=' . $cqYear . '&month=' . $cqMonth)) ?>"
+                   target="_blank" rel="noopener"
+                   class="cq-month-btn"
+                   style="margin-left:auto;background:#d4f4dd;color:#1f7a3a;border-color:#9fdcb1;font-weight:700;"
+                   title="Otevře tiskovou stránku s detaily kolik dostaneš od kterého OZ-a za <?= crm_h($cqMonthNames[$cqMonth] . ' ' . $cqYear) ?>">
+                    💰 Moje výplata (PDF)
+                </a>
+            </div>
+            <?php if (!$cqHasData) { ?>
+                <!-- Empty state — žádné kvóty ani kontakty pro vybraný měsíc -->
+                <div class="cq-widget__empty">
+                    <div class="cq-widget__empty-icon">📭</div>
+                    <div class="cq-widget__empty-hint">
+                        <span class="cq-widget__empty-title">
+                            V <?= crm_h($cqMonthNames[$cqMonth] . ' ' . $cqYear) ?> nejsou žádná data
+                        </span>
+                        — žádné kvóty ani navolané kontakty.
+                        <?php if (!$cqIsCurrent) { ?>
+                            <a href="<?= crm_h($cqMakeUrl((int)date('Y'), (int)date('n'))) ?>">
+                                ← Zpět na aktuální měsíc
+                            </a>
+                        <?php } ?>
+                    </div>
+                </div>
+            <?php } else { ?>
+            <div class="cq-widget__lead">
+                Tabulka ukazuje <strong>received / target</strong> per OZ × kraj za <strong><?= crm_h($cqMonthNames[$cqMonth] . ' ' . $cqYear) ?></strong>.
+                Tmavší barva = víc chybí. Buňka „—" znamená, že OZ v tomto kraji nemá kvótu.
+            </div>
+            <div class="cq-table-wrap">
+                <table class="cq-table">
+                    <thead>
+                        <tr>
+                            <th>OZ</th>
+                            <?php foreach ($cqRegions as $r) { ?>
+                                <th title="<?= crm_h(crm_region_label($r)) ?>"><?= crm_h(ucfirst($r)) ?></th>
+                            <?php } ?>
+                            <th>Celkem</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($cqOzList as $oid => $oname) {
+                        $rowRec = 0; $rowTgt = 0;
+                    ?>
+                        <tr>
+                            <td class="cq-cell-name"><?= crm_h($oname) ?></td>
+                            <?php foreach ($cqRegions as $r) {
+                                $cell = $ozProgress[$oid][$r] ?? null;
+                                if ($cell === null) { ?>
+                                    <td class="cq-cell-empty">—</td>
+                                <?php } else {
+                                    $rec = (int) ($cell['received'] ?? 0);
+                                    $tgt = (int) ($cell['target']   ?? 0);
+                                    $rowRec += $rec;
+                                    $rowTgt += $tgt;
+                                    $rem = max(0, $tgt - $rec);
+                                    // Barva podle naplnění (heatmap):
+                                    //  ≥100% = zelená (splněno), 50-99% = žlutá, <50% = červená, 0% = nejtmavší
+                                    $cls = 'cq-cell-fill cq-cell-fill--';
+                                    if ($tgt === 0) {
+                                        // OZ má příjem ale žádnou kvótu (overflow)
+                                        $cls .= 'over';
+                                    } elseif ($rec >= $tgt) {
+                                        $cls .= 'done';
+                                    } elseif ($rec === 0) {
+                                        $cls .= 'zero';
+                                    } else {
+                                        $pct = $rec / $tgt;
+                                        $cls .= $pct >= 0.5 ? 'mid' : 'low';
+                                    }
+                                ?>
+                                    <td class="<?= $cls ?>"
+                                        title="<?= crm_h(crm_region_label($r)) ?>: <?= $rec ?> z <?= $tgt ?> (<?= $rem ?> zbývá)">
+                                        <strong><?= $rec ?></strong><span class="cq-cell-tgt">/<?= $tgt ?></span>
+                                    </td>
+                                <?php }
+                            } ?>
+                            <td class="cq-cell-total">
+                                <?php if ($rowTgt > 0) { ?>
+                                    <strong><?= $rowRec ?></strong>/<?= $rowTgt ?>
+                                <?php } else { ?>
+                                    <?= $rowRec ?>
+                                <?php } ?>
+                            </td>
+                        </tr>
+                    <?php } ?>
+                    </tbody>
+                </table>
+            </div>
+            <div class="cq-widget__legend">
+                <span class="cq-cell-fill cq-cell-fill--zero">0&nbsp;</span> nikdo
+                <span class="cq-cell-fill cq-cell-fill--low">&nbsp;&lt;50&nbsp;%&nbsp;</span> nízko
+                <span class="cq-cell-fill cq-cell-fill--mid">&nbsp;50–99&nbsp;%&nbsp;</span> postup
+                <span class="cq-cell-fill cq-cell-fill--done">&nbsp;✓&nbsp;</span> splněno
+            </div>
+            <?php } /* end cqHasData */ ?>
+        </div>
+    </details>
+    <script>
+    // Widget si pamatuje stav (open/closed) v localStorage — konzistentní napříč
+    // přepínáním měsíců i reloady. Inline script ihned po elementu = aplikuje
+    // se před prvním renderem, takže widget "neproblikne" v defaultním stavu.
+    (function () {
+        var KEY  = 'cq_widget_open';
+        var el   = document.getElementById('cq-widget');
+        if (!el) return;
+        try {
+            // Aplikovat uložený stav (default = sbalený, žádná hodnota = false)
+            if (localStorage.getItem(KEY) === '1') {
+                el.setAttribute('open', '');
+            } else {
+                el.removeAttribute('open');
+            }
+        } catch (e) { /* localStorage zakázané → nech default */ }
+
+        // Uložit stav po každém toggle
+        el.addEventListener('toggle', function () {
+            try {
+                localStorage.setItem(KEY, el.open ? '1' : '0');
+            } catch (e) { /* nech být */ }
+        });
+    })();
+    </script>
+
     <!-- Filtr krajů (jen pro tab K provolání) -->
     <?php if ($tab === 'aktivni' && $availableRegions !== []) { ?>
         <div class="cist-region-filter">

@@ -48,7 +48,7 @@ final class AdminDailyGoalsController
         $workDays        = self::workingDaysInMonth((int) date('Y'), (int) date('n'));
         $derivedDailyWin = $workDays > 0 ? (int) ceil((int) $monthlyGoal['target_wins'] / $workDays) : 0;
 
-        $title = 'Cíle a odměny navolávačky';
+        $title = 'Denní cíle a odměny navolávaček';
         ob_start();
         require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'daily_goals.php';
         $content = (string) ob_get_clean();

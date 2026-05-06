@@ -42,27 +42,7 @@ declare(strict_types=1);
 }
 .import-progress__pct { font-weight: 700; color: var(--color-badge-nove); }
 
-/* Sticky admin breadcrumb */
-.admin-breadcrumb {
-    position: sticky; top: 0; z-index: 20;
-    margin: -0.8rem -1rem 0.8rem;
-    padding: 0.55rem 1rem;
-    background: var(--color-card-bg);
-    border-bottom: 1px solid var(--color-border);
-    font-size: 0.78rem;
-    display: flex; gap: 0.4rem; flex-wrap: wrap;
-}
-.admin-breadcrumb a {
-    color: var(--color-badge-nove);
-    text-decoration: none;
-    padding: 0.25rem 0.6rem;
-    border-radius: var(--radius-btn);
-    background: var(--color-badge-nove-bg);
-    border: 1px solid #b5d4f4;
-    font-weight: 600;
-}
-.admin-breadcrumb a:hover { background: #d4e5f7; }
-.admin-breadcrumb a.is-current { background: var(--color-badge-nove); color: #fff; border-color: var(--color-badge-nove); }
+/* (admin-breadcrumb odstraněn — navigaci řeší sidebar) */
 .import-progress__bar {
     height: 16px; background: rgba(0,0,0,0.08);
     border-radius: 8px; overflow: hidden;
@@ -87,14 +67,6 @@ declare(strict_types=1);
 </style>
 
 <section class="card import-card">
-    <div class="admin-breadcrumb">
-        <a href="<?= crm_h(crm_url('/dashboard')) ?>">← Dashboard</a>
-        <a href="#" class="is-current">📥 Import</a>
-        <a href="<?= crm_h(crm_url('/admin/feed')) ?>">📰 Activity feed</a>
-        <a href="<?= crm_h(crm_url('/admin/datagrid')) ?>">📊 Live datagrid</a>
-        <a href="<?= crm_h(crm_url('/admin/duplicates')) ?>">🕵 Audit duplicit</a>
-        <a href="<?= crm_h(crm_url('/admin/users')) ?>">👥 Uživatelé</a>
-    </div>
     <h1>📥 Import kontaktů</h1>
 
     <?php if (!empty($flash)) { ?>
@@ -170,10 +142,10 @@ declare(strict_types=1);
         </div>
 
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:1rem;">
+            <!-- Toolbar: jen akce stránky, navigaci řeší sidebar. -->
             <button type="submit" class="btn" id="import-submit">
                 Nahrát a analyzovat
             </button>
-            <a class="btn btn-secondary" href="<?= crm_h(crm_url('/dashboard')) ?>">← Dashboard</a>
         </div>
     </form>
 

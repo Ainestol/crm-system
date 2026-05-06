@@ -18,28 +18,7 @@ $totalDuplicateRows = array_sum(array_column($summary, 'total_extra_rows'));
 .dup-wrap { padding: 0.8rem 1rem 1.5rem; max-width: 1200px; margin: 0 auto; }
 .dup-wrap h1 { margin: 0 0 0.5rem; font-size: 1.4rem; color: var(--color-text); }
 .dup-wrap > .lead { color: var(--color-text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
-.dup-wrap .breadcrumb {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    margin: -0.8rem -1rem 0.8rem;
-    padding: 0.55rem 1rem;
-    background: var(--color-card-bg);
-    border-bottom: 1px solid var(--color-border);
-    font-size: 0.78rem;
-    display: flex; gap: 0.4rem; flex-wrap: wrap;
-}
-.dup-wrap .breadcrumb a {
-    color: var(--color-badge-nove);
-    text-decoration: none;
-    padding: 0.25rem 0.6rem !important;
-    border-radius: var(--radius-btn) !important;
-    background: var(--color-badge-nove-bg) !important;
-    border: 1px solid #b5d4f4 !important;
-    font-weight: 600;
-}
-.dup-wrap .breadcrumb a:hover { background: #d4e5f7 !important; }
-.dup-wrap .breadcrumb a.is-current { background: var(--color-badge-nove) !important; color: #fff; border-color: var(--color-badge-nove) !important; }
+/* (.breadcrumb odstraněn — navigaci řeší sidebar) */
 
 .dup-summary {
     display: grid;
@@ -145,15 +124,6 @@ $totalDuplicateRows = array_sum(array_column($summary, 'total_extra_rows'));
 </style>
 
 <section class="dup-wrap">
-    <div class="breadcrumb">
-        <a href="<?= crm_h(crm_url('/dashboard')) ?>">← Dashboard</a>
-        <a href="#" class="is-current">🕵 Audit duplicit</a>
-        <a href="<?= crm_h(crm_url('/admin/feed')) ?>">📰 Activity feed</a>
-        <a href="<?= crm_h(crm_url('/admin/datagrid')) ?>">📊 Live datagrid</a>
-        <a href="<?= crm_h(crm_url('/admin/import')) ?>">📥 Import</a>
-        <a href="<?= crm_h(crm_url('/admin/users')) ?>">👥 Uživatelé</a>
-    </div>
-
     <h1>🕵 Audit duplicit v databázi</h1>
     <p class="lead">
         Před nahráním nové dávky kontaktů zkontroluj, jestli v DB nejsou staré duplicity. Read-only — žádné mazání ani slučování. Klikni na kontakt a vyřeš ho v BO/OZ workflow.

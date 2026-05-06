@@ -14,6 +14,28 @@ declare(strict_types=1);
 /** @var bool                     $isCurrentMonth */
 /** @var bool                     $isFutureMonth */
 /** @var bool                     $isPastMonth */
+/** @var float|null               $cwCurrentRate */
+/** @var list<array<string,mixed>> $cwRateHistory */
+/** @var list<array<string,mixed>> $cwAllCisticky */
+/** @var int                      $cwAdminYear */
+/** @var int                      $cwAdminMonth */
+/** @var bool                     $cwAdminIsCurrent */
+/** @var int                      $cwTeamTotal */
+/** @var float                    $cwTeamEarnings */
+$cwCurrentRate    = $cwCurrentRate    ?? null;
+$cwRateHistory    = $cwRateHistory    ?? [];
+$cwAllCisticky    = $cwAllCisticky    ?? [];
+$cwAdminYear      = $cwAdminYear      ?? (int) date('Y');
+$cwAdminMonth     = $cwAdminMonth     ?? (int) date('n');
+$cwAdminIsCurrent = $cwAdminIsCurrent ?? true;
+$cwTeamTotal      = $cwTeamTotal      ?? 0;
+$cwTeamEarnings   = $cwTeamEarnings   ?? 0.0;
+$cwAdminMonthNames = ['', 'Leden','Únor','Březen','Duben','Květen','Červen',
+                      'Červenec','Srpen','Září','Říjen','Listopad','Prosinec'];
+$cwAdminPrevM = $cwAdminMonth - 1; $cwAdminPrevY = $cwAdminYear;
+if ($cwAdminPrevM < 1) { $cwAdminPrevM = 12; $cwAdminPrevY--; }
+$cwAdminNextM = $cwAdminMonth + 1; $cwAdminNextY = $cwAdminYear;
+if ($cwAdminNextM > 12) { $cwAdminNextM = 1; $cwAdminNextY++; }
 ?>
 <style>
 .goals-grid {
@@ -139,12 +161,235 @@ declare(strict_types=1);
 .period-banner--future { background: rgba(52,152,219,0.07); border: 1px solid rgba(52,152,219,0.25); color: #3498db; }
 </style>
 
-<section class="card" style="max-width:1100px;">
-    <h1 style="margin-top:0;">🎯 Cíle čističky podle krajů</h1>
+<section class="card">
+    <h1 style="margin-top:0;">🧹 Cíle a sazba čističky</h1>
 
     <?php if (!empty($flash)) { ?>
         <p class="alert alert-info"><?= crm_h($flash) ?></p>
     <?php } ?>
+
+    <!-- Cross-reference k sazbě navolávaček, ať admin nemusí hledat -->
+    <p style="font-size:0.8rem;color:var(--muted);margin:0 0 1rem;
+              background:rgba(0,0,0,0.03);padding:0.45rem 0.7rem;border-radius:5px;
+              border-left:3px solid rgba(0,0,0,0.2);">
+        💡 Hledáš <strong>sazbu pro navolávačky</strong>? Najdeš ji v
+        <a href="<?= crm_h(crm_url('/admin/daily-goals')) ?>"
+           style="color:#185fa5;font-weight:600;text-decoration:none;">📆 Denní cíle a odměny</a>
+        — sekce „Základní odměna za výhru".
+    </p>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         SAZBA ZA OVĚŘENÍ — řídí kolik čistička dostane za jeden kontakt
+         (READY i VF_SKIP). Změna založí nový záznam do historie, stará
+         platnost se uzavře (valid_to = včera) — žádné UPDATE in-place.
+    ═══════════════════════════════════════════════════════════════ -->
+    <div id="cisticka-rewards" style="margin-bottom:1.4rem;
+         background:#d4f4dd;
+         border:2px solid #2ecc71;
+         border-left:6px solid #16a34a;
+         border-radius:8px;
+         padding:1rem 1.2rem;
+         box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <h2 style="margin:0 0 0.6rem;font-size:1.15rem;color:#1f7a3a;display:flex;align-items:center;gap:0.5rem;">
+            💰 Sazba čističky za jedno ověření
+        </h2>
+        <div style="display:flex;align-items:baseline;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+            <span style="font-size:0.85rem;color:#365e3f;">Aktuální sazba:</span>
+            <?php if ($cwCurrentRate !== null) { ?>
+                <span style="font-size:1.7rem;font-weight:800;color:#16a34a;line-height:1;">
+                    <?= number_format($cwCurrentRate, 2, ',', ' ') ?> Kč
+                </span>
+                <span style="font-size:0.78rem;color:#365e3f;">
+                    / ověření · platí pro READY i VF_SKIP
+                </span>
+            <?php } else { ?>
+                <span style="color:#dc2626;font-weight:700;font-size:1rem;">⚠ Žádná aktivní sazba — nastav níže ↓</span>
+            <?php } ?>
+        </div>
+
+        <form method="post" action="<?= crm_h(crm_url('/admin/cisticka-rewards/save')) ?>"
+              style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;"
+              onsubmit="return confirm('Uložit novou sazbu? Stará sazba se přesune do historie.');">
+            <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+            <label style="font-size:0.82rem;color:var(--muted);">Změnit na:</label>
+            <input type="text" name="amount_czk"
+                   value="<?= $cwCurrentRate !== null ? number_format($cwCurrentRate, 2, ',', '') : '0,70' ?>"
+                   inputmode="decimal" placeholder="0,70" required
+                   style="width:90px;padding:0.35rem 0.6rem;font-size:0.9rem;
+                          background:#fff;color:var(--text);
+                          border:1px solid rgba(0,0,0,0.2);border-radius:5px;font-family:monospace;">
+            <span style="font-size:0.85rem;color:var(--muted);">Kč / ověření</span>
+            <button type="submit"
+                    style="background:#2ecc71;color:#fff;border:0;border-radius:5px;
+                           padding:0.4rem 1rem;font-size:0.85rem;font-weight:600;cursor:pointer;
+                           font-family:inherit;">
+                💾 Uložit sazbu
+            </button>
+        </form>
+
+        <?php if (count($cwRateHistory) > 1) { ?>
+        <details style="margin-top:0.7rem;">
+            <summary style="cursor:pointer;font-size:0.78rem;color:var(--muted);">
+                ▸ Historie sazeb (<?= count($cwRateHistory) ?>)
+            </summary>
+            <table style="margin-top:0.5rem;font-size:0.78rem;width:100%;
+                          border-collapse:collapse;">
+                <thead>
+                    <tr style="background:rgba(0,0,0,0.04);">
+                        <th style="text-align:left;padding:0.3rem 0.55rem;border-bottom:1px solid rgba(0,0,0,0.1);">Sazba</th>
+                        <th style="text-align:left;padding:0.3rem 0.55rem;border-bottom:1px solid rgba(0,0,0,0.1);">Platí od</th>
+                        <th style="text-align:left;padding:0.3rem 0.55rem;border-bottom:1px solid rgba(0,0,0,0.1);">Platí do</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($cwRateHistory as $row) {
+                        $vfTo = (string) ($row['valid_to'] ?? '');
+                        $isActive = ($vfTo === '' || $vfTo >= date('Y-m-d'));
+                    ?>
+                    <tr <?= $isActive ? 'style="font-weight:700;color:#16a34a;"' : '' ?>>
+                        <td style="padding:0.25rem 0.55rem;border-bottom:1px solid rgba(0,0,0,0.05);font-family:monospace;">
+                            <?= number_format((float)$row['amount_czk'], 2, ',', ' ') ?> Kč
+                        </td>
+                        <td style="padding:0.25rem 0.55rem;border-bottom:1px solid rgba(0,0,0,0.05);">
+                            <?= crm_h(date('d.m.Y', strtotime((string)$row['valid_from']))) ?>
+                        </td>
+                        <td style="padding:0.25rem 0.55rem;border-bottom:1px solid rgba(0,0,0,0.05);color:var(--muted);">
+                            <?= $vfTo === '' ? '— dosud platí' : crm_h(date('d.m.Y', strtotime($vfTo))) ?>
+                        </td>
+                    </tr>
+                    <?php } ?>
+                </tbody>
+            </table>
+        </details>
+        <?php } ?>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         AKTUÁLNÍ VÝPLATA ČISTIČEK — kolik kdo udělal a kolik mu mám
+         vyplatit za vybraný měsíc. Měsíční navigace ←/→/Aktuální.
+         Per řádek tlačítko PDF (otevře tiskovou stránku konkrétní čističky).
+    ═══════════════════════════════════════════════════════════════ -->
+    <div style="margin-bottom:1.4rem;
+         background:rgba(46,134,222,0.05);
+         border:1px solid rgba(46,134,222,0.25);
+         border-left:4px solid #2e86de;
+         border-radius:6px;
+         padding:0.85rem 1rem;">
+        <div style="display:flex;align-items:center;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.6rem;">
+            <strong style="font-size:1rem;">📊 Aktuální výplata čističek</strong>
+            <span style="font-size:0.78rem;color:var(--muted);">— <?= crm_h($cwAdminMonthNames[$cwAdminMonth] . ' ' . $cwAdminYear) ?></span>
+            <?php if (!$cwAdminIsCurrent) { ?>
+                <span style="color:#d97706;font-size:0.78rem;font-weight:600;">(historický pohled)</span>
+            <?php } ?>
+            <span style="margin-left:auto;font-size:0.85rem;">
+                Tým celkem:
+                <strong><?= $cwTeamTotal ?></strong> ověření
+                <?php if ($cwCurrentRate !== null) { ?>
+                    · <strong style="color:#16a34a;">
+                        <?= number_format($cwTeamEarnings, 2, ',', ' ') ?> Kč
+                    </strong>
+                <?php } ?>
+            </span>
+        </div>
+
+        <!-- Měsíční navigace -->
+        <div style="display:flex;gap:0.4rem;align-items:center;margin-bottom:0.6rem;flex-wrap:wrap;">
+            <a href="<?= crm_h(crm_url('/admin/cisticka-goals?cw_year=' . $cwAdminPrevY . '&cw_month=' . $cwAdminPrevM)) ?>"
+               style="padding:0.25rem 0.55rem;font-size:0.78rem;border:1px solid rgba(0,0,0,0.15);
+                      border-radius:5px;background:#fff;color:var(--text);text-decoration:none;font-weight:600;">←</a>
+            <strong style="padding:0 0.4rem;font-size:0.85rem;">
+                <?= crm_h($cwAdminMonthNames[$cwAdminMonth] . ' ' . $cwAdminYear) ?>
+            </strong>
+            <a href="<?= crm_h(crm_url('/admin/cisticka-goals?cw_year=' . $cwAdminNextY . '&cw_month=' . $cwAdminNextM)) ?>"
+               style="padding:0.25rem 0.55rem;font-size:0.78rem;border:1px solid rgba(0,0,0,0.15);
+                      border-radius:5px;background:#fff;color:var(--text);text-decoration:none;font-weight:600;">→</a>
+            <?php if (!$cwAdminIsCurrent) { ?>
+                <a href="<?= crm_h(crm_url('/admin/cisticka-goals?cw_year=' . date('Y') . '&cw_month=' . date('n'))) ?>"
+                   style="padding:0.25rem 0.55rem;font-size:0.78rem;border:1px solid #b5d4f4;
+                          border-radius:5px;background:rgba(46,134,222,0.1);color:#185fa5;text-decoration:none;font-weight:600;">
+                    Aktuální měsíc
+                </a>
+            <?php } ?>
+        </div>
+
+        <?php if ($cwCurrentRate === null) { ?>
+            <div style="padding:0.7rem;background:rgba(231,76,60,0.08);border-radius:5px;font-size:0.82rem;color:#b83030;">
+                ⚠ Nejdříve nastav sazbu (sekce výše).
+            </div>
+        <?php } elseif ($cwAllCisticky === []) { ?>
+            <div style="padding:0.7rem;background:rgba(0,0,0,0.03);border-radius:5px;font-size:0.82rem;color:var(--muted);">
+                Žádná aktivní čistička. Vytvoř ji v <a href="<?= crm_h(crm_url('/admin/users')) ?>" style="color:#185fa5;">Uživatelé</a>.
+            </div>
+        <?php } else { ?>
+            <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+                <thead>
+                    <tr style="background:rgba(0,0,0,0.04);">
+                        <th style="text-align:left;padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.1);">Čistička</th>
+                        <th style="text-align:right;padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.1);">Ověření</th>
+                        <th style="text-align:right;padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.1);color:#16a34a;">READY</th>
+                        <th style="text-align:right;padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.1);color:#dc2626;">VF skip</th>
+                        <th style="text-align:right;padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.1);">K vyplacení</th>
+                        <th style="text-align:center;padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.1);">PDF</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($cwAllCisticky as $ci) {
+                        $cId      = (int) ($ci['id'] ?? 0);
+                        $cName    = (string) ($ci['jmeno'] ?? '—');
+                        $ciTotal  = (int) ($ci['total'] ?? 0);
+                        $ciReady  = (int) ($ci['ready_count'] ?? 0);
+                        $ciVf     = (int) ($ci['vf_count'] ?? 0);
+                        $ciPayout = round($ciTotal * $cwCurrentRate, 2);
+                    ?>
+                    <tr style="<?= $ciTotal === 0 ? 'opacity:0.5;' : '' ?>">
+                        <td style="padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.05);font-weight:600;">
+                            <?= crm_h($cName) ?>
+                        </td>
+                        <td style="padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.05);text-align:right;font-weight:700;">
+                            <?= $ciTotal ?>
+                        </td>
+                        <td style="padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.05);text-align:right;color:#16a34a;">
+                            <?= $ciReady ?>
+                        </td>
+                        <td style="padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.05);text-align:right;color:#dc2626;">
+                            <?= $ciVf ?>
+                        </td>
+                        <td style="padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.05);text-align:right;color:#185fa5;font-weight:700;">
+                            <?= number_format($ciPayout, 2, ',', ' ') ?> Kč
+                        </td>
+                        <td style="padding:0.4rem 0.6rem;border-bottom:1px solid rgba(0,0,0,0.05);text-align:center;">
+                            <?php if ($ciTotal > 0) { ?>
+                                <a href="<?= crm_h(crm_url('/cisticka/payout/print?cisticka_id=' . $cId . '&year=' . $cwAdminYear . '&month=' . $cwAdminMonth)) ?>"
+                                   target="_blank" rel="noopener"
+                                   title="Otevřít tiskovou stránku této čističky"
+                                   style="display:inline-block;padding:0.2rem 0.55rem;font-size:0.72rem;
+                                          background:#d4f4dd;color:#1f7a3a;border:1px solid #9fdcb1;
+                                          border-radius:4px;text-decoration:none;font-weight:600;">
+                                    📄 Detail
+                                </a>
+                            <?php } else { ?>
+                                <span style="color:var(--muted);font-size:0.72rem;">—</span>
+                            <?php } ?>
+                        </td>
+                    </tr>
+                    <?php } ?>
+                </tbody>
+                <tfoot>
+                    <tr style="background:rgba(0,0,0,0.04);font-weight:700;">
+                        <td style="padding:0.4rem 0.6rem;border-top:2px solid rgba(0,0,0,0.15);">CELKEM</td>
+                        <td style="padding:0.4rem 0.6rem;border-top:2px solid rgba(0,0,0,0.15);text-align:right;">
+                            <?= $cwTeamTotal ?>
+                        </td>
+                        <td colspan="2" style="padding:0.4rem 0.6rem;border-top:2px solid rgba(0,0,0,0.15);"></td>
+                        <td style="padding:0.4rem 0.6rem;border-top:2px solid rgba(0,0,0,0.15);text-align:right;color:#185fa5;">
+                            <?= number_format($cwTeamEarnings, 2, ',', ' ') ?> Kč
+                        </td>
+                        <td style="padding:0.4rem 0.6rem;border-top:2px solid rgba(0,0,0,0.15);"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        <?php } ?>
+    </div>
 
     <!--
         Měsíční přepínač — GET form, mění ?month_key=YYYY-MM. JS níže auto-submituje
@@ -267,8 +512,9 @@ declare(strict_types=1);
         </div>
 
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:1rem;">
+            <!-- Toolbar obsahuje JEN akce specifické pro tuto stránku.
+                 Dashboard / další navigaci řeší sidebar (žádná duplicita). -->
             <button type="submit" class="btn">💾 Uložit cíle</button>
-            <a href="<?= crm_h(crm_url('/dashboard')) ?>" class="btn btn-secondary">← Dashboard</a>
             <a href="<?= crm_h(crm_url('/cisticka')) ?>" class="btn btn-secondary">Náhled — Čistička</a>
         </div>
     </form>

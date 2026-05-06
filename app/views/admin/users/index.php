@@ -272,13 +272,12 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
     <?php } ?>
 
     <div class="users-toolbar">
+        <!-- Toolbar obsahuje JEN akce týkající se uživatelů.
+             Navigace na ostatní sekce (Import, Cíle navolávaček, Dashboard) je v sidebaru. -->
         <a class="btn" href="<?= crm_h(crm_url('/admin/users/new')) ?>">+ Nový uživatel</a>
         <?php if (((string) ($actor['role'] ?? '')) === 'superadmin') { ?>
             <a class="btn btn-secondary" href="<?= crm_h(crm_url('/admin/users/new-test')) ?>" title="Účet pro testera bez emailu, login @test.local">🧪 Testovací účet</a>
         <?php } ?>
-        <a class="btn btn-secondary" href="<?= crm_h(crm_url('/admin/import')) ?>">CSV import kontaktů</a>
-        <a class="btn btn-secondary" href="<?= crm_h(crm_url('/admin/oz-targets')) ?>">🎯 Kvóty OZ</a>
-        <a class="btn btn-secondary" href="<?= crm_h(crm_url('/dashboard')) ?>">Zpět na dashboard</a>
     </div>
 
     <!-- ── Management: Majitel → Superadmin → Backoffice → Čistička (4-col grid na PC) ── -->

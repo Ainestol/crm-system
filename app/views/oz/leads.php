@@ -236,39 +236,10 @@ $renewalsForOz = $renewalsForOz ?? [];
             <span class="oz-stat__lbl"><?= crm_h($st['lbl']) ?></span>
         </div>
         <?php } ?>
-        <div class="oz-topbar-actions">
-            <a href="<?= crm_h(crm_url('/oz')) ?>"             class="btn btn-secondary btn-sm">📊 Moje kvóty</a>
-            <a href="<?= crm_h(crm_url('/oz/performance')) ?>" class="btn btn-secondary btn-sm">🏅 Výkon týmu</a>
-        </div>
+        <!-- (oz-topbar-actions odstraněn — Moje kvóty / Výkon týmu jsou v sidebaru) -->
     </div>
 
-    <!-- ── Info hint — performance widget byl přesunut na /oz dashboard.
-         Link Moje kvóty je v topbaru nahoře (vedle Výkon týmu).
-         Tento hint se schová na 14 dní po prvním zavření (LocalStorage). ── -->
-    <div id="oz-perf-moved-hint" style="display:none;margin-bottom:0.85rem;
-                font-size:0.75rem;color:var(--muted);
-                padding:0.35rem 0.7rem;background:rgba(0,0,0,0.02);
-                border-radius:6px;border:1px dashed rgba(0,0,0,0.08);
-                display:flex;align-items:center;gap:0.5rem;">
-        <span>💡 Osobní milníky + týmové stage cíle se přesunuly do <strong>Moje kvóty</strong> (tlačítko nahoře vpravo).</span>
-        <button type="button" onclick="ozHidePerfMovedHint()"
-                style="margin-left:auto;background:transparent;border:1px solid rgba(0,0,0,0.12);
-                       color:var(--muted);padding:0.15rem 0.45rem;border-radius:4px;
-                       cursor:pointer;font-size:0.7rem;">×</button>
-    </div>
-    <script>
-    (function () {
-        var KEY   = 'oz_perf_moved_hint_hidden_until';
-        var hint  = document.getElementById('oz-perf-moved-hint');
-        var until = parseInt(localStorage.getItem(KEY) || '0', 10);
-        if (!hint) return;
-        if (Date.now() > until) hint.style.display = 'flex';
-        window.ozHidePerfMovedHint = function () {
-            localStorage.setItem(KEY, String(Date.now() + 14 * 24 * 60 * 60 * 1000));
-            hint.style.display = 'none';
-        };
-    })();
-    </script>
+    <!-- (zastaralý "perf-moved-hint" + jeho JS odstraněny — sidebar je teď jediný zdroj navigace) -->
 
     </div><!-- /.oz-header-block ══════════════════════════════════════ -->
 

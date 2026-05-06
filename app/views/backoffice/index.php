@@ -375,45 +375,136 @@ if (!function_exists('boElapsed')) {
                 <div class="bo-card__body">
                     <!-- Levý sloupec: kontaktní info -->
                     <div class="bo-card__col">
-                        <?php if ($tel !== '') { ?>
-                            <div class="bo-card__field">
-                                <span class="bo-card__field-label">Tel.</span>
-                                <span class="bo-card__field-value" style="font-family:monospace;"><?= crm_h($tel) ?></span>
+
+                        <!-- View režim — read-only s tlačítkem ✏️ Upravit (sjednoceno s navolávačkou / OZ).
+                             BO smí upravit firma/tel/email/IČO/adresa. NE region a NE operator. -->
+                        <div id="bo-info-view-<?= $cId ?>">
+                            <div style="display:flex;align-items:center;justify-content:flex-start;margin-bottom:0.4rem;">
+                                <button type="button"
+                                        onclick="boContactEditToggle(<?= $cId ?>)"
+                                        title="Upravit údaje kontaktu (firma, tel, email, IČO, adresa)"
+                                        style="background:rgba(52,152,219,0.1);color:#3498db;
+                                               border:1px solid rgba(52,152,219,0.35);border-radius:4px;
+                                               padding:0.2rem 0.55rem;font-size:0.72rem;cursor:pointer;
+                                               font-family:inherit;font-weight:600;">
+                                    ✏️ Upravit kontakt
+                                </button>
                             </div>
-                        <?php } ?>
-                        <?php if ($email !== '') { ?>
-                            <div class="bo-card__field">
-                                <span class="bo-card__field-label">E-mail</span>
-                                <span class="bo-card__field-value"><?= crm_h($email) ?></span>
-                            </div>
-                        <?php } ?>
-                        <?php if ($ico !== '') { ?>
-                            <div class="bo-card__field">
-                                <span class="bo-card__field-label">IČO</span>
-                                <span class="bo-card__field-value"><?= crm_h($ico) ?></span>
-                                <a href="<?= crm_h('https://ares.gov.cz/ekonomicke-subjekty?ico=' . urlencode($ico)) ?>"
-                                   target="_blank" rel="noopener noreferrer"
-                                   title="Ověřit firmu v ARES (otevře se v novém okně)"
-                                   style="margin-left:0.4rem;color:#3498db;text-decoration:none;
-                                          font-size:0.7rem;padding:0.05rem 0.35rem;border-radius:3px;
-                                          background:rgba(52,152,219,0.1);
-                                          border:1px solid rgba(52,152,219,0.25);">
-                                    🔗 ARES
-                                </a>
-                            </div>
-                        <?php } ?>
-                        <?php if ($adresa !== '') { ?>
-                            <div class="bo-card__field">
-                                <span class="bo-card__field-label">Adresa</span>
-                                <span class="bo-card__field-value"><?= crm_h($adresa) ?></span>
-                            </div>
-                        <?php } ?>
-                        <?php if ($operator !== '') { ?>
-                            <div class="bo-card__field">
-                                <span class="bo-card__field-label">Operátor</span>
-                                <strong class="bo-card__field-value"><?= crm_h(strtoupper($operator)) ?></strong>
-                            </div>
-                        <?php } ?>
+                            <?php if ($tel !== '') { ?>
+                                <div class="bo-card__field">
+                                    <span class="bo-card__field-label">Tel.</span>
+                                    <span class="bo-card__field-value" style="font-family:monospace;"><?= crm_h($tel) ?></span>
+                                </div>
+                            <?php } ?>
+                            <?php if ($email !== '') { ?>
+                                <div class="bo-card__field">
+                                    <span class="bo-card__field-label">E-mail</span>
+                                    <span class="bo-card__field-value"><?= crm_h($email) ?></span>
+                                </div>
+                            <?php } ?>
+                            <?php if ($ico !== '') { ?>
+                                <div class="bo-card__field">
+                                    <span class="bo-card__field-label">IČO</span>
+                                    <span class="bo-card__field-value"><?= crm_h($ico) ?></span>
+                                    <a href="<?= crm_h('https://ares.gov.cz/ekonomicke-subjekty?ico=' . urlencode($ico)) ?>"
+                                       target="_blank" rel="noopener noreferrer"
+                                       title="Ověřit firmu v ARES (otevře se v novém okně)"
+                                       style="margin-left:0.4rem;color:#3498db;text-decoration:none;
+                                              font-size:0.7rem;padding:0.05rem 0.35rem;border-radius:3px;
+                                              background:rgba(52,152,219,0.1);
+                                              border:1px solid rgba(52,152,219,0.25);">
+                                        🔗 ARES
+                                    </a>
+                                </div>
+                            <?php } ?>
+                            <?php if ($adresa !== '') { ?>
+                                <div class="bo-card__field">
+                                    <span class="bo-card__field-label">Adresa</span>
+                                    <span class="bo-card__field-value"><?= crm_h($adresa) ?></span>
+                                </div>
+                            <?php } ?>
+                            <?php if ($operator !== '') { ?>
+                                <div class="bo-card__field">
+                                    <span class="bo-card__field-label">Operátor</span>
+                                    <strong class="bo-card__field-value"><?= crm_h(strtoupper($operator)) ?></strong>
+                                </div>
+                            <?php } ?>
+                        </div>
+
+                        <!-- Edit režim — formulář (skrytý do kliknutí na ✏️) -->
+                        <div id="bo-info-edit-<?= $cId ?>" style="display:none;">
+                            <form method="post" action="<?= crm_h(crm_url('/bo/contact/edit')) ?>"
+                                  style="display:flex;flex-direction:column;gap:0.35rem;">
+                                <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+                                <input type="hidden" name="contact_id" value="<?= $cId ?>">
+                                <input type="hidden" name="tab" value="<?= crm_h($tab) ?>">
+
+                                <div style="font-size:0.65rem;color:#3498db;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">
+                                    ✏️ Úprava údajů kontaktu
+                                </div>
+
+                                <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--bo-text-2);">
+                                    Firma <span style="color:#e74c3c;">*</span>
+                                    <input type="text" name="firma" required maxlength="200"
+                                           value="<?= crm_h((string)($c['firma'] ?? '')) ?>"
+                                           style="background:#ffffff;color:var(--bo-text);
+                                                  border:1px solid var(--bo-border);border-radius:4px;
+                                                  padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;">
+                                </label>
+                                <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--bo-text-2);">
+                                    Telefon
+                                    <input type="text" name="telefon" maxlength="50"
+                                           value="<?= crm_h((string)($c['telefon'] ?? '')) ?>"
+                                           style="background:#ffffff;color:var(--bo-text);
+                                                  border:1px solid var(--bo-border);border-radius:4px;
+                                                  padding:0.25rem 0.45rem;font-size:0.82rem;font-family:monospace;">
+                                </label>
+                                <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--bo-text-2);">
+                                    E-mail
+                                    <input type="email" name="email" maxlength="200"
+                                           value="<?= crm_h((string)($c['email'] ?? '')) ?>"
+                                           style="background:#ffffff;color:var(--bo-text);
+                                                  border:1px solid var(--bo-border);border-radius:4px;
+                                                  padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;">
+                                </label>
+                                <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--bo-text-2);">
+                                    IČO
+                                    <input type="text" name="ico" maxlength="20"
+                                           value="<?= crm_h((string)($c['ico'] ?? '')) ?>"
+                                           placeholder="8 číslic"
+                                           style="background:#ffffff;color:var(--bo-text);
+                                                  border:1px solid var(--bo-border);border-radius:4px;
+                                                  padding:0.25rem 0.45rem;font-size:0.82rem;font-family:monospace;">
+                                </label>
+                                <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--bo-text-2);">
+                                    Adresa
+                                    <input type="text" name="adresa" maxlength="300"
+                                           value="<?= crm_h((string)($c['adresa'] ?? '')) ?>"
+                                           style="background:#ffffff;color:var(--bo-text);
+                                                  border:1px solid var(--bo-border);border-radius:4px;
+                                                  padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;">
+                                </label>
+
+                                <div style="display:flex;gap:0.35rem;margin-top:0.25rem;">
+                                    <button type="submit"
+                                            style="background:#3498db;color:#fff;
+                                                   border:0;border-radius:4px;
+                                                   padding:0.3rem 0.7rem;font-size:0.78rem;cursor:pointer;
+                                                   font-family:inherit;font-weight:600;">
+                                        💾 Uložit
+                                    </button>
+                                    <button type="button"
+                                            onclick="boContactEditToggle(<?= $cId ?>)"
+                                            style="background:transparent;color:var(--bo-text-2);
+                                                   border:1px solid var(--bo-border);border-radius:4px;
+                                                   padding:0.3rem 0.7rem;font-size:0.78rem;cursor:pointer;
+                                                   font-family:inherit;">
+                                        Zrušit
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+
                     </div>
 
                     <!-- Pravý sloupec: poznámky + BMSL -->
@@ -918,9 +1009,11 @@ function boCheckboxToggle(input) {
         input.disabled = false;
         if (!data || !data.ok) {
             input.checked = !checked;
-            if (data && data.error) alert(data.error);
+            boShowToast('error', (data && data.error) ? data.error : '✗ Uložení selhalo');
             return;
         }
+        // Úspěšné uložení — vizuální potvrzení uživateli
+        boShowToast('saved', '✓ Uloženo');
         // Při zaškrtnutí "Podpis potvrzen" potřebujeme reload —
         // spustí přepočet BMSL u OZ + odemkne tlačítko "Uzavřít smlouvu".
         if (field === 'podpis_potvrzen') {
@@ -940,7 +1033,49 @@ function boCheckboxToggle(input) {
     .catch(() => {
         input.disabled = false;
         input.checked = !checked;
-        alert('Chyba sítě — zkuste to znovu.');
+        boShowToast('error', '✗ Chyba sítě — zkuste to znovu');
     });
+}
+
+// ── Toast: vizuální feedback po auto-save ──
+// Volá se z boCheckboxToggle() po úspěchu/chybě AJAX uložení.
+// kind: 'saved' | 'error', message: text k zobrazení.
+// Drží se 1.5 s, pak fade-out. Více volání po sobě toast resetují timer
+// (poslední vyhrává, žádné stackování).
+let _boToastTimer = null;
+function boShowToast(kind, message) {
+    let el = document.getElementById('bo-saved-toast');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'bo-saved-toast';
+        el.className = 'bo-toast';
+        document.body.appendChild(el);
+    }
+    el.className = 'bo-toast bo-toast--' + (kind === 'error' ? 'error' : 'saved');
+    el.textContent = message || (kind === 'error' ? '✗ Chyba' : '✓ Uloženo');
+    // Vynutit reflow — bez toho .is-visible animace neproběhne při rychlém opakování
+    void el.offsetWidth;
+    el.classList.add('is-visible');
+    if (_boToastTimer) clearTimeout(_boToastTimer);
+    _boToastTimer = setTimeout(() => {
+        el.classList.remove('is-visible');
+    }, 1500);
+}
+
+// ── Toggle View ↔ Edit u kontaktních údajů (firma/tel/email/IČO/adresa) ──
+// Stejné UX jako u OZ (ozContactEditToggle). Kliknutí přepíná dva sourozenecké
+// divy bo-info-view-{id} a bo-info-edit-{id}. Submit formu jde na /bo/contact/edit.
+function boContactEditToggle(cId) {
+    var view = document.getElementById('bo-info-view-' + cId);
+    var edit = document.getElementById('bo-info-edit-' + cId);
+    if (!view || !edit) return;
+    var goingToEdit = (view.style.display !== 'none');
+    view.style.display = goingToEdit ? 'none' : '';
+    edit.style.display = goingToEdit ? '' : 'none';
+    if (goingToEdit) {
+        // Zaměřit první input pro rychlou opravu
+        var first = edit.querySelector('input[name="firma"]');
+        if (first) first.focus();
+    }
 }
 </script>

@@ -20,14 +20,32 @@ $_navActive = static function (string $href) use ($_currentPath): string {
 
 /**
  * Sidebar nav linky podle role.
+ * Labely jsou psané "lidsky" — bez zkratek, ať tomu rozumí i kdo nezná interní žargon.
+ *
+ * @param string $role
+ * @param int    $proposalsPending  Počet pending návrhů (pro badge u majitele/superadmina)
  * @return array<string, list<array{label: string, href: string, icon: string}>>
  */
-$_navForRole = static function (string $role): array {
+$_navForRole = static function (string $role, int $proposalsPending = 0): array {
     $sections = [];
 
+    // Hlavní sekce: Dashboard + Nový kontakt (všem) + Návrhy ke schválení (majitelé).
+    // Vše blízko sebe, ať schvalovatel vidí všechno na očích.
     $sections['Hlavní'] = [
-        ['label' => 'Dashboard', 'href' => '/dashboard', 'icon' => '🏠'],
+        ['label' => 'Dashboard',       'href' => '/dashboard',     'icon' => '🏠'],
+        ['label' => 'Nový kontakt',    'href' => '/contacts/new',  'icon' => '➕'],
     ];
+    if (in_array($role, ['majitel', 'superadmin'], true)) {
+        $proposalLabelMain = 'Kontakty ke schválení';
+        if ($proposalsPending > 0) {
+            $proposalLabelMain .= ' (' . $proposalsPending . ')';
+        }
+        $sections['Hlavní'][] = [
+            'label' => $proposalLabelMain,
+            'href'  => '/admin/contact-proposals',
+            'icon'  => '📋',
+        ];
+    }
 
     if ($role === 'navolavacka') {
         $sections['Práce'] = [
@@ -43,10 +61,19 @@ $_navForRole = static function (string $role): array {
         ];
     }
     if ($role === 'obchodak') {
+        // Veškerá OZ navigace JEN tady (žádné duplicitní tlačítka uvnitř stránek).
+        // "Pracovní plocha" je stejný název jako title stránky /oz/leads (OzController::getLeads
+        // má $title = 'Pracovní plocha') a konzistentní s navolávačkou / čističkou,
+        // které také mají v sidebaru "Pracovní plocha".
+        //   "Příchozí leady"   → /oz/queue        (nové leady k akceptaci)
+        //   "Pracovní plocha"  → /oz/leads        (rozpracovaná práce ve všech stavech)
+        //   "Můj měsíc"        → /oz              (kvóty + payout PDF + souhrn)
+        //   "Výkon celého týmu"→ /oz/performance
         $sections['Práce'] = [
-            ['label' => 'Pracovní plocha', 'href' => '/oz/leads',       'icon' => '💼'],
-            ['label' => 'Moje kvóty',       'href' => '/oz',             'icon' => '🎯'],
-            ['label' => 'Výkon týmu',       'href' => '/oz/performance', 'icon' => '🏆'],
+            ['label' => 'Příchozí leady',     'href' => '/oz/queue',       'icon' => '📋'],
+            ['label' => 'Pracovní plocha',    'href' => '/oz/leads',       'icon' => '💼'],
+            ['label' => 'Můj měsíc',          'href' => '/oz',             'icon' => '🎯'],
+            ['label' => 'Výkon celého týmu',  'href' => '/oz/performance', 'icon' => '🏆'],
         ];
     }
     if (in_array($role, ['backoffice', 'majitel', 'superadmin'], true)) {
@@ -55,15 +82,32 @@ $_navForRole = static function (string $role): array {
         ];
     }
     if (in_array($role, ['majitel', 'superadmin'], true)) {
-        $sections['Administrace'] = [
-            ['label' => 'Uživatelé',        'href' => '/admin/users',         'icon' => '👥'],
-            ['label' => 'Import CSV',        'href' => '/admin/import',        'icon' => '📥'],
-            ['label' => 'Kvóty OZ',          'href' => '/admin/oz-targets',    'icon' => '🎯'],
-            ['label' => 'Stage cíle',         'href' => '/admin/oz-stages',     'icon' => '🪜'],
-            ['label' => 'Milníky OZ',         'href' => '/admin/oz-milestones', 'icon' => '🏁'],
-            ['label' => 'Denní cíle',         'href' => '/admin/daily-goals',   'icon' => '📆'],
-            ['label' => 'Stat. navolávaček', 'href' => '/admin/caller-stats',   'icon' => '📞'],
-            ['label' => 'Statistiky týmu',    'href' => '/admin/team-stats',    'icon' => '📊'],
+        // ── Sekce sgrupované per role, na kterou nastavení míří ──
+        // Logika: když chci nastavit něco pro čističky, jdu do "Čističky".
+        // Když pro navolávačky, do "Navolávačky". Žádné hádání, kde co je.
+        $sections['Čističky'] = [
+            ['label' => 'Cíle a sazba čističky',       'href' => '/admin/cisticka-goals',       'icon' => '🧹'],
+        ];
+        $sections['Navolávačky'] = [
+            ['label' => 'Kvóty navolávaček (per OZ)',  'href' => '/admin/oz-targets',           'icon' => '🎯'],
+            ['label' => 'Denní cíle a odměny',          'href' => '/admin/daily-goals',          'icon' => '📆'],
+        ];
+        $sections['Obchodní zástupci'] = [
+            ['label' => 'Týmové cíle OZ',              'href' => '/admin/oz-stages',            'icon' => '🪜'],
+            ['label' => 'Osobní cíle OZ',              'href' => '/admin/oz-milestones',        'icon' => '🏁'],
+        ];
+        // ── Administrace systému: cross-role, nastavení samotného CRM ──
+        $sections['Administrace systému'] = [
+            ['label' => 'Uživatelé',                    'href' => '/admin/users',                'icon' => '👥'],
+            ['label' => 'Import kontaktů',              'href' => '/admin/import',               'icon' => '📥'],
+        ];
+        // ── Statistiky: přehledy, audity, real-time pohledy do dat ──
+        // (caller-stats jsou zahrnuté v team-stats — proto v menu zůstává jen "Statistiky týmu")
+        $sections['Statistiky'] = [
+            ['label' => 'Live datagrid',     'href' => '/admin/datagrid',    'icon' => '📊'],
+            ['label' => 'Activity feed',     'href' => '/admin/feed',        'icon' => '📰'],
+            ['label' => 'Audit duplicit',    'href' => '/admin/duplicates',  'icon' => '🕵'],
+            ['label' => 'Statistiky týmu',   'href' => '/admin/team-stats',  'icon' => '🏆'],
         ];
     }
 
@@ -80,6 +124,20 @@ $_roleLabels = [
 ];
 $_roleLabel = $_roleLabels[$_role] ?? $_role;
 $_isAuthPage = empty($user);
+
+// Pending count pro badge "Návrhy kontaktů" (jen majitel/superadmin)
+// Graceful fallback na 0, pokud crm_pdo() nebo třída není k dispozici.
+$_proposalsPending = 0;
+if (!$_isAuthPage
+    && in_array($_role, ['majitel', 'superadmin'], true)
+    && function_exists('crm_pdo')
+    && class_exists('ContactProposalsController')) {
+    try {
+        $_proposalsPending = ContactProposalsController::pendingCount(crm_pdo());
+    } catch (\Throwable $e) {
+        $_proposalsPending = 0;
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="cs">
@@ -100,7 +158,7 @@ $_isAuthPage = empty($user);
             <div class="crm-logo-sub">🐌 Šneci na tripu</div>
         </div>
         <nav class="crm-sidebar-nav">
-            <?php foreach ($_navForRole($_role) as $sectionLabel => $links) { ?>
+            <?php foreach ($_navForRole($_role, $_proposalsPending) as $sectionLabel => $links) { ?>
                 <div class="crm-nav-section"><?= crm_h($sectionLabel) ?></div>
                 <?php foreach ($links as $link) { ?>
                     <a href="<?= crm_h(crm_url($link['href'])) ?>" class="crm-nav-item<?= $_navActive($link['href']) ?>">
@@ -110,12 +168,8 @@ $_isAuthPage = empty($user);
                 <?php } ?>
             <?php } ?>
         </nav>
-        <div class="crm-sidebar-footer">
-            <div class="crm-user-box">
-                <div class="crm-user-name"><?= crm_h((string) ($user['jmeno'] ?? '')) ?></div>
-                <div class="crm-user-role"><?= crm_h($_roleLabel) ?></div>
-            </div>
-        </div>
+        <!-- Sidebar footer: aktuálně prázdný — user-info je teď v topbaru.
+             Místo si necháváme pro budoucí status / verzi appky. -->
     </aside>
     <?php } ?>
 
@@ -128,6 +182,11 @@ $_isAuthPage = empty($user);
                 $_logoutCsrf = crm_csrf_token();
             ?>
             <div class="crm-topbar-right">
+                <!-- User-info: jméno + role pohromadě s akcemi (Heslo / Odhlásit) -->
+                <div class="crm-topbar-user" title="<?= crm_h((string) ($user['email'] ?? '')) ?>">
+                    <span class="crm-topbar-user__name"><?= crm_h((string) ($user['jmeno'] ?? '')) ?></span>
+                    <span class="crm-topbar-user__role"><?= crm_h($_roleLabel) ?></span>
+                </div>
                 <a href="<?= crm_h(crm_url('/account/password')) ?>" class="btn" title="Změna hesla">🔑 Heslo</a>
                 <form method="post" action="<?= crm_h(crm_url('/logout')) ?>" style="margin:0;">
                     <input type="hidden"

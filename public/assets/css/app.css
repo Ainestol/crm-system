@@ -22,10 +22,12 @@
   --color-accent:               #e8920a;
   --color-accent-dark:          #c97d09;
 
-  /* ── POZADÍ (page-bg trochu tmavší pro lepší kontrast s bílými kartami) ── */
-  --color-page-bg:              #e1e7ef;
-  --color-card-bg:              #ffffff;
-  --color-surface:              #f0f3f8;
+  /* ── POZADÍ ──
+   * card-bg: jemně našedlá místo čisté bílé — méně "křičí" na velkých plochách,
+   * stále působí jako papír. page-bg lehce tmavší pro hezké vrstvení karet. */
+  --color-page-bg:              #dde4ec;
+  --color-card-bg:              #fafbfc;
+  --color-surface:              #eef2f7;
 
   /* ── BORDERY (posíleno pro lepší kontrast na light pozadí) ── */
   --color-border:               #c4cdd9;
@@ -273,6 +275,35 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* User-info v topbaru — jméno + role pohromadě s akcemi (Heslo / Odhlásit).
+   Dříve bylo dole v sidebar footeru, přesunuto pro konzistenci s ostatními CRM. */
+.crm-topbar-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.15;
+  margin-right: 6px;
+  padding-right: 10px;
+  border-right: 1px solid var(--color-border);
+}
+.crm-topbar-user__name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.crm-topbar-user__role {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 1px;
+}
+@media (max-width: 600px) {
+  /* Na mobilu kompresnout — jen jméno, role schovat. */
+  .crm-topbar-user__role { display: none; }
+  .crm-topbar-user { padding-right: 6px; margin-right: 4px; }
 }
 
 .crm-content {
@@ -2366,4 +2397,336 @@ textarea {
 /* Subrow strip on legacy tables — was dark on dark, now subtle gray */
 .subrow td {
   background: var(--color-surface) !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   CALLER QUOTAS WIDGET — sbalitelný read-only přehled volných kvót OZ.
+   Zobrazuje se v caller/index.php pod .caller-topbar.
+   Princip: navolávačka vidí "kdo z OZ má v kterém kraji volné místo".
+   Heatmap colors → tmavší = méně naplněno = víc volné.
+   ════════════════════════════════════════════════════════════════════ */
+.cq-widget {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  margin: 0.8rem 0;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.cq-widget__summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.6rem 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  user-select: none;
+  flex-wrap: wrap;
+}
+.cq-widget__summary::-webkit-details-marker { display: none; }
+.cq-widget__summary:hover { background: var(--color-surface); }
+.cq-widget__title { font-weight: 700; color: var(--color-text); }
+.cq-widget__hint { color: var(--color-text-muted); font-size: 0.78rem; }
+.cq-widget__inline {
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+.cq-widget__inline strong { color: var(--color-text); }
+.cq-widget__rem { color: #d97706; font-weight: 600; }
+.cq-widget__chevron {
+  display: inline-block;
+  transition: transform 0.18s;
+  color: var(--color-text-muted);
+  margin-left: 0.4rem;
+}
+.cq-widget[open] .cq-widget__chevron { transform: rotate(180deg); }
+.cq-widget__body {
+  padding: 0.7rem 0.85rem 0.95rem;
+  border-top: 1px solid var(--color-border);
+}
+.cq-widget__lead {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.6rem;
+  line-height: 1.5;
+}
+.cq-widget__lead strong { color: var(--color-text); }
+
+/* Měsíční navigace ve widgetu Volné kvóty */
+.cq-month-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+.cq-month-btn {
+  display: inline-block;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-decoration: none;
+  background: var(--color-card-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.cq-month-btn:hover { background: var(--color-surface); }
+.cq-month-btn--current {
+  background: var(--color-badge-nove-bg);
+  color: var(--color-badge-nove-text);
+  border-color: #b5d4f4;
+}
+.cq-month-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text);
+  padding: 0 0.4rem;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   CISTICKA WAGE WIDGET — sbalitelný přehled výplaty čističky.
+   Stejný princip jako .cq-widget pro navolávačku, jen jiná data.
+   ════════════════════════════════════════════════════════════════════ */
+.cw-widget {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  margin: 0.8rem 0;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.cw-widget__summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.6rem 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  user-select: none;
+  flex-wrap: wrap;
+}
+.cw-widget__summary::-webkit-details-marker { display: none; }
+.cw-widget__summary:hover { background: var(--color-surface); }
+.cw-widget__title { font-weight: 700; color: var(--color-text); }
+.cw-widget__hint  { color: var(--color-text-muted); font-size: 0.78rem; }
+.cw-widget__inline {
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+.cw-widget__inline strong { color: var(--color-text); }
+.cw-widget__chevron {
+  display: inline-block;
+  transition: transform 0.18s;
+  color: var(--color-text-muted);
+  margin-left: 0.4rem;
+}
+.cw-widget[open] .cw-widget__chevron { transform: rotate(180deg); }
+.cw-widget__body {
+  padding: 0.7rem 0.85rem 0.95rem;
+  border-top: 1px solid var(--color-border);
+}
+.cw-month-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+.cw-month-btn {
+  display: inline-block;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-decoration: none;
+  background: var(--color-card-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.cw-month-btn:hover { background: var(--color-surface); }
+.cw-month-btn--current {
+  background: var(--color-badge-nove-bg);
+  color: var(--color-badge-nove-text);
+  border-color: #b5d4f4;
+}
+.cw-month-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text);
+  padding: 0 0.4rem;
+}
+.cw-widget__empty {
+  padding: 0.7rem 0.85rem;
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+.cw-widget__breakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.5rem;
+}
+.cw-bd-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+  text-align: center;
+}
+.cw-bd-card--total {
+  background: #d4f4dd;
+  border-color: #9fdcb1;
+}
+.cw-bd-card--total .cw-bd-num { color: #1f7a3a; }
+.cw-bd-num {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+.cw-bd-lbl {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin-top: 0.15rem;
+}
+
+/* Empty state — měsíc bez kvót i kontaktů.
+   Kompaktní layout (1 řádek + odkaz), ať se výška widgetu moc nemění oproti
+   variantě s tabulkou. */
+.cq-widget__empty {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  flex-wrap: wrap;
+}
+.cq-widget__empty-icon {
+  font-size: 1.4rem;
+  opacity: 0.6;
+  line-height: 1;
+}
+.cq-widget__empty-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.cq-widget__empty-hint {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  flex: 1 1 auto;
+}
+.cq-widget__empty-hint a {
+  text-decoration: none;
+  color: var(--color-badge-nove);
+  font-weight: 600;
+  margin-left: 0.4rem;
+}
+.cq-widget__empty-hint a:hover { text-decoration: underline; }
+
+.cq-table-wrap { overflow-x: auto; }
+.cq-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  min-width: 520px;
+}
+.cq-table th, .cq-table td {
+  padding: 0.4rem 0.55rem;
+  text-align: center;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+.cq-table thead th {
+  background: var(--color-surface);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  position: sticky;
+  top: 0;
+}
+.cq-table tbody tr:hover { background: var(--color-surface); }
+
+.cq-cell-name {
+  text-align: left !important;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.cq-cell-total {
+  font-weight: 600;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.cq-cell-empty {
+  color: var(--color-text-light);
+  font-size: 0.85rem;
+}
+
+/* Heatmap fills — tmavší = víc chybí. */
+.cq-cell-fill {
+  font-weight: 600;
+  border-radius: 0;
+}
+.cq-cell-fill--zero {
+  background: #fde2e2;
+  color: #b83030;
+}
+.cq-cell-fill--low {
+  background: #fef0d3;
+  color: #92580d;
+}
+.cq-cell-fill--mid {
+  background: #fff7e0;
+  color: #92580d;
+}
+.cq-cell-fill--done {
+  background: #d4f4dd;
+  color: #1f7a3a;
+}
+.cq-cell-fill--over {
+  /* OZ má přijaté kontakty bez kvóty — neutrální šedá */
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+.cq-cell-tgt {
+  color: var(--color-text-muted);
+  font-weight: 400;
+  font-size: 0.72rem;
+}
+
+.cq-widget__legend {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  align-items: center;
+}
+.cq-widget__legend .cq-cell-fill {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.66rem;
+  margin-right: 0.15rem;
+}
+@media (max-width: 600px) {
+  .cq-widget__inline { flex-basis: 100%; margin-left: 0; }
+  .cq-table { font-size: 0.72rem; }
 }

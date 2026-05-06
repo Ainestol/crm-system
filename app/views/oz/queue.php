@@ -8,7 +8,7 @@ declare(strict_types=1);
 
 /** @var array<string,mixed>                $user */
 /** @var list<array<string,mixed>>          $pendingLeads   čekají na přijetí (po regionu filteru) */
-/** @var list<array{caller_id:int,caller_name:string,contacts:list<array<string,mixed>>,count:int}> $pendingByCaller  sgrupované per navolávačka */
+/** @var list<array{caller_id:int,caller_name:string,is_manual?:bool,contacts:list<array<string,mixed>>,count:int}> $pendingByCaller  sgrupované per navolávačka (is_manual=true pro kontakty bez navolávačky) */
 /** @var array<string,int>                  $regionCounts   region → počet pending (PŘED filtrem) */
 /** @var string                             $selectedRegion  aktivní region filter ('' = vše) */
 /** @var list<array<string,mixed>>          $renewals       smlouvy končící do 30 dní */
@@ -102,9 +102,9 @@ function ozqElapsed(?string $dt): string {
         <?php if ($pendingLeads === []) { ?>
             <div class="oz-empty">
                 <div class="oz-empty__icon">📪</div>
-                <div>Žádné nové leady od navolávaček.</div>
+                <div>Žádné nové leady k převzetí.</div>
                 <div style="font-size:var(--oz-text-sm);margin-top:0.5rem;color:var(--oz-text-3);">
-                    Jakmile navolávačka označí kontakt jako vhodný pro tebe, objeví se tady.
+                    Jakmile ti navolávačka přiřadí kontakt nebo majitel přidá nový, objeví se tady.
                 </div>
                 <?php if ($inProgressCount > 0) { ?>
                     <div style="margin-top:1.4rem;padding-top:1.2rem;border-top:1px dashed var(--oz-border);
@@ -162,24 +162,37 @@ function ozqElapsed(?string $dt): string {
                 $callerId   = (int) $group['caller_id'];
                 $callerName = (string) $group['caller_name'];
                 $count      = (int) $group['count'];
+                $isManual   = (bool) ($group['is_manual'] ?? false);
             ?>
 
-            <!-- ── SEKCE per CALLER ── -->
+            <!-- ── SEKCE per CALLER (nebo manuální skupina) ── -->
             <div class="oz-caller-group" style="margin-bottom:1.5rem;">
 
                 <div class="oz-caller-group__head"
                      style="display:flex;align-items:center;gap:0.7rem;flex-wrap:wrap;
                             padding:0.55rem 0.85rem;background:var(--oz-card);
-                            border:1px solid var(--oz-border);border-left:3px solid var(--oz-primary-40);
+                            border:1px solid var(--oz-border);border-left:3px solid <?= $isManual ? '#9b59b6' : 'var(--oz-primary-40)' ?>;
                             border-radius:var(--oz-radius-md);margin-bottom:0.5rem;">
                     <div style="flex:1;min-width:180px;">
                         <div style="font-size:var(--oz-text-xs);color:var(--oz-text-3);
                                     text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">
-                            Od navolávačky
+                            <?php if ($isManual) { ?>
+                                ✋ Manuální vstup
+                            <?php } else { ?>
+                                Od navolávačky
+                            <?php } ?>
                         </div>
                         <div style="font-size:var(--oz-text-lg);font-weight:700;color:var(--oz-text);
                                     margin-top:0.1rem;">
-                            <?= crm_h($callerName) ?>
+                            <?php if ($isManual) { ?>
+                                <span style="color:#9b59b6;">Přidáno přímo</span>
+                                <span style="font-size:var(--oz-text-xs);color:var(--oz-text-3);
+                                             font-weight:400;margin-left:0.4rem;">
+                                    (majitel / schválený návrh)
+                                </span>
+                            <?php } else { ?>
+                                <?= crm_h($callerName) ?>
+                            <?php } ?>
                             <span style="font-size:var(--oz-text-sm);color:var(--oz-text-3);
                                          font-weight:500;margin-left:0.4rem;">
                                 · <?= $count ?> lead<?= $count === 1 ? '' : ($count < 5 ? 'y' : 'ů') ?>

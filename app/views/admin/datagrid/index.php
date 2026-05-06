@@ -13,28 +13,7 @@
 .dg-wrap { padding: 0.8rem 1rem 1.2rem; max-width: 1400px; margin: 0 auto; }
 .dg-wrap h1 { margin: 0 0 0.4rem; font-size: 1.35rem; color: var(--color-text); }
 .dg-wrap .lead { color: var(--color-text-muted); font-size: 0.85rem; margin-bottom: 1rem; }
-.dg-breadcrumb {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    margin: -0.8rem -1rem 0.8rem;
-    padding: 0.55rem 1rem;
-    background: var(--color-card-bg);
-    border-bottom: 1px solid var(--color-border);
-    font-size: 0.78rem;
-    display: flex; gap: 0.4rem; flex-wrap: wrap;
-}
-.dg-breadcrumb a {
-    color: var(--color-badge-nove);
-    text-decoration: none;
-    padding: 0.25rem 0.6rem;
-    border-radius: var(--radius-btn);
-    background: var(--color-badge-nove-bg);
-    border: 1px solid #b5d4f4;
-    font-weight: 600;
-}
-.dg-breadcrumb a:hover { background: #d4e5f7; }
-.dg-breadcrumb a.is-current { background: var(--color-badge-nove); color: #fff; border-color: var(--color-badge-nove); }
+/* (dg-breadcrumb odstraněn — navigaci řeší sidebar) */
 
 .dg-toolbar {
     display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center;
@@ -354,8 +333,6 @@
     .dg-wrap h1 { font-size: 1.15rem; }
     .dg-toolbar { padding: 0.5rem 0.6rem; gap: 0.4rem; }
     .dg-toolbar > * { font-size: 0.78rem; }
-    .dg-breadcrumb { gap: 0.3rem; }
-    .dg-breadcrumb a { font-size: 0.74rem; padding: 0.2rem 0.45rem; }
     /* Tabulka už má min-width: 1230px → na mobilu se scrolluje horizontálně */
 }
 @media (max-width: 480px) {
@@ -368,15 +345,6 @@
 </style>
 
 <section class="dg-wrap">
-    <div class="dg-breadcrumb">
-        <a href="<?= crm_h(crm_url('/dashboard')) ?>">← Dashboard</a>
-        <a href="#" class="is-current">📊 Live datagrid</a>
-        <a href="<?= crm_h(crm_url('/admin/feed')) ?>">📰 Activity feed</a>
-        <a href="<?= crm_h(crm_url('/admin/duplicates')) ?>">🕵 Audit duplicit</a>
-        <a href="<?= crm_h(crm_url('/admin/import')) ?>">📥 Import</a>
-        <a href="<?= crm_h(crm_url('/admin/users')) ?>">👥 Uživatelé</a>
-    </div>
-
     <h1>📊 Live datagrid</h1>
     <p class="lead">
         Excel-like přehled celé DB. Sortuj klikem na hlavičku, filtruj přes vyhledávací pole, auto-refresh každých 10 sekund. Změny od posledního pollu krátce zableskou žlutě.
@@ -628,7 +596,7 @@
                 sort: true,
                 search: false, // používáme vlastní search (řeší tel s +420 a obnovu po auto-refresh)
                 pagination: { enabled: true, limit: 100 },
-                fixedHeader: true,
+                fixedHeader: false, // sticky breadcrumb nahoře překrýval Grid.js sticky header → tabulková hlavička je teď normální (vždy vidět nad daty, sortování klikem stejně funguje)
                 language: {
                     pagination: { previous: '‹', next: '›', showing: 'Zobr.', of: 'z', to: '–', results: () => 'řádků' },
                     noRecordsFound: 'Žádná data — zkontroluj filtr nebo hledání',

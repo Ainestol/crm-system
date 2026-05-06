@@ -557,14 +557,24 @@ final class CallerController
         $pace          = $workDaysPassed > 0 ? $monthWins / $workDaysPassed : 0;
         $projectedWins = $workDaysTotal > 0 ? (int) round($pace * $workDaysTotal) : $monthWins;
 
-        // ── Kvóty + plnění OZ pro tento měsíc (pro win dropdown) ───────────────
+        // ── Kvóty + plnění OZ pro vybraný měsíc (widget Volné kvóty) ───────────────
+        // URL parametry ?cq_year &cq_month umožňují navolávačce procházet měsíce
+        // (např. zpětně si zkontrolovat předminulý měsíc). Default = aktuální.
+        // $cqYear/$cqMonth se předávají do view jako "měsíc widgetu", odlišený
+        // od aktuálního měsíce (pro layout/UX nápověda "není to teď").
+        $cqYear  = (int) ($_GET['cq_year']  ?? $curYear);
+        $cqMonth = (int) ($_GET['cq_month'] ?? $curMonth);
+        $cqYear  = max(2024, min(2030, $cqYear));
+        $cqMonth = max(1,    min(12,   $cqMonth));
+        $cqIsCurrent = ($cqYear === $curYear && $cqMonth === $curMonth);
+
         $ozProgress = []; // ozProgress[oz_id][region] = ['received' => int, 'target' => int]
         try {
             $tgtStmt = $this->pdo->prepare(
                 'SELECT user_id, region, target_count FROM oz_targets
                  WHERE year = :y AND month = :m'
             );
-            $tgtStmt->execute(['y' => $curYear, 'm' => $curMonth]);
+            $tgtStmt->execute(['y' => $cqYear, 'm' => $cqMonth]);
             $ozTargetData = [];
             foreach ($tgtStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 $ozTargetData[(int) $row['user_id']][(string) $row['region']] = (int) $row['target_count'];
@@ -579,7 +589,7 @@ final class CallerController
                    AND MONTH(datum_volani) = :m
                  GROUP BY assigned_sales_id, region"
             );
-            $recStmt->execute(['y' => $curYear, 'm' => $curMonth]);
+            $recStmt->execute(['y' => $cqYear, 'm' => $cqMonth]);
             $ozReceivedData = [];
             foreach ($recStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 $ozReceivedData[(int) $row['uid']][(string) $row['region']] = (int) $row['cnt'];
@@ -1535,5 +1545,97 @@ final class CallerController
         unset($c);
 
         return $contacts;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  GET /caller/payout/print
+    //
+    //  Standalone tisková stránka — pohled "z opačné strany" než má OZ.
+    //  Místo "kolik OZ Tomáš zaplatí navolávačkám", tady je
+    //  "kolik dostane navolávačka X od jednotlivých OZ-ů".
+    //
+    //  Hard-locked na přihlášenou navolávačku (caller vidí jen sebe).
+    //  Admin/majitel může přes ?caller_id=N pro jakéhokoli callera.
+    // ════════════════════════════════════════════════════════════════
+    public function getPayoutPrint(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['navolavacka', 'majitel', 'superadmin']);
+
+        // Hard-lock pro navolávačku — vidí jen sebe.
+        if ((string) ($user['role'] ?? '') === 'navolavacka') {
+            $callerId = (int) $user['id'];
+        } else {
+            $callerId = (int) ($_GET['caller_id'] ?? $user['id']);
+        }
+
+        $year  = max(2024, min(2030, (int) ($_GET['year']  ?? date('Y'))));
+        $month = max(1,    min(12,   (int) ($_GET['month'] ?? date('n'))));
+
+        // Info o navolávačce
+        $cStmt = $this->pdo->prepare(
+            "SELECT id, jmeno FROM users WHERE id = :id AND role = 'navolavacka' LIMIT 1"
+        );
+        $cStmt->execute(['id' => $callerId]);
+        $caller = $cStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$caller) {
+            http_response_code(404);
+            echo 'Navolávačka nenalezena.';
+            exit;
+        }
+
+        // Kontakty CALLED_OK navolané touto navolávačkou v daný měsíc
+        // + per OZ kdo je dostal + flag info per OZ
+        $sqlContacts = $this->pdo->prepare(
+            "SELECT c.id, c.firma, c.telefon, c.region, c.datum_volani, c.poznamka,
+                    u.id   AS oz_id,
+                    COALESCE(u.jmeno, '— bez OZ —') AS oz_name,
+                    CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END AS flagged,
+                    COALESCE(f.reason, '') AS flag_reason
+             FROM contacts c
+             LEFT JOIN users u ON u.id = c.assigned_sales_id
+             LEFT JOIN contact_oz_flags f
+                    ON f.contact_id = c.id AND f.oz_id = c.assigned_sales_id
+             WHERE c.stav = 'CALLED_OK'
+               AND c.assigned_caller_id = :cid
+               AND YEAR(c.datum_volani)  = :y
+               AND MONTH(c.datum_volani) = :m
+             ORDER BY u.jmeno ASC, c.region ASC, c.datum_volani ASC"
+        );
+        $sqlContacts->execute(['cid' => $callerId, 'y' => $year, 'm' => $month]);
+        $contacts = $sqlContacts->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        // Seskupit per OZ (a uvnitř per region)
+        $byOz = [];
+        foreach ($contacts as $c) {
+            $oid  = (int) ($c['oz_id'] ?? 0);
+            $name = $oid > 0 ? (string) $c['oz_name'] : '— bez OZ —';
+            if (!isset($byOz[$oid])) {
+                $byOz[$oid] = [
+                    'name'     => $name,
+                    'total'    => 0,
+                    'flagged'  => 0,
+                    'byRegion' => [],
+                ];
+            }
+            $byOz[$oid]['total']++;
+            if ((int) $c['flagged']) {
+                $byOz[$oid]['flagged']++;
+            }
+            $byOz[$oid]['byRegion'][(string) $c['region']][] = $c;
+        }
+
+        // Sazba odměny — stejný princip jako u OZ
+        $rewardRow = $this->pdo->query(
+            "SELECT amount_czk FROM caller_rewards_config
+             WHERE valid_from <= CURDATE() AND (valid_to IS NULL OR valid_to >= CURDATE())
+             ORDER BY valid_from DESC LIMIT 1"
+        );
+        $rewardPerWin = $rewardRow ? (float) ($rewardRow->fetchColumn() ?: 0) : 0.0;
+
+        // Standalone tisková stránka — neprojde přes base layout
+        header('Content-Type: text/html; charset=UTF-8');
+        require dirname(__DIR__) . '/views/caller/payout_print.php';
+        exit;
     }
 }

@@ -29,9 +29,12 @@
   --bo-stav-nezajem:   #e74c3c;   /* Nezájem */
 
   /* Light-theme tokens (HANDOFF design system) */
+  /* Karta: výchozí = jemně šedá (klid, nekřičí), hover = bílá (= "mám tu kartu v ruce").
+     Funguje to opačně než většina webů, ale pro práci s desítkami karet je to mnohem
+     čitelnější — oko se okamžitě zaměří na aktuální kartu. */
   --bo-bg:             #eef1f6;
-  --bo-card:           #ffffff;
-  --bo-card-hover:     #f5f7fa;
+  --bo-card:           #f5f7fa;
+  --bo-card-hover:     #ffffff;
   --bo-border:         #dde3ec;
   --bo-border-soft:    #f0f2f5;
   --bo-text:           #1f2937;
@@ -240,7 +243,9 @@
 .bo-stat-card {
   flex: 1;
   min-width: 130px;
-  background: var(--bo-card);
+  /* Stat card má bílou napevno (--bo-card-hover = #ffffff) — neúčastní se klid/aktivita
+     swapu jako kontaktové karty. Jsou to čísla, nečekáme na nich myš. */
+  background: var(--bo-card-hover);
   border: 1px solid var(--bo-border);
   border-radius: var(--bo-radius-md);
   padding: 0.55rem 0.85rem;
@@ -270,9 +275,14 @@
   border-left: 4px solid rgba(0,0,0,0.12);
   border-radius: var(--bo-radius-lg);
   overflow: hidden;
-  transition: border-left-color var(--bo-t-base), background var(--bo-t-base);
+  transition: border-left-color var(--bo-t-base), background var(--bo-t-base), box-shadow var(--bo-t-base);
 }
-.bo-card:hover { background: rgba(0,0,0,0.025); }
+/* Hover = vytáhneme kartu nahoru: bílá barva + jemný stín = "mám ji v ruce".
+   Klid → šedá, aktivita → bílá. */
+.bo-card:hover {
+  background: var(--bo-card-hover);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+}
 
 /* Stavová barva = JEN levý border (ne kolem celé karty) */
 .bo-card--priprava  { border-left-color: var(--bo-stav-priprava); }
@@ -898,4 +908,42 @@
   color: var(--bo-text-3);
   font-style: italic;
   font-weight: 400;
+}
+
+/* ── 13. SAVE TOAST — vizuální feedback po auto-save ─────────────
+   Auto-save (např. checkboxy v "Postup zakázky") posílá AJAX hned po
+   kliku. Bez toastu pracovník neví, jestli změna doletěla na server.
+   Toast se objeví top-right, drží se 1.5 s a zase fade-outne. */
+.bo-toast {
+  position: fixed;
+  top: 60px;
+  right: 18px;
+  z-index: 9999;
+  padding: 0.5rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: var(--font-main, system-ui, sans-serif);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.18s ease-out, transform 0.18s ease-out;
+  pointer-events: none;
+}
+.bo-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.bo-toast--saved {
+  background: #d4f4dd;
+  color: #1f7a3a;
+  border: 1px solid #9fdcb1;
+}
+.bo-toast--error {
+  background: #fde2e2;
+  color: #b83030;
+  border: 1px solid #f5b3b3;
+}
+@media (max-width: 600px) {
+  .bo-toast { top: auto; bottom: 18px; right: 12px; left: 12px; text-align: center; }
 }

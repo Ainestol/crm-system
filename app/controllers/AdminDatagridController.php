@@ -35,6 +35,7 @@ final class AdminDatagridController
         ob_start();
         require dirname(__DIR__) . '/views/admin/datagrid/index.php';
         $content = (string) ob_get_clean();
+        $user = $actor; // alias pro layout/base.php (sidebar + topbar)
         require dirname(__DIR__) . '/views/layout/base.php';
     }
 
@@ -49,6 +50,10 @@ final class AdminDatagridController
         header('Content-Type: application/json; charset=UTF-8');
         header('Cache-Control: no-store');
 
+        // POZOR: workflow JOIN MUSÍ být omezený na aktuálního OZ (c.assigned_sales_id),
+        // jinak pokud má kontakt v oz_contact_workflow víc řádků (= historie OZ-ů,
+        // např. po přesunu kontaktu mezi OZ-y), vznikne kartézský součin a kontakt
+        // se v datagridu zduplikuje (každý workflow řádek = jeden řádek navíc).
         $sql = "SELECT
                     c.id,
                     c.firma,
@@ -68,7 +73,9 @@ final class AdminDatagridController
                     COALESCE(u_cl.jmeno, '')           AS caller_name,
                     (SELECT COUNT(*) FROM oz_contact_actions a WHERE a.contact_id = c.id) AS deník_count
                 FROM contacts c
-                LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id
+                LEFT JOIN oz_contact_workflow w
+                       ON w.contact_id = c.id
+                      AND w.oz_id      = c.assigned_sales_id
                 LEFT JOIN users u_oz ON u_oz.id = c.assigned_sales_id
                 LEFT JOIN users u_cl ON u_cl.id = c.assigned_caller_id
                 ORDER BY COALESCE(w.stav_changed_at, c.updated_at) DESC, c.id DESC
@@ -201,6 +208,7 @@ final class AdminDatagridController
         ob_start();
         require dirname(__DIR__) . '/views/admin/feed/index.php';
         $content = (string) ob_get_clean();
+        $user = $actor; // alias pro layout/base.php (sidebar + topbar)
         require dirname(__DIR__) . '/views/layout/base.php';
     }
 

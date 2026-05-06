@@ -196,7 +196,7 @@ $totalValid = $totalReceived - $totalFlagged;
 <section class="card" style="max-width:1100px;margin:0 auto;">
 
     <div class="oz-header">
-        <h1>Moje leady</h1>
+        <h1>Můj měsíc</h1>
         <p class="oz-subtitle">Obchodní zástupce: <strong><?= crm_h((string) ($user['jmeno'] ?? '')) ?></strong></p>
     </div>
 
@@ -226,17 +226,17 @@ $totalValid = $totalReceived - $totalFlagged;
         <div class="oz-toolbar__spacer"></div>
 
         <div class="oz-toolbar__actions">
-            <!-- 1 primární CTA: nová UI -->
-            <a href="<?= crm_h(crm_url('/oz/queue')) ?>"
-               class="btn"
-               style="background:#2ecc71;border:1px solid #2ecc71;color:#fff;font-weight:600;">
-                📋 Příchozí leady
+            <!-- Toolbar obsahuje JEN akce specifické pro tuto stránku.
+                 Navigace na Příchozí leady / Moje leady / Dashboard / Výkon týmu
+                 je v sidebaru — nedupluje se. -->
+
+            <!-- PDF payout pro navolávačky — otevře se v novém tabu (standalone tisková stránka) -->
+            <a href="<?= crm_h(crm_url('/oz/payout/print?year=' . $year . '&month=' . $month)) ?>"
+               target="_blank" rel="noopener"
+               class="btn btn-secondary btn-sm"
+               title="Otevře tiskovou stránku s detaily kolik zaplatit jednotlivým navolávačkám za <?= crm_h($monthNames[$month] . ' ' . $year) ?> — můžeš stáhnout jako PDF (Ctrl+P → Uložit jako PDF)">
+                📄 Výplata navolávaček (PDF)
             </a>
-            <!-- secondary: legacy plná pracovní plocha -->
-            <a href="<?= crm_h(crm_url('/oz/leads')) ?>" class="btn btn-secondary btn-sm">
-                💼 Plná pracovní plocha
-            </a>
-            <a href="<?= crm_h(crm_url('/dashboard')) ?>" class="btn btn-secondary btn-sm">← Dashboard</a>
         </div>
     </div>
 

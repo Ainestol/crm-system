@@ -2165,7 +2165,7 @@ final class OzController
             crm_db_log_error($e, __METHOD__);
         }
 
-        $title = 'Moje leady & kvóty';
+        $title = 'Můj měsíc';
         ob_start();
         require dirname(__DIR__) . '/views/oz/index.php';
         $content = (string) ob_get_clean();
@@ -2849,18 +2849,27 @@ final class OzController
         }
 
         // ── 1c) Sgrupovat pending podle navolávačky — sekce per caller ──
-        // Struktura: [['caller_id', 'caller_name', 'contacts' => [...], 'count'], ...]
+        // Struktura: [['caller_id', 'caller_name', 'is_manual', 'contacts' => [...], 'count'], ...]
         // Pořadí: navolávačky podle počtu leadů DESC (nejvíc aktivní nahoře),
-        // tie-break podle abecedy.
+        // tie-break podle abecedy. Manuální (caller_id = 0) jdou vždy nakonec.
+        //
+        // Manuální = kontakt vznikl s assigned_caller_id NULL → buď ho přidal
+        // přímo majitel/admin přes "+ Nový kontakt", nebo byl schválený z návrhu.
+        // V queue se zobrazí jako samostatná skupina "Přidáno přímo", aby OZ
+        // nepřehlédl, že nejde o klasický lead od navolávačky.
         $pendingByCaller = [];
         if ($pendingLeads !== []) {
             $byCaller = [];
             foreach ($pendingLeads as $p) {
-                $key = (int) $p['caller_id'];
+                $key      = (int) $p['caller_id'];
+                $isManual = ($key === 0);
                 if (!isset($byCaller[$key])) {
                     $byCaller[$key] = [
                         'caller_id'   => $key,
-                        'caller_name' => (string) ($p['caller_name'] ?? '—'),
+                        'caller_name' => $isManual
+                            ? 'Přidáno přímo (majitel / schválený návrh)'
+                            : (string) ($p['caller_name'] ?? '—'),
+                        'is_manual'   => $isManual,
                         'contacts'    => [],
                         'count'       => 0,
                     ];
@@ -2868,8 +2877,11 @@ final class OzController
                 $byCaller[$key]['contacts'][] = $p;
                 $byCaller[$key]['count']++;
             }
-            // Sort: count DESC, then name ASC
+            // Sort: manuální vždy poslední, jinak count DESC, then name ASC
             usort($byCaller, static function ($a, $b) {
+                if ($a['is_manual'] !== $b['is_manual']) {
+                    return $a['is_manual'] ? 1 : -1; // manuální → nakonec
+                }
                 if ($a['count'] !== $b['count']) return $b['count'] - $a['count'];
                 return strcmp($a['caller_name'], $b['caller_name']);
             });

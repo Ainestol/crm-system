@@ -8,11 +8,13 @@ require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'helpers' . DIRECTORY_SEPA
  * Back-office workspace.
  *
  * Pracovní plocha pro role 'backoffice' (+ majitel/superadmin pro audit).
- * BO vidí kontakty po předání od OZ a má 4 záložky:
- *   k_priprave  — BO_PREDANO bez záznamu v Pracovním deníku
- *   v_praci     — BO_PREDANO s alespoň jedním záznamem
- *   vraceno_oz  — BO_VRACENO (BO vrátil OZ k opravě)
- *   uzavreno    — UZAVRENO (smlouva ready / aktivní → provize)
+ * BO vidí kontakty po předání od OZ. Filtrování per tab je čistě podle workflow stavu
+ * (deník není v této úvaze relevantní — viz $tabWhere v getIndex()):
+ *   k_priprave  — stav IN ('BO_PREDANO','SMLOUVA')   (čerstvě předáno OZ-em)
+ *   v_praci     — stav = 'BO_VPRACI'                 (BO převzal "Začít zpracovávat")
+ *   vraceno_oz  — stav = 'BO_VRACENO'                (BO vrátil OZ k opravě)
+ *   uzavreno    — stav = 'UZAVRENO'                  (smlouva ready / aktivní → provize)
+ *   nezajem_vse — stav = 'NEZAJEM'                   (od všech OZ, grouped per OZ)
  *
  * Akce:
  *   postReturnToOz  — vrátit OZ s povinným důvodem (zápis do deníku, BO_VRACENO)
@@ -828,5 +830,82 @@ final class BackofficeController
 
         crm_flash_set('✓ Kontakt označen jako nezájem — vrácen OZ do tabu Nezájem.');
         crm_redirect('/bo?tab=' . urlencode($tab));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  POST /bo/contact/edit  –  BO upraví údaje kontaktu
+    //  (firma, telefon, email, IČO, adresa — NE region/operator)
+    //
+    //  UX-shodné s OZ::postContactEdit. Rozdíl:
+    //    • role check: backoffice/majitel/superadmin
+    //    • ověření vlastnictví: kontakt musí mít workflow řádek
+    //      ve stavech, které BO řeší (BO_PREDANO/BO_VPRACI/BO_VRACENO/
+    //      SMLOUVA/UZAVRENO) — aby BO needitoval kontakty,
+    //      které mu nikdo nepředal.
+    // ────────────────────────────────────────────────────────────────
+
+    public function postContactEdit(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['backoffice', 'majitel', 'superadmin']);
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            crm_flash_set('Neplatný CSRF token.');
+            crm_redirect('/bo');
+        }
+
+        $contactId = (int) ($_POST['contact_id'] ?? 0);
+        $tab       = (string) ($_POST['tab'] ?? 'k_priprave');
+        $firma     = trim((string) ($_POST['firma'] ?? ''));
+        $telefon   = trim((string) ($_POST['telefon'] ?? ''));
+        $email     = trim((string) ($_POST['email'] ?? ''));
+        $ico       = trim((string) ($_POST['ico'] ?? ''));
+        $adresa    = trim((string) ($_POST['adresa'] ?? ''));
+
+        // Kontakt musí být v některém BO stavu, jinak BO nemá důvod ho editovat.
+        $check = $this->pdo->prepare(
+            "SELECT 1 FROM oz_contact_workflow
+             WHERE contact_id = :cid
+               AND stav IN ('BO_PREDANO','BO_VPRACI','BO_VRACENO','SMLOUVA','UZAVRENO')
+             LIMIT 1"
+        );
+        $check->execute(['cid' => $contactId]);
+        if (!$check->fetchColumn()) {
+            crm_flash_set('⚠ Kontakt nenalezen, nebo není ve stavu pro úpravu BO-em.');
+            crm_redirect('/bo?tab=' . urlencode($tab));
+        }
+
+        // Validace — stejná pravidla jako u OZ::postContactEdit.
+        if ($firma === '') {
+            crm_flash_set('⚠ Název firmy nemůže být prázdný.');
+            crm_redirect('/bo?tab=' . urlencode($tab) . '#c-' . $contactId);
+        }
+        if (mb_strlen($firma)   > 200) { $firma   = mb_substr($firma,   0, 200); }
+        if (mb_strlen($telefon) > 50)  { $telefon = mb_substr($telefon, 0, 50);  }
+        if (mb_strlen($email)   > 200) { $email   = mb_substr($email,   0, 200); }
+        if (mb_strlen($adresa)  > 300) { $adresa  = mb_substr($adresa,  0, 300); }
+        $ico = crm_normalize_ico($ico);
+        if (mb_strlen($ico)     > 20)  { $ico     = mb_substr($ico,     0, 20);  }
+
+        $this->pdo->prepare(
+            "UPDATE contacts
+             SET firma      = :firma,
+                 telefon    = :telefon,
+                 email      = :email,
+                 ico        = :ico,
+                 adresa     = :adresa,
+                 updated_at = NOW(3)
+             WHERE id = :cid"
+        )->execute([
+            'firma'   => $firma,
+            'telefon' => $telefon === '' ? null : $telefon,
+            'email'   => $email   === '' ? null : $email,
+            'ico'     => $ico     === '' ? null : $ico,
+            'adresa'  => $adresa  === '' ? null : $adresa,
+            'cid'     => $contactId,
+        ]);
+
+        crm_flash_set('✓ Údaje kontaktu uloženy.');
+        crm_redirect('/bo?tab=' . urlencode($tab) . '#c-' . $contactId);
     }
 }

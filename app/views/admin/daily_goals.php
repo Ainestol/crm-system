@@ -22,11 +22,20 @@ $fsStyle    = 'border:1px solid rgba(0,0,0,0.1);border-radius:8px;padding:1rem 1
 $legStyle   = 'font-size:0.85rem;color:var(--muted);padding:0 0.4rem;';
 ?>
 <section class="card">
-    <h1>⚙️ Cíle &amp; odměny navolávačky</h1>
+    <h1>📆 Denní cíle a odměny navolávaček</h1>
 
     <?php if (!empty($flash)) { ?>
         <p class="alert alert-info"><?= crm_h($flash) ?></p>
     <?php } ?>
+
+    <!-- Cross-reference: kde se nastavuje sazba čističky -->
+    <p style="font-size:0.8rem;color:var(--muted);margin:0 0 1rem;
+              background:rgba(0,0,0,0.03);padding:0.45rem 0.7rem;border-radius:5px;
+              border-left:3px solid rgba(0,0,0,0.2);max-width:460px;">
+        💡 Hledáš <strong>sazbu pro čističku</strong> (cca 0,70 Kč za ověření)? Je v
+        <a href="<?= crm_h(crm_url('/admin/cisticka-goals')) ?>"
+           style="color:#185fa5;font-weight:600;text-decoration:none;">🧹 Cíle a sazba čističky</a>.
+    </p>
 
     <form method="post" action="<?= crm_h(crm_url('/admin/daily-goals/save')) ?>" class="form" style="max-width:460px;">
         <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
@@ -147,9 +156,7 @@ $legStyle   = 'font-size:0.85rem;color:var(--muted);padding:0 0.4rem;';
         <button type="submit" class="btn btn-primary">💾 Uložit nastavení</button>
     </form>
 
-    <div style="margin-top:1.5rem;">
-        <a href="<?= crm_h(crm_url('/dashboard')) ?>" class="btn btn-secondary">← Dashboard</a>
-    </div>
+    <!-- Dashboard tlačítko odstraněno — sidebar je jediný zdroj navigace. -->
 </section>
 
 <script>

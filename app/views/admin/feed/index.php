@@ -10,29 +10,7 @@
 .feed-wrap h1 { margin: 0 0 0.4rem; font-size: 1.35rem; color: var(--color-text); }
 .feed-wrap .lead { color: var(--color-text-muted); font-size: 0.85rem; margin-bottom: 1rem; }
 
-/* Sticky admin breadcrumb — vždy viditelná, snadná navigace zpět */
-.feed-breadcrumb {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    margin: -0.8rem -1rem 0.8rem;
-    padding: 0.55rem 1rem;
-    background: var(--color-card-bg);
-    border-bottom: 1px solid var(--color-border);
-    font-size: 0.78rem;
-    display: flex; gap: 0.4rem; flex-wrap: wrap;
-}
-.feed-breadcrumb a {
-    color: var(--color-badge-nove);
-    text-decoration: none;
-    padding: 0.25rem 0.6rem;
-    border-radius: var(--radius-btn);
-    background: var(--color-badge-nove-bg);
-    border: 1px solid #b5d4f4;
-    font-weight: 600;
-}
-.feed-breadcrumb a:hover { background: #d4e5f7; }
-.feed-breadcrumb a.is-current { background: var(--color-badge-nove); color: #fff; border-color: var(--color-badge-nove); }
+/* (feed-breadcrumb odstraněn — navigaci řeší sidebar) */
 
 .feed-toolbar {
     display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center;
@@ -172,15 +150,6 @@
 </style>
 
 <section class="feed-wrap">
-    <div class="feed-breadcrumb">
-        <a href="<?= crm_h(crm_url('/dashboard')) ?>">← Dashboard</a>
-        <a href="#" class="is-current">📰 Activity feed</a>
-        <a href="<?= crm_h(crm_url('/admin/datagrid')) ?>">📊 Live datagrid</a>
-        <a href="<?= crm_h(crm_url('/admin/duplicates')) ?>">🕵 Audit duplicit</a>
-        <a href="<?= crm_h(crm_url('/admin/import')) ?>">📥 Import</a>
-        <a href="<?= crm_h(crm_url('/admin/users')) ?>">👥 Uživatelé</a>
-    </div>
-
     <h1>📰 Activity feed</h1>
     <p class="lead">
         Co se právě děje v CRM napříč všemi rolemi. Změny stavu kontaktů, záznamy v pracovním deníku, uzavření smluv. Auto-refresh každých 12 sekund.

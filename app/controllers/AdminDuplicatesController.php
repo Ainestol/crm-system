@@ -47,6 +47,7 @@ final class AdminDuplicatesController
         ob_start();
         require dirname(__DIR__) . '/views/admin/duplicates/index.php';
         $content = (string) ob_get_clean();
+        $user = $actor; // alias pro layout/base.php (sidebar + topbar)
         require dirname(__DIR__) . '/views/layout/base.php';
     }
 

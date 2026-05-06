@@ -266,6 +266,24 @@ final class Router
                 'roles' => ['majitel', 'superadmin'],
                 'handler' => [CistickaController::class, 'postAdminGoals'],
             ],
+            // ── Sazba odměny čističky (sdílí stránku /admin/cisticka-goals) ──
+            [
+                'method' => 'POST',
+                'path'   => '/admin/cisticka-rewards/save',
+                'auth'   => true,
+                'roles'  => ['majitel', 'superadmin'],
+                'handler'=> [CistickaController::class, 'postAdminRewards'],
+            ],
+            // ── Čistička self-print: výplata (PDF) ──
+            // Hard-locked v controlleru: čistička vidí jen sebe.
+            // Admin/majitel může přes ?cisticka_id=N pro konkrétní čističku.
+            [
+                'method' => 'GET',
+                'path'   => '/cisticka/payout/print',
+                'auth'   => true,
+                'roles'  => ['cisticka', 'majitel', 'superadmin'],
+                'handler'=> [CistickaController::class, 'getPayoutPrint'],
+            ],
             // ── Čistička ──
             [
                 'method' => 'GET',
@@ -386,6 +404,16 @@ final class Router
                 'auth' => true,
                 'roles' => ['navolavacka'],
                 'handler' => [CallerController::class, 'postFlagMismatch'],
+            ],
+            // ── Navolávačka self-print: výplata od OZ-ů (PDF) ──
+            // Hard-locked v controlleru: navolávačka vidí jen sebe.
+            // Admin/majitel může přes ?caller_id=N pro testování.
+            [
+                'method' => 'GET',
+                'path'   => '/caller/payout/print',
+                'auth'   => true,
+                'roles'  => ['navolavacka', 'majitel', 'superadmin'],
+                'handler'=> [CallerController::class, 'getPayoutPrint'],
             ],
             [
                 'method' => 'GET',
@@ -728,6 +756,15 @@ final class Router
                 'roles'  => ['backoffice', 'majitel', 'superadmin'],
                 'handler'=> [BackofficeController::class, 'postActionAdd'],
             ],
+            // ── BO: editace údajů kontaktu (firma/tel/email/IČO/adresa) ──
+            // Stejné UX jako u OZ /oz/contact/edit, jen pro BO pracovníka.
+            [
+                'method' => 'POST',
+                'path'   => '/bo/contact/edit',
+                'auth'   => true,
+                'roles'  => ['backoffice', 'majitel', 'superadmin'],
+                'handler'=> [BackofficeController::class, 'postContactEdit'],
+            ],
             [
                 'method' => 'POST',
                 'path'   => '/bo/action/delete',
@@ -742,6 +779,53 @@ final class Router
                 'auth' => true,
                 'roles' => ['obchodak', 'majitel', 'superadmin'],
                 'handler' => [OzPerformanceController::class, 'getIndex'],
+            ],
+            // ── OZ self-print: payout pro navolávačky (PDF) ──
+            // Stejná šablona jako /admin/oz-targets/print, ale OZ vidí JEN
+            // sebe (hard-locked v controlleru). Standalone stránka pro tisk.
+            [
+                'method' => 'GET',
+                'path' => '/oz/payout/print',
+                'auth' => true,
+                'roles' => ['obchodak', 'majitel', 'superadmin'],
+                'handler' => [AdminOzTargetsController::class, 'getOzSelfPrint'],
+            ],
+            // ── Návrhy nových kontaktů (manual hot leads) ──
+            // Kdokoliv s rolí může navrhnout, majitel/superadmin schvaluje.
+            [
+                'method' => 'GET',
+                'path'   => '/contacts/new',
+                'auth'   => true,
+                'roles'  => ['navolavacka', 'cisticka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
+                'handler'=> [ContactProposalsController::class, 'getNew'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/contacts/new',
+                'auth'   => true,
+                'roles'  => ['navolavacka', 'cisticka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
+                'handler'=> [ContactProposalsController::class, 'postNew'],
+            ],
+            [
+                'method' => 'GET',
+                'path'   => '/admin/contact-proposals',
+                'auth'   => true,
+                'roles'  => ['majitel', 'superadmin'],
+                'handler'=> [ContactProposalsController::class, 'getAdminList'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/admin/contact-proposals/approve',
+                'auth'   => true,
+                'roles'  => ['majitel', 'superadmin'],
+                'handler'=> [ContactProposalsController::class, 'postApprove'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/admin/contact-proposals/reject',
+                'auth'   => true,
+                'roles'  => ['majitel', 'superadmin'],
+                'handler'=> [ContactProposalsController::class, 'postReject'],
             ],
             // ── Admin: Osobní milníky OZ ──
             [

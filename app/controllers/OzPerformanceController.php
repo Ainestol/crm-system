@@ -30,21 +30,38 @@ final class OzPerformanceController
         $this->ensureStagesTable();
 
         // ── Výkon každého OZ ─────────────────────────────────────────
+        // Sjednoceno s OzController::getIndex (Moje kvóty). Výhra se počítá:
+        //   1) podpis_potvrzen = 1 → měsíc se bere z podpis_potvrzen_at.
+        //      Tohle zůstává platné i po přechodu stavu na UZAVRENO
+        //      (BO klikl "Uzavřít smlouvu") — proto týmové počítadlo
+        //      neztrácí smlouvu, jakmile ji BO finalizuje.
+        //   2) Legacy fallback: stav = 'SMLOUVA' AND podpis_potvrzen = 0
+        //      (historie před zavedením podpis_potvrzen flagu).
+        //
+        // Před touto opravou byl JOIN podmíněný JEN na stav = 'SMLOUVA' —
+        // takže každá uzavřená smlouva mizela z této tabulky a OZ-ové
+        // viděli nuly i když měli reálné výhry.
         $stmt = $this->pdo->prepare(
             "SELECT u.id, u.jmeno,
                     COUNT(w.id)                AS contracts,
                     COALESCE(SUM(w.bmsl), 0)   AS total_bmsl
              FROM users u
              LEFT JOIN oz_contact_workflow w
-               ON  w.oz_id  = u.id
-               AND w.stav   = 'SMLOUVA'
-               AND YEAR(w.updated_at)  = :y
-               AND MONTH(w.updated_at) = :m
+               ON  w.oz_id = u.id
+               AND (
+                 (w.podpis_potvrzen = 1
+                  AND YEAR(w.podpis_potvrzen_at)  = :y
+                  AND MONTH(w.podpis_potvrzen_at) = :m)
+                 OR
+                 (w.podpis_potvrzen = 0 AND w.stav = 'SMLOUVA'
+                  AND YEAR(w.updated_at)  = :y2
+                  AND MONTH(w.updated_at) = :m2)
+               )
              WHERE u.role = 'obchodak' AND u.aktivni = 1
              GROUP BY u.id, u.jmeno
              ORDER BY total_bmsl DESC, u.jmeno ASC"
         );
-        $stmt->execute(['y' => $year, 'm' => $month]);
+        $stmt->execute(['y' => $year, 'm' => $month, 'y2' => $year, 'm2' => $month]);
         $ozRows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $teamBmsl      = (int) array_sum(array_column($ozRows, 'total_bmsl'));

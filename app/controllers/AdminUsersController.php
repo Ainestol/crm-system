@@ -50,6 +50,7 @@ final class AdminUsersController
         ob_start();
         require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'users' . DIRECTORY_SEPARATOR . 'index.php';
         $content = (string) ob_get_clean();
+        $user = $actor; // alias pro layout/base.php (sidebar + topbar)
         require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . 'layout' . DIRECTORY_SEPARATOR . 'base.php';
     }
 
@@ -66,6 +67,7 @@ final class AdminUsersController
         ob_start();
         require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'users' . DIRECTORY_SEPARATOR . 'form.php';
         $content = (string) ob_get_clean();
+        $user = $actor; // alias pro layout/base.php (sidebar + topbar)
         require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . 'layout' . DIRECTORY_SEPARATOR . 'base.php';
     }
 
@@ -158,6 +160,7 @@ final class AdminUsersController
         ob_start();
         require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'users' . DIRECTORY_SEPARATOR . 'new_test.php';
         $content = (string) ob_get_clean();
+        $user = $actor; // alias pro layout/base.php (sidebar + topbar)
         require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . 'layout' . DIRECTORY_SEPARATOR . 'base.php';
     }
 
@@ -272,6 +275,7 @@ final class AdminUsersController
         ob_start();
         require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'users' . DIRECTORY_SEPARATOR . 'form.php';
         $content = (string) ob_get_clean();
+        $user = $actor; // alias pro layout/base.php (sidebar + topbar)
         require dirname(__DIR__) . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . 'layout' . DIRECTORY_SEPARATOR . 'base.php';
     }
 
@@ -390,6 +394,7 @@ final class AdminUsersController
         $reCaller = (int) ($_POST['reassign_caller_to'] ?? 0);
         $reSales = (int) ($_POST['reassign_sales_to'] ?? 0);
 
+        $ozTransferStats = null;
         $this->pdo->beginTransaction();
         try {
             if ($reCaller > 0) {
@@ -399,8 +404,15 @@ final class AdminUsersController
             }
             if ($reSales > 0) {
                 $this->assertActiveUserRole($reSales, 'obchodak');
+                // 1) Přepsat assigned_sales_id v contacts (= komu kontakt patří).
                 $q = $this->pdo->prepare('UPDATE contacts SET assigned_sales_id = :to WHERE assigned_sales_id = :from');
                 $q->execute(['to' => $reSales, 'from' => $id]);
+                // 2) Přesunout WORKFLOW data — stav kontaktu (NABIDKA, SCHUZKA,
+                //    BO_PREDANO, …), poznámky, pracovní deník, flags chybných
+                //    leadů a nabídnuté služby. Bez tohoto kroku by nový OZ
+                //    viděl kontakty v sidebaru, ale prázdné taby (Nabídka,
+                //    Schůzka, BO, …) — protože workflow řádky drží starý oz_id.
+                $ozTransferStats = $this->transferOzWorkflowData($id, $reSales);
             }
 
             $this->pdo->prepare(
@@ -416,10 +428,183 @@ final class AdminUsersController
 
         crm_audit_log($this->pdo, (int) $actor['id'], 'user_deactivate', 'user', $id, [
             'reassign_caller_to' => $reCaller ?: null,
-            'reassign_sales_to' => $reSales ?: null,
+            'reassign_sales_to'  => $reSales ?: null,
+            'oz_transfer'        => $ozTransferStats, // null pokud reSales=0
         ]);
-        crm_flash_set('Uživatel byl deaktivován a API tokeny zneplatněny.');
+
+        // Pokud byly nějaké kolize při převodu workflow, přidej info do flashe
+        $msg = 'Uživatel byl deaktivován a API tokeny zneplatněny.';
+        if ($ozTransferStats !== null) {
+            $msg .= sprintf(
+                ' Přesunuto na nového OZ: %d workflow, %d poznámek, %d záznamů deníku, %d nabídek. Označeno %d kontaktů jako "převzato".',
+                (int) ($ozTransferStats['workflow_moved']      ?? 0),
+                (int) ($ozTransferStats['notes_moved']         ?? 0),
+                (int) ($ozTransferStats['actions_moved']       ?? 0),
+                (int) ($ozTransferStats['offers_moved']        ?? 0),
+                (int) ($ozTransferStats['marker_notes_added']  ?? 0)
+            );
+            $coll = (int) ($ozTransferStats['workflow_collisions'] ?? 0);
+            if ($coll > 0) {
+                $msg .= sprintf(
+                    ' ⚠ %d kontaktů mělo již vlastní workflow u nového OZ — staré workflow byly smazány (nový OZ má přednost).',
+                    $coll
+                );
+            }
+        }
+        crm_flash_set($msg);
         crm_redirect('/admin/users');
+    }
+
+    /**
+     * Převede VŠECHNA per-OZ data ze starého OZ na nového při deaktivaci.
+     *
+     * Tabulky:
+     *   - oz_contact_workflow      (UNIQUE contact_id+oz_id → IGNORE + DELETE kolize)
+     *   - oz_contact_notes         (no UNIQUE → safe UPDATE)
+     *   - oz_contact_actions       (no UNIQUE → safe UPDATE)
+     *   - contact_oz_flags         (UNIQUE contact_id+oz_id → IGNORE + DELETE kolize)
+     *   - oz_contact_offered_services (no UNIQUE → safe UPDATE)
+     *
+     * Kolize: pokud nový OZ už má workflow/flag pro stejný contact, jeho
+     * záznam má přednost (UPDATE IGNORE preserves new OZ's record), starý
+     * záznam se pak smaže. To zachovává poslední rozhodnutí nového OZ-a.
+     *
+     * @return array{workflow_moved:int, workflow_collisions:int, notes_moved:int, actions_moved:int, flags_moved:int, flags_collisions:int, offers_moved:int}
+     */
+    private function transferOzWorkflowData(int $oldOzId, int $newOzId): array
+    {
+        $stats = [
+            'workflow_moved' => 0, 'workflow_collisions' => 0,
+            'notes_moved'    => 0,
+            'actions_moved'  => 0,
+            'flags_moved'    => 0, 'flags_collisions'    => 0,
+            'offers_moved'   => 0,
+            'marker_notes_added' => 0,
+        ];
+
+        // Načíst jméno starého OZ pro hezkou marker poznámku.
+        $oStmt = $this->pdo->prepare('SELECT jmeno FROM users WHERE id = :id LIMIT 1');
+        $oStmt->execute(['id' => $oldOzId]);
+        $oldOzName = (string) ($oStmt->fetchColumn() ?: '#' . $oldOzId);
+
+        // Najít VŠECHNY contact_id, které mají u starého OZ jakákoliv data
+        // (workflow nebo notes nebo actions). To je seznam kontaktů, které
+        // se převádí na nového OZ. Pro každý z nich pak vložíme jednu novou
+        // marker poznámku „📌 převzato po deaktivaci".
+        // Děláme to PŘED UPDATE, protože po UPDATE už oz_id = $oldOzId neexistuje.
+        $cidsStmt = $this->pdo->prepare("
+            SELECT DISTINCT contact_id FROM (
+                SELECT contact_id FROM oz_contact_workflow WHERE oz_id = :a
+                UNION
+                SELECT contact_id FROM oz_contact_notes    WHERE oz_id = :b
+                UNION
+                SELECT contact_id FROM oz_contact_actions  WHERE oz_id = :c
+            ) AS all_contacts
+        ");
+        $cidsStmt->execute(['a' => $oldOzId, 'b' => $oldOzId, 'c' => $oldOzId]);
+        $transferredContactIds = $cidsStmt->fetchAll(PDO::FETCH_COLUMN);
+
+        // ── 1) oz_contact_workflow — má UNIQUE (contact_id, oz_id) ──
+        //    Strategie: UPDATE IGNORE převede co může (= contacts kde nový
+        //    OZ ještě nemá vlastní workflow). Zbylé jsou kolize → smazat
+        //    starý záznam, nechat nového (předpoklad: nový OZ má rozhodnutí).
+        $upd = $this->pdo->prepare(
+            'UPDATE IGNORE oz_contact_workflow SET oz_id = :new WHERE oz_id = :old'
+        );
+        $upd->execute(['new' => $newOzId, 'old' => $oldOzId]);
+        $stats['workflow_moved'] = $upd->rowCount();
+
+        $collStmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM oz_contact_workflow WHERE oz_id = :old'
+        );
+        $collStmt->execute(['old' => $oldOzId]);
+        $stats['workflow_collisions'] = (int) $collStmt->fetchColumn();
+        if ($stats['workflow_collisions'] > 0) {
+            $this->pdo->prepare(
+                'DELETE FROM oz_contact_workflow WHERE oz_id = :old'
+            )->execute(['old' => $oldOzId]);
+        }
+
+        // ── 2) oz_contact_notes — no UNIQUE → safe UPDATE ──
+        $upd = $this->pdo->prepare(
+            'UPDATE oz_contact_notes SET oz_id = :new WHERE oz_id = :old'
+        );
+        $upd->execute(['new' => $newOzId, 'old' => $oldOzId]);
+        $stats['notes_moved'] = $upd->rowCount();
+
+        // ── 3) oz_contact_actions — pracovní deník, no UNIQUE → safe UPDATE ──
+        $upd = $this->pdo->prepare(
+            'UPDATE oz_contact_actions SET oz_id = :new WHERE oz_id = :old'
+        );
+        $upd->execute(['new' => $newOzId, 'old' => $oldOzId]);
+        $stats['actions_moved'] = $upd->rowCount();
+
+        // ── 4) contact_oz_flags — UNIQUE (contact_id, oz_id) → IGNORE + DELETE ──
+        try {
+            $upd = $this->pdo->prepare(
+                'UPDATE IGNORE contact_oz_flags SET oz_id = :new WHERE oz_id = :old'
+            );
+            $upd->execute(['new' => $newOzId, 'old' => $oldOzId]);
+            $stats['flags_moved'] = $upd->rowCount();
+
+            $collStmt = $this->pdo->prepare(
+                'SELECT COUNT(*) FROM contact_oz_flags WHERE oz_id = :old'
+            );
+            $collStmt->execute(['old' => $oldOzId]);
+            $stats['flags_collisions'] = (int) $collStmt->fetchColumn();
+            if ($stats['flags_collisions'] > 0) {
+                $this->pdo->prepare(
+                    'DELETE FROM contact_oz_flags WHERE oz_id = :old'
+                )->execute(['old' => $oldOzId]);
+            }
+        } catch (\PDOException $e) {
+            // Tabulka nemusí existovat na čerstvé instalaci — graceful skip
+            crm_db_log_error($e, __METHOD__);
+        }
+
+        // ── 5) oz_contact_offered_services — no UNIQUE → safe UPDATE ──
+        try {
+            $upd = $this->pdo->prepare(
+                'UPDATE oz_contact_offered_services SET oz_id = :new WHERE oz_id = :old'
+            );
+            $upd->execute(['new' => $newOzId, 'old' => $oldOzId]);
+            $stats['offers_moved'] = $upd->rowCount();
+        } catch (\PDOException $e) {
+            // Tabulka nemusí existovat — graceful skip
+            crm_db_log_error($e, __METHOD__);
+        }
+
+        // ── 6) MARKER POZNÁMKY — pro každý převzatý kontakt přidat info ──
+        //    "📌 Tento kontakt byl převzat po deaktivaci OZ X dne Y."
+        //    Cíl: nový OZ na první pohled vidí, že tento kontakt zdědil,
+        //    není to jeho vlastní práce. Existující poznámky starého OZ
+        //    zůstávají (jen byly převedeny pod nového oz_id v kroku 2).
+        if ($transferredContactIds !== []) {
+            $markerText = sprintf(
+                '📌 Tento kontakt byl převzat po deaktivaci OZ %s dne %s.',
+                $oldOzName,
+                date('d.m.Y')
+            );
+            $insertNote = $this->pdo->prepare(
+                'INSERT INTO oz_contact_notes (contact_id, oz_id, note, created_at)
+                 VALUES (:cid, :oid, :note, NOW(3))'
+            );
+            foreach ($transferredContactIds as $cid) {
+                try {
+                    $insertNote->execute([
+                        'cid'  => (int) $cid,
+                        'oid'  => $newOzId,
+                        'note' => $markerText,
+                    ]);
+                    $stats['marker_notes_added']++;
+                } catch (\PDOException $e) {
+                    // Pokud INSERT selže (nepravděpodobné), pokračuj dál
+                    crm_db_log_error($e, __METHOD__);
+                }
+            }
+        }
+
+        return $stats;
     }
 
     /**

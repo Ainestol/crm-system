@@ -116,6 +116,57 @@ final class AdminOzTargetsController
         require dirname(__DIR__) . '/views/layout/base.php';
     }
 
+    /**
+     * GET /oz/payout/print
+     *
+     * OZ-friendly varianta tiskové stránky pro PDF. Stejná šablona jako
+     * getPrint, ale:
+     *   • Přístupná i pro role 'obchodak' (nejen majitel/superadmin)
+     *   • OZ vždy vidí JEN sebe (oz_id = $user['id']) — nemůže si vybrat
+     *     cizího OZ ani podstrčit URL parametr
+     *   • Admin/majitel může pro pohodlí předat ?oz_id=N (např. pro testování)
+     *
+     * Použití: OZ si na konci měsíce vyjede PDF s detaily payout pro
+     * své navolávačky, místo aby čekal na admina.
+     */
+    public function getOzSelfPrint(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['obchodak', 'majitel', 'superadmin']);
+        $this->ensureTable();
+        $this->ensureFlagsTable();
+
+        // Hard-lock pro OZ: vidí jen sebe, žádný oz_id z URL nepustíme.
+        // Admin/majitel volitelně přes ?oz_id (default = sebe).
+        if ((string) ($user['role'] ?? '') === 'obchodak') {
+            $ozId = (int) $user['id'];
+        } else {
+            $ozId = (int) ($_GET['oz_id'] ?? $user['id']);
+        }
+
+        $year     = max(2024, min(2030, (int) ($_GET['year']  ?? date('Y'))));
+        $month    = max(1,    min(12,   (int) ($_GET['month'] ?? date('n'))));
+        $callerId = (int) ($_GET['caller_id'] ?? 0);
+
+        [$oz, $targets, $contacts, $byCaller, $rewardPerWin] =
+            $this->loadDetailData($ozId, $year, $month);
+
+        // Filtrovat na jednu navolávačku pokud je caller_id zadáno
+        if ($callerId > 0 && isset($byCaller[$callerId])) {
+            $byCaller = [$callerId => $byCaller[$callerId]];
+            $contacts = array_filter(
+                $contacts,
+                fn($c) => (int) ($c['caller_id'] ?? 0) === $callerId
+            );
+            $contacts = array_values($contacts);
+        }
+
+        // Standalone stránka — neprojde přes base layout (čistá pro tisk/PDF)
+        header('Content-Type: text/html; charset=UTF-8');
+        require dirname(__DIR__) . '/views/admin/oz_targets_print.php';
+        exit;
+    }
+
     /** GET /admin/oz-targets/print – čistá tisková stránka pro PDF */
     public function getPrint(): void
     {
@@ -200,7 +251,17 @@ final class AdminOzTargetsController
      * Načte data pro detail/print stránku.
      * @return array{array<string,mixed>, array<string,int>, list<array<string,mixed>>, array<int,array<string,mixed>>, float}
      */
-    private function loadDetailData(int $ozId, int $year, int $month): array
+    /**
+     * Načte data pro detail/print stránku jednoho OZ — kvóty per region,
+     * kontakty CALLED_OK přidělené OZ za daný měsíc, sgrupované per
+     * navolávačka, plus aktuální odměna za výhru.
+     *
+     * Public, aby ji mohly volat i jiné role (OZ self-print v getOzSelfPrint).
+     * Žádný role check zde — to je odpovědnost volajícího.
+     *
+     * @return array{0:array<string,mixed>,1:array<string,int>,2:list<array<string,mixed>>,3:array<int,array<string,mixed>>,4:float}
+     */
+    public function loadDetailData(int $ozId, int $year, int $month): array
     {
         // Info o OZ
         $ozStmt = $this->pdo->prepare(
