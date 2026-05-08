@@ -922,7 +922,7 @@ final class AdminImportController
                 // Zařadíme do merge queue — zpracuje se po hlavním importu
                 $mergeQueue[] = [
                     'icoN' => $icoN, 'emN' => $emN, 'pd' => $pd,
-                    'tel'  => $tel,  'targetId' => null, // najdeme později podle dedup keys
+                    'tel'  => $tel,  'em' => $email, 'targetId' => null, // najdeme později podle dedup keys
                     'rowNum' => $rowNum, 'source' => 'file',
                 ];
                 continue;
@@ -976,7 +976,7 @@ final class AdminImportController
                     // Zařadíme do merge queue (cíl známe — $dbId)
                     $mergeQueue[] = [
                         'icoN' => $icoN, 'emN' => $emN, 'pd' => $pd,
-                        'tel'  => $tel,  'targetId' => $dbId,
+                        'tel'  => $tel,  'em' => $email, 'targetId' => $dbId,
                         'rowNum' => $rowNum, 'source' => 'db',
                     ];
                     continue;
@@ -1020,7 +1020,7 @@ final class AdminImportController
                     );
                 }
                 if ($targetId !== null && $targetId > 0) {
-                    if ($this->mergePhoneIntoContact($targetId, $m['tel'])) {
+                    if ($this->mergeContactFields($targetId, $m['tel'] ?? null, $m['em'] ?? null)) {
                         $stats['merged']++;
                     }
                 } else {
@@ -1420,9 +1420,15 @@ final class AdminImportController
         ];
     }
 
+    /** Maximální počet telefonů / emailů, které se po merge zachovají. */
+    private const MERGE_MAX_PHONES = 6;
+    private const MERGE_MAX_EMAILS = 6;
+
     /**
-     * Sloučí dva telefonní řetězce přes ';'. Deduplikuje podle pouze-čísel,
+     * Sloučí dva telefonní řetězce přes "; ". Deduplikuje podle pouze-čísel,
      * takže "605 580 813" a "605580813" se nepřidá dvakrát.
+     * Pokud by po sloučení bylo víc než MERGE_MAX_PHONES, nový telefon
+     * se zahodí a zaloguje (overflow je signalizován voláním funkce).
      */
     private static function mergePhones(?string $existing, ?string $incoming): ?string
     {
@@ -1442,27 +1448,82 @@ final class AdminImportController
         if ($incomingDigits !== '' && in_array($incomingDigits, $existingDigits, true)) {
             return $existing; // už je tam
         }
+
+        // Limit: max MERGE_MAX_PHONES — pokud už je 6, neuložíme 7. číslo
+        if (count($parts) >= self::MERGE_MAX_PHONES) {
+            error_log('[CRM Import] Merge phone dropped — limit ' . self::MERGE_MAX_PHONES . ' reached: incoming="' . $incoming . '"');
+            return $existing;
+        }
         return $existing . '; ' . $incoming;
     }
 
     /**
-     * SELECT existující kontakt → merge phone do něj → UPDATE.
-     * Vrací true pokud byl záznam aktualizován.
+     * Sloučí dva email řetězce přes "; ". Deduplikuje podle lower-case
+     * (case-insensitive). Limit MERGE_MAX_EMAILS jako u telefonů.
      */
-    private function mergePhoneIntoContact(int $contactId, ?string $newPhone): bool
+    private static function mergeEmails(?string $existing, ?string $incoming): ?string
     {
-        if ($newPhone === null || trim($newPhone) === '') return false;
+        $existing = trim((string) $existing);
+        $incoming = trim((string) $incoming);
+        if ($incoming === '') return $existing === '' ? null : $existing;
+        if ($existing === '') return strtolower($incoming);
+
+        $parts = preg_split('/\s*[;,]\s*/', $existing) ?: [];
+        $parts = array_values(array_filter(array_map('trim', $parts), fn ($p) => $p !== ''));
+
+        // Dedup case-insensitive
+        $existingLower = array_map('strtolower', $parts);
+        $incomingLower = strtolower($incoming);
+
+        if (in_array($incomingLower, $existingLower, true)) {
+            return $existing; // už je tam
+        }
+
+        if (count($parts) >= self::MERGE_MAX_EMAILS) {
+            error_log('[CRM Import] Merge email dropped — limit ' . self::MERGE_MAX_EMAILS . ' reached: incoming="' . $incoming . '"');
+            return $existing;
+        }
+        return $existing . '; ' . $incomingLower;
+    }
+
+    /**
+     * SELECT existující kontakt → merge phone + email do něj → UPDATE.
+     * Vrací true pokud byl záznam aktualizován (alespoň jedno pole změněno).
+     *
+     * Pro merge platí:
+     *   • telefon — sloučení přes "; ", dedup digits-only, max 6
+     *   • email   — sloučení přes "; ", dedup case-insensitive, max 6
+     *   • ostatní pole (firma, ico, adresa, poznamka, …) se NEMĚNÍ
+     */
+    private function mergeContactFields(int $contactId, ?string $newPhone, ?string $newEmail): bool
+    {
+        $hasPhone = $newPhone !== null && trim($newPhone) !== '';
+        $hasEmail = $newEmail !== null && trim($newEmail) !== '';
+        if (!$hasPhone && !$hasEmail) return false;
+
         try {
-            $st = $this->pdo->prepare('SELECT telefon FROM contacts WHERE id = :id LIMIT 1');
+            $st = $this->pdo->prepare('SELECT telefon, email FROM contacts WHERE id = :id LIMIT 1');
             $st->execute(['id' => $contactId]);
-            $existing = (string) ($st->fetchColumn() ?: '');
-            $merged = self::mergePhones($existing, $newPhone);
-            if ($merged === $existing) return false; // nic nového
+            $row = $st->fetch(PDO::FETCH_ASSOC) ?: ['telefon' => '', 'email' => ''];
+
+            $existingPhone = (string) ($row['telefon'] ?? '');
+            $existingEmail = (string) ($row['email']   ?? '');
+
+            $mergedPhone = $hasPhone ? self::mergePhones($existingPhone, $newPhone) : $existingPhone;
+            $mergedEmail = $hasEmail ? self::mergeEmails($existingEmail, $newEmail) : $existingEmail;
+
+            $phoneChanged = $hasPhone && $mergedPhone !== $existingPhone;
+            $emailChanged = $hasEmail && $mergedEmail !== $existingEmail;
+            if (!$phoneChanged && !$emailChanged) return false; // nic nového
 
             $upd = $this->pdo->prepare(
-                'UPDATE contacts SET telefon = :tel, updated_at = NOW(3) WHERE id = :id'
+                'UPDATE contacts SET telefon = :tel, email = :em, updated_at = NOW(3) WHERE id = :id'
             );
-            $upd->execute(['tel' => $merged, 'id' => $contactId]);
+            $upd->execute([
+                'tel' => $mergedPhone,
+                'em'  => $mergedEmail,
+                'id'  => $contactId,
+            ]);
             return $upd->rowCount() > 0;
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
