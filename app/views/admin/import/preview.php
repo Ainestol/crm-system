@@ -23,6 +23,25 @@ $dncCount        = (int) ($counts['dnc']                      ?? 0);
 $dncShown        = (int) ($counts['dnc_shown']                ?? $dncCount);
 $dupsTruncated   = (bool) ($counts['dups_truncated']          ?? false);
 
+// Per-typ breakdown (kolik shod podle IČO / Tel / Email zvlášť) — pro UI
+$dupFileByMatch = (array) ($counts['duplicates_in_file_by_match'] ?? ['ico' => 0, 'telefon' => 0, 'email' => 0]);
+$dupDbByMatch   = (array) ($counts['duplicates_in_db_by_match']   ?? ['ico' => 0, 'telefon' => 0, 'email' => 0]);
+$dncByMatch     = (array) ($counts['dnc_by_match']                ?? ['ico' => 0, 'telefon' => 0, 'email' => 0]);
+
+/** Render mini-breakdown pod stat boxem (Pavel's request: vidět co konkrétně se duplicituje) */
+$renderBreakdown = static function (array $by): string {
+    $ico = (int) ($by['ico']     ?? 0);
+    $tel = (int) ($by['telefon'] ?? 0);
+    $em  = (int) ($by['email']   ?? 0);
+    if ($ico + $tel + $em === 0) return '';
+    $parts = [];
+    if ($ico > 0) $parts[] = '🏢 IČO: <strong>' . number_format($ico, 0, ',', ' ') . '</strong>';
+    if ($tel > 0) $parts[] = '📞 Tel: <strong>'  . number_format($tel, 0, ',', ' ') . '</strong>';
+    if ($em  > 0) $parts[] = '✉ Email: <strong>' . number_format($em,  0, ',', ' ') . '</strong>';
+    return '<div style="font-size:0.7rem;color:var(--muted);margin-top:0.35rem;line-height:1.4;">'
+         . implode(' &middot; ', $parts) . '</div>';
+};
+
 $errors    = (array) ($analysis['errors']             ?? []);
 $dupsFile  = (array) ($analysis['duplicates_in_file'] ?? []);
 $dupsDb    = (array) ($analysis['duplicates_in_db']   ?? []);
@@ -160,6 +179,30 @@ function renderSnap(array $snap): string {
 .dup-block + .dup-block { margin-top: 0.6rem; }
 .dup-block .strat-choice { margin-top: 0; }
 
+/* Filter tlačítka — uživatel si přepíná mezi "Vše / IČO / Telefon / Email" */
+.dup-filter__btn {
+    background: var(--bg);
+    border: 1px solid rgba(0,0,0,0.15);
+    border-radius: 6px;
+    padding: 0.32rem 0.7rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.12s;
+}
+.dup-filter__btn:hover {
+    background: rgba(61,139,253,0.08);
+    border-color: rgba(61,139,253,0.4);
+    color: var(--text);
+}
+.dup-filter__btn.is-active {
+    background: rgba(61,139,253,0.15);
+    border-color: rgba(61,139,253,0.55);
+    color: #3d8bfd;
+    box-shadow: inset 0 0 0 1px rgba(61,139,253,0.25);
+}
+
 .preview-empty {
     color: var(--muted); font-style: italic; padding: 0.5rem 0; font-size: 0.82rem;
 }
@@ -245,6 +288,7 @@ function renderSnap(array $snap): string {
                     <br><small style="color:var(--muted);font-style:italic;">(zobrazeno detailně <?= number_format($dupFileShown, 0, ',', ' ') ?>)</small>
                 <?php } ?>
             </div>
+            <?= $renderBreakdown($dupFileByMatch) ?>
         </div>
         <div class="preview-stat preview-stat--warn">
             <div class="preview-stat__val"><?= number_format($dupDb, 0, ',', ' ') ?></div>
@@ -254,10 +298,12 @@ function renderSnap(array $snap): string {
                     <br><small style="color:var(--muted);font-style:italic;">(zobrazeno detailně <?= number_format($dupDbShown, 0, ',', ' ') ?>)</small>
                 <?php } ?>
             </div>
+            <?= $renderBreakdown($dupDbByMatch) ?>
         </div>
         <div class="preview-stat preview-stat--ban">
             <div class="preview-stat__val"><?= number_format($dncCount, 0, ',', ' ') ?></div>
             <div class="preview-stat__lbl">DNC (zákaz volání)</div>
+            <?= $renderBreakdown($dncByMatch) ?>
         </div>
     </div>
 
@@ -504,8 +550,21 @@ function renderSnap(array $snap): string {
                     Duplicity v souboru: <?= count($dupsFile) ?>
                     <span class="dup-block__hint">každou můžeš ručně upravit níže</span>
                 </div>
+                <!-- Filter tlačítka — uživatel si vybere jen typ duplicit který chce vidět -->
+                <div class="dup-filter" data-filter-target="file" style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+                    <button type="button" class="dup-filter__btn is-active" data-match="all">Vše (<?= count($dupsFile) ?>)</button>
+                    <?php if (($dupFileByMatch['ico'] ?? 0) > 0) { ?>
+                        <button type="button" class="dup-filter__btn" data-match="ico">🏢 IČO (<?= (int)$dupFileByMatch['ico'] ?>)</button>
+                    <?php } ?>
+                    <?php if (($dupFileByMatch['telefon'] ?? 0) > 0) { ?>
+                        <button type="button" class="dup-filter__btn" data-match="telefon">📞 Telefon (<?= (int)$dupFileByMatch['telefon'] ?>)</button>
+                    <?php } ?>
+                    <?php if (($dupFileByMatch['email'] ?? 0) > 0) { ?>
+                        <button type="button" class="dup-filter__btn" data-match="email">✉ Email (<?= (int)$dupFileByMatch['email'] ?>)</button>
+                    <?php } ?>
+                </div>
                 <div class="preview-scroll" style="max-height:420px;background:transparent;border:0;">
-                    <table class="preview-table">
+                    <table class="preview-table" data-filter-table="file">
                         <thead><tr>
                             <th style="width:24%;">Typ shody</th>
                             <th>Originál</th>
@@ -538,8 +597,20 @@ function renderSnap(array $snap): string {
                     Duplicity v databázi: <?= count($dupsDb) ?>
                     <span class="dup-block__hint">existující záznam vs. nový z importu</span>
                 </div>
+                <div class="dup-filter" data-filter-target="db" style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+                    <button type="button" class="dup-filter__btn is-active" data-match="all">Vše (<?= count($dupsDb) ?>)</button>
+                    <?php if (($dupDbByMatch['ico'] ?? 0) > 0) { ?>
+                        <button type="button" class="dup-filter__btn" data-match="ico">🏢 IČO (<?= (int)$dupDbByMatch['ico'] ?>)</button>
+                    <?php } ?>
+                    <?php if (($dupDbByMatch['telefon'] ?? 0) > 0) { ?>
+                        <button type="button" class="dup-filter__btn" data-match="telefon">📞 Telefon (<?= (int)$dupDbByMatch['telefon'] ?>)</button>
+                    <?php } ?>
+                    <?php if (($dupDbByMatch['email'] ?? 0) > 0) { ?>
+                        <button type="button" class="dup-filter__btn" data-match="email">✉ Email (<?= (int)$dupDbByMatch['email'] ?>)</button>
+                    <?php } ?>
+                </div>
                 <div class="preview-scroll" style="max-height:420px;background:transparent;border:0;">
-                    <table class="preview-table">
+                    <table class="preview-table" data-filter-table="db">
                         <thead><tr>
                             <th style="width:24%;">Typ shody</th>
                             <th>Existující v DB</th>
@@ -772,5 +843,36 @@ function refreshRulesSummary() {
 document.addEventListener('DOMContentLoaded', function() {
     applyFileStrategy('merge_smart');
     applyDbStrategy('skip');
+    initDupFilters();
 });
+
+// ── Filter tlačítka pro duplicity (Vše / IČO / Telefon / Email) ────
+// Skrývá řádky tabulky podle data-match atributu — žádné AJAX, čistě CSS-style.
+function initDupFilters() {
+    document.querySelectorAll('.dup-filter').forEach(filterBar => {
+        const target = filterBar.dataset.filterTarget;
+        const table  = document.querySelector('table[data-filter-table="' + target + '"]');
+        if (!table) return;
+
+        filterBar.querySelectorAll('.dup-filter__btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const matchType = this.dataset.match || 'all';
+
+                // Toggle active stav tlačítek (jen v tomto filterBaru)
+                filterBar.querySelectorAll('.dup-filter__btn').forEach(b => b.classList.remove('is-active'));
+                this.classList.add('is-active');
+
+                // Skryj/ukaž řádky podle data-match
+                table.querySelectorAll('tbody tr.dup-row').forEach(tr => {
+                    const rowMatch = tr.dataset.match || '';
+                    if (matchType === 'all' || rowMatch === matchType) {
+                        tr.style.display = '';
+                    } else {
+                        tr.style.display = 'none';
+                    }
+                });
+            });
+        });
+    });
+}
 </script>

@@ -621,6 +621,12 @@ final class AdminImportController
         $duplicatesDbTotal   = 0;
         $dncTotal            = 0;
 
+        // Per-typ breakdown counters (kolik je shod podle IČO / Tel / Email zvlášť).
+        // Slouží jen pro UI breakdown v preview — nezahrnuje sample cap.
+        $dupFileByMatch = ['ico' => 0, 'telefon' => 0, 'email' => 0];
+        $dupDbByMatch   = ['ico' => 0, 'telefon' => 0, 'email' => 0];
+        $dncByMatch     = ['ico' => 0, 'telefon' => 0, 'email' => 0];
+
         $seenIco   = []; // ico -> firstRow
         $seenEmail = []; // email -> firstRow
         $seenPhone = []; // phone -> firstRow
@@ -697,6 +703,7 @@ final class AdminImportController
             // Duplicita v rámci souboru
             if ($icoN !== '' && isset($seenIco[$icoN])) {
                 $duplicatesFileTotal++;
+                $dupFileByMatch['ico']++;
                 if (count($duplicatesFile) < self::MAX_DUPS_KEPT) {
                     $duplicatesFile[] = ['row' => $rowNum, 'first_seen_row' => $seenIco[$icoN]['row'],
                         'match' => 'ico', 'value' => $icoN, 'firma' => $firma,
@@ -706,6 +713,7 @@ final class AdminImportController
             }
             if ($emN !== '' && isset($seenEmail[$emN])) {
                 $duplicatesFileTotal++;
+                $dupFileByMatch['email']++;
                 if (count($duplicatesFile) < self::MAX_DUPS_KEPT) {
                     $duplicatesFile[] = ['row' => $rowNum, 'first_seen_row' => $seenEmail[$emN]['row'],
                         'match' => 'email', 'value' => $emN, 'firma' => $firma,
@@ -715,6 +723,7 @@ final class AdminImportController
             }
             if ($pd !== '' && isset($seenPhone[$pd])) {
                 $duplicatesFileTotal++;
+                $dupFileByMatch['telefon']++;
                 if (count($duplicatesFile) < self::MAX_DUPS_KEPT) {
                     $duplicatesFile[] = ['row' => $rowNum, 'first_seen_row' => $seenPhone[$pd]['row'],
                         'match' => 'telefon', 'value' => $pd, 'firma' => $firma,
@@ -732,6 +741,7 @@ final class AdminImportController
                 elseif ($pd   !== '' && isset($dncPhone[$pd])) { $matchOn = 'telefon'; }
                 elseif ($emN  !== '' && isset($dncEmail[$emN])) { $matchOn = 'email';   }
                 $dncTotal++;
+                if ($matchOn !== '' && isset($dncByMatch[$matchOn])) $dncByMatch[$matchOn]++;
                 if (count($dnc) < self::MAX_DUPS_KEPT) {
                     $dnc[] = ['row' => $rowNum, 'match' => $matchOn,
                         'value' => $matchOn === 'ico' ? $icoN : ($matchOn === 'telefon' ? $pd : $emN),
@@ -750,6 +760,7 @@ final class AdminImportController
 
             if ($dbDupId !== null) {
                 $duplicatesDbTotal++;
+                if (isset($dupDbByMatch[$dbDupOn])) $dupDbByMatch[$dbDupOn]++;
                 if (count($duplicatesDb) < self::MAX_DUPS_KEPT) {
                     // Načti snapshot existující DB karty pro side-by-side porovnání
                     $existing = $this->loadContactSnapshot($dbDupId);
@@ -785,15 +796,18 @@ final class AdminImportController
             'duplicates_in_db'    => $duplicatesDb,
             'dnc'                 => $dnc,
             'counts'              => [
-                'errors'                   => count($errors),
-                'duplicates_in_file'       => $duplicatesFileTotal,
-                'duplicates_in_file_shown' => count($duplicatesFile),
-                'duplicates_in_db'         => $duplicatesDbTotal,
-                'duplicates_in_db_shown'   => count($duplicatesDb),
-                'dnc'                      => $dncTotal,
-                'dnc_shown'                => count($dnc),
-                'dups_truncated'           => ($duplicatesFileTotal > self::MAX_DUPS_KEPT)
-                                              || ($duplicatesDbTotal > self::MAX_DUPS_KEPT),
+                'errors'                       => count($errors),
+                'duplicates_in_file'           => $duplicatesFileTotal,
+                'duplicates_in_file_shown'     => count($duplicatesFile),
+                'duplicates_in_file_by_match'  => $dupFileByMatch,
+                'duplicates_in_db'             => $duplicatesDbTotal,
+                'duplicates_in_db_shown'       => count($duplicatesDb),
+                'duplicates_in_db_by_match'    => $dupDbByMatch,
+                'dnc'                          => $dncTotal,
+                'dnc_shown'                    => count($dnc),
+                'dnc_by_match'                 => $dncByMatch,
+                'dups_truncated'               => ($duplicatesFileTotal > self::MAX_DUPS_KEPT)
+                                                  || ($duplicatesDbTotal > self::MAX_DUPS_KEPT),
             ],
         ];
     }
