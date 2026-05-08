@@ -7,9 +7,18 @@ declare(strict_types=1);
  */
 
 if (!function_exists('totp_base32_alphabet')) {
+    /**
+     * RFC 4648 Base32 abeceda — 32 znaků (A–Z + 2–7).
+     * MUSÍ být přesně tato pro kompatibilitu s Google Authenticator,
+     * Authy, Microsoft Authenticator a všemi standardními TOTP klienty.
+     *
+     * POZN: Předchozí verze tohoto kódu měla alphabet bez X/Y/Z (29 znaků),
+     * což způsobovalo že generated secrets mapovaly v authenticator app
+     * na úplně jiné bajty než interně počítal verify → 2FA login by selhal.
+     */
     function totp_base32_alphabet(): string
     {
-        return 'ABCDEFGHIJKLMNOPQRSTUVW234567';
+        return 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
     }
 }
 
