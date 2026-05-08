@@ -611,6 +611,8 @@ final class AdminImportController
         // ── Předem načti DNC a existující contacts hashe (pro dedupe) ──
         [$dncIco, $dncPhone, $dncEmail] = $this->loadDncHashes();
         [$dbIco, $dbPhone, $dbEmail]    = $this->loadExistingContactHashes();
+        // Mapa email → user_id pro validaci oz_email v uzavřených smlouvách
+        $usersByEmail = $this->loadUsersByEmail();
 
         $errors          = [];
         $duplicatesFile  = [];
@@ -691,6 +693,36 @@ final class AdminImportController
                 if (count($errors) < self::MAX_ERRORS_KEPT) {
                     $errors[] = ['row' => $rowNum, 'col' => 'kraj', 'value' => $regionRaw,
                         'reason'    => 'Nelze určit kraj — zkontrolujte sloupec "kraj" / "region" / "město", nebo nastavte výchozí kraj.',
+                        'snapshot'  => $rowSnap];
+                }
+                continue;
+            }
+
+            // ── Validace oz_email pro uzavřené smlouvy ────────────────────
+            // Pravidlo:
+            //   • Pokud řádek má `datum_uzavreni` → oz_email JE POVINNÝ
+            //     (uzavřená smlouva musí mít zaznamenaného OZ co ji uzavřel)
+            //   • Pokud řádek má oz_email → musí existovat v `users.email`
+            //     (jinak chyba — ať to user opraví v Excelu)
+            //   • Pokud řádek nemá ani datum_uzavreni ani oz_email → OK,
+            //     půjde standardním pipeline pro nový lead
+            $ozEmailRaw  = $this->cell($row, $map, 'oz_email');
+            $ozEmailNorm = strtolower(trim($ozEmailRaw));
+            $datumUzavRaw = $this->cell($row, $map, 'datum_uzavreni');
+            $hasClosedDate = trim($datumUzavRaw) !== '';
+
+            if ($hasClosedDate && $ozEmailNorm === '') {
+                if (count($errors) < self::MAX_ERRORS_KEPT) {
+                    $errors[] = ['row' => $rowNum, 'col' => 'oz_email', 'value' => '',
+                        'reason'    => 'Uzavřená smlouva (vyplněné datum_uzavreni) musí mít sloupec oz_email s emailem obchodníka.',
+                        'snapshot'  => $rowSnap];
+                }
+                continue;
+            }
+            if ($ozEmailNorm !== '' && !isset($usersByEmail[$ozEmailNorm])) {
+                if (count($errors) < self::MAX_ERRORS_KEPT) {
+                    $errors[] = ['row' => $rowNum, 'col' => 'oz_email', 'value' => $ozEmailRaw,
+                        'reason'    => 'OZ email "' . $ozEmailRaw . '" v systému neexistuje. Zkontrolujte přesný zápis (case-insensitive) nebo uživatele založte v /admin/users.',
                         'snapshot'  => $rowSnap];
                 }
                 continue;
@@ -864,6 +896,7 @@ final class AdminImportController
 
         [$dncIco, $dncPhone, $dncEmail] = $this->loadDncHashes();
         [$dbIco, $dbPhone, $dbEmail]    = $this->loadExistingContactHashes();
+        $usersByEmail = $this->loadUsersByEmail();
 
         $stats = ['total' => 0, 'imported' => 0, 'updated' => 0,
                   'merged' => 0,
@@ -913,10 +946,42 @@ final class AdminImportController
             $narozeniny = $this->cell($row, $map, 'narozeniny_majitele');
             $vyrocni    = $this->cell($row, $map, 'vyrocni_smlouvy');
             $datumUzav  = $this->cell($row, $map, 'datum_uzavreni');
+            $ozEmailRaw = $this->cell($row, $map, 'oz_email');
+            $salePriceRaw = $this->cell($row, $map, 'sale_price');
 
             if ($firma === '' || $region === '') {
                 $stats['errors']++;
                 continue;
+            }
+
+            // ── oz_email validace (stejné pravidlo jako v analyzeFile) ──
+            // Pokud preview neselhal, sem se dostanou jen platné řádky.
+            // Přesto v commit fázi pravidlo zopakujeme — bezpečnostní pojistka
+            // pro případ, že někdo upravil CSV mezi preview a commitem.
+            $ozEmailNorm = strtolower(trim($ozEmailRaw));
+            $hasClosedDate = trim($datumUzav) !== '';
+            $ozUserId = null;
+            if ($ozEmailNorm !== '') {
+                $ozUserId = $usersByEmail[$ozEmailNorm] ?? null;
+                if ($ozUserId === null) {
+                    // OZ email neexistuje — řádek odmítneme (stejná logika jako preview)
+                    $stats['errors']++;
+                    continue;
+                }
+            }
+            if ($hasClosedDate && $ozUserId === null) {
+                // Uzavřená smlouva bez OZ — chyba
+                $stats['errors']++;
+                continue;
+            }
+            // Sale price: prefer numeric, akceptuj "14999" / "14 999" / "14999,50"
+            $salePrice = null;
+            if (trim($salePriceRaw) !== '') {
+                $clean = preg_replace('/[^0-9.,\-]/', '', $salePriceRaw) ?? '';
+                $clean = str_replace(',', '.', $clean);
+                if ($clean !== '' && is_numeric($clean)) {
+                    $salePrice = (float) $clean;
+                }
             }
 
             $icoN = crm_import_normalize_ico($ico);
@@ -977,6 +1042,9 @@ final class AdminImportController
                 'naroz'         => $this->parseDate($narozeniny),
                 'vyroci'        => $this->parseDate($vyrocni),
                 'datum_uzavreni' => $this->parseDate($datumUzav),
+                // Nová pole pro uzavřené smlouvy
+                'oz_user_id' => $ozUserId,    // null pokud sloupec oz_email prázdný
+                'sale_price' => $salePrice,   // null pokud sloupec sale_price prázdný
             ];
 
             if ($dbId !== null) {
@@ -1100,6 +1168,31 @@ final class AdminImportController
         return [$ico, $phone, $email];
     }
 
+    /**
+     * Načte všechny aktivní uživatele do mapy email → id.
+     * Slouží k validaci sloupce `oz_email` v importu uzavřených smluv.
+     *
+     * @return array<string,int>  ['lowercase@email' => user_id]
+     */
+    private function loadUsersByEmail(): array
+    {
+        $map = [];
+        try {
+            // Včetně neaktivních — admin může chtít naimportovat smlouvy uzavřené
+            // OZ-em který už ve firmě nepracuje (historická data).
+            $st = $this->pdo->query('SELECT id, email FROM users WHERE email IS NOT NULL AND email <> ""');
+            if ($st) {
+                while ($r = $st->fetch(PDO::FETCH_ASSOC)) {
+                    $em = strtolower(trim((string) $r['email']));
+                    if ($em !== '') $map[$em] = (int) $r['id'];
+                }
+            }
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+        }
+        return $map;
+    }
+
     /** @param list<array<string,mixed>> $batch */
     private function flushInserts(array $batch, int $adminId, string $origName): int
     {
@@ -1109,8 +1202,9 @@ final class AdminImportController
         // Připrav data: pokud řádek má datum_uzavreni, automaticky:
         //  - dopočítej vyrocni_smlouvy = datum + 3 roky (pokud není explicitně v CSV)
         //  - nastav contacts.stav = 'DONE' (legacy stav pro uzavřené)
+        //  - nastav assigned_sales_id na OZ co smlouvu uzavřel (z oz_email)
         foreach ($batch as $i => $r) {
-            $p = $i * 12; // 12 placeholderů per row (přidali jsme :stav{p})
+            $p = $i * 14; // 14 placeholderů per row (přibyl assigned_sales_id, sale_price)
 
             $stav = 'NEW';
             $vyroci = $r['vyroci'];
@@ -1123,7 +1217,7 @@ final class AdminImportController
                 }
             }
 
-            $placeholders[] = "(:ico{$p},:firma{$p},:adr{$p},:tel{$p},:em{$p},:op{$p},:prilez{$p},:reg{$p},:stav{$p},:poz{$p},:naroz{$p},:vyroci{$p},0,NOW(3),NOW(3))";
+            $placeholders[] = "(:ico{$p},:firma{$p},:adr{$p},:tel{$p},:em{$p},:op{$p},:prilez{$p},:reg{$p},:stav{$p},:poz{$p},:naroz{$p},:vyroci{$p},:asid{$p},:sp{$p},:actd{$p},0,NOW(3),NOW(3))";
             $values["ico{$p}"]    = $r['ico'];
             $values["firma{$p}"]  = $r['firma'];
             $values["adr{$p}"]    = $r['adr'];
@@ -1136,8 +1230,13 @@ final class AdminImportController
             $values["poz{$p}"]    = $r['poz'];
             $values["naroz{$p}"]  = $r['naroz'];
             $values["vyroci{$p}"] = $vyroci;
+            // Nová pole pro uzavřené smlouvy
+            $values["asid{$p}"]   = $r['oz_user_id'] ?? null;       // assigned_sales_id
+            $values["sp{$p}"]     = $r['sale_price'] ?? null;       // cena smlouvy
+            // activation_date = stejné datum jako datum_uzavreni (pokud uzavřená smlouva)
+            $values["actd{$p}"]   = !empty($r['datum_uzavreni']) ? $r['datum_uzavreni'] : null;
         }
-        $sql = 'INSERT INTO contacts (ico, firma, adresa, telefon, email, operator, prilez, region, stav, poznamka, narozeniny_majitele, vyrocni_smlouvy, dnc_flag, created_at, updated_at) VALUES '
+        $sql = 'INSERT INTO contacts (ico, firma, adresa, telefon, email, operator, prilez, region, stav, poznamka, narozeniny_majitele, vyrocni_smlouvy, assigned_sales_id, sale_price, activation_date, dnc_flag, created_at, updated_at) VALUES '
             . implode(',', $placeholders);
         try {
             $stmt = $this->pdo->prepare($sql);
@@ -1167,10 +1266,16 @@ final class AdminImportController
 
             // ── BONUS: Pro řádky s datum_uzavreni vytvořit i řádek v oz_contact_workflow ──
             // Tím se kontakt rovnou objeví v BO/UZAVRENO tabu a v dashboardu výročí.
+            // oz_user_id přebíráme přímo z $r — to je skutečný OZ co smlouvu uzavřel
+            // (z oz_email sloupce v importu). Pokud chybí, fallback na admina.
             $closedRows = [];
             foreach ($batch as $i => $r) {
                 if (!empty($r['datum_uzavreni'])) {
-                    $closedRows[] = ['id' => $firstId + $i, 'datum_uzavreni' => (string) $r['datum_uzavreni']];
+                    $closedRows[] = [
+                        'id'             => $firstId + $i,
+                        'datum_uzavreni' => (string) $r['datum_uzavreni'],
+                        'oz_user_id'     => (int) ($r['oz_user_id'] ?? $adminId),
+                    ];
                 }
             }
             if ($closedRows !== []) {
@@ -1184,7 +1289,10 @@ final class AdminImportController
      * Bulk INSERT do oz_contact_workflow pro legacy uzavřené smlouvy.
      * Auto-set: stav=UZAVRENO, podpis_potvrzen=1, datum_uzavreni z CSV, trvani=3.
      *
-     * @param list<array{id:int,datum_uzavreni:string}> $rows
+     * `oz_user_id` v každém řádku = skutečný OZ co smlouvu uzavřel
+     * (z oz_email sloupce). Pokud chybí, fallback na adminId.
+     *
+     * @param list<array{id:int,datum_uzavreni:string,oz_user_id:int}> $rows
      */
     private function bulkInsertClosedWorkflow(array $rows, int $adminId): void
     {
@@ -1201,10 +1309,14 @@ final class AdminImportController
         $placeholders = []; $values = [];
         foreach ($rows as $i => $r) {
             $p = $i;
+            // oz_user_id = skutečný OZ co smlouvu uzavřel (z oz_email v CSV).
+            // Fallback na adminId jen pokud něco prošlo bez oz_email (nemělo by se stát,
+            // analyzeFile + commitFile to validuje, ale pojistka pro DB integritu).
+            $ozId = (int) ($r['oz_user_id'] ?? $adminId);
             $placeholders[] = "(:cid{$p},:uid{$p},'UZAVRENO',:du{$p},3,1,:dudt{$p},:uid2{$p},:dudt2{$p},:dudt3{$p},:dudt4{$p},NOW(3))";
             $values["cid{$p}"]   = $r['id'];
-            $values["uid{$p}"]   = $adminId;
-            $values["uid2{$p}"]  = $adminId;
+            $values["uid{$p}"]   = $ozId;       // OZ co smlouvu uzavřel
+            $values["uid2{$p}"]  = $ozId;       // podpis_potvrzen_by — také OZ
             $values["du{$p}"]    = $r['datum_uzavreni'];
             // Pro DATETIME potřebujeme datum + 00:00:00 čas
             $values["dudt{$p}"]  = $r['datum_uzavreni'] . ' 00:00:00';
@@ -1338,6 +1450,15 @@ final class AdminImportController
             'sit' => 'operator', 'sit_' => 'operator', 'carrier' => 'operator',
             'prilezitost' => 'prilez', 'prilez' => 'prilez', 'prilezitosti' => 'prilez',
             'opportunity' => 'prilez', 'produkt' => 'prilez',
+            // OZ identifikace pro uzavřené smlouvy — email obchodáka/prodejce
+            'oz_email' => 'oz_email', 'oz' => 'oz_email',
+            'obchodak_email' => 'oz_email', 'obchodak' => 'oz_email',
+            'prodejce_email' => 'oz_email', 'prodejce' => 'oz_email',
+            'sales_email' => 'oz_email', 'sales' => 'oz_email',
+            // Cena smlouvy
+            'sale_price' => 'sale_price', 'cena' => 'sale_price',
+            'cena_smlouvy' => 'sale_price', 'cena smlouvy' => 'sale_price',
+            'price' => 'sale_price', 'castka' => 'sale_price',
         ];
 
         $map = [];

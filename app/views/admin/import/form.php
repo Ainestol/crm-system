@@ -87,13 +87,24 @@ declare(strict_types=1);
             <code>kraj</code>, <code>region</code>, nebo <code>město</code> (kraj se odvodí automaticky podle města).<br>
             <strong>Volitelné:</strong> <code>ico</code> (i <code>ičo</code>), <code>adresa</code>, <code>telefon</code> / <code>mobil</code>,
             <code>email</code>, <code>poznamka</code>, <code>operator</code>, <code>narozeniny_majitele</code>, <code>vyrocni_smlouvy</code>,
-            <code>datum_uzavreni</code>.<br>
+            <code>datum_uzavreni</code>, <code>oz_email</code>, <code>sale_price</code>.<br>
             <strong>Kraj přijímá:</strong> kód (<code>jihomoravsky</code>), český název (<code>Jihomoravský kraj</code>),
             nebo město (<code>Brno</code> → Jihomoravský).<br>
-            <strong>Datum:</strong> <code>25.04.2026</code>, <code>2026-04-25</code>, nebo Excel serial number.<br>
-            <strong>💡 Speciálka pro staré uzavřené smlouvy:</strong> pokud vyplníš sloupec <code>datum_uzavreni</code>,
-            kontakt se rovnou založí jako <strong>UZAVRENO</strong>, výročí se dopočítá automaticky
-            (<code>datum_uzavreni + 3 roky</code>) a objeví se v BO/Uzavřeno tabu.
+            <strong>Datum:</strong> <code>25.04.2026</code>, <code>2026-04-25</code>, nebo Excel serial number.<br><br>
+
+            <strong>💡 Speciálka pro uzavřené smlouvy</strong> (existující klienti):<br>
+            Vyplňte tyto 2 sloupce navíc:
+            <ul style="margin:0.3rem 0 0.3rem 1.2rem;padding:0;">
+                <li><code>datum_uzavreni</code> — kdy byla smlouva podepsána (<code>25.04.2024</code>)</li>
+                <li><code>oz_email</code> — <strong>e‑mail OZ</strong> co smlouvu uzavřel (musí existovat v <code>/admin/users</code>!).
+                    Aliasy: <code>obchodak_email</code>, <code>prodejce_email</code>, <code>sales_email</code>.</li>
+                <li><code>sale_price</code> (volitelné) — cena smlouvy v Kč (<code>14999</code> nebo <code>14 999,50</code>).
+                    Aliasy: <code>cena</code>, <code>cena_smlouvy</code>.</li>
+            </ul>
+            Kontakt se založí jako <strong>UZAVRENO</strong>, přiřadí se ke správnému OZ (objeví se v jeho Uzavřeno tabu),
+            výročí se dopočítá automaticky (<code>datum_uzavreni + 3 roky</code>).<br>
+            <strong style="color:#e74c3c;">⚠ Pokud oz_email v systému neexistuje, řádek se v náhledu označí jako chyba</strong> —
+            opravte v Excelu (případně OZ založte v Admin/Uživatelé) a nahrajte znovu.
         </div>
     </details>
 
