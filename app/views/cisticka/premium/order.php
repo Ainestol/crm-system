@@ -168,9 +168,33 @@ $price = (float) $order['price_per_lead'];
         <p class="alert alert-info" style="margin-bottom:1rem;"><?= crm_h($flash) ?></p>
     <?php } ?>
 
+    <?php
+    // Dekódovat regiony z JSON sloupce — víc krajů per objednávka možné
+    $orderRegions = [];
+    $rawRegJson = $order['regions_json'] ?? null;
+    if (is_string($rawRegJson) && $rawRegJson !== '') {
+        $decoded = json_decode($rawRegJson, true);
+        if (is_array($decoded)) {
+            $orderRegions = array_values(array_filter($decoded, 'is_string'));
+        }
+    }
+    // Lidsky čitelné labely (jihocesky → "Jihočeský kraj")
+    $regionLabels = array_map(
+        static fn(string $r): string => function_exists('crm_region_label') ? crm_region_label($r) : $r,
+        $orderRegions
+    );
+    ?>
+
     <div class="po-meta-bar">
         <div>
             📅 <strong><?= crm_h($_czechMonth((int)$order['month'])) ?> <?= (int) $order['year'] ?></strong>
+        </div>
+        <div>
+            <?php if ($regionLabels !== []) { ?>
+                🗺 Kraje: <strong><?= crm_h(implode(', ', $regionLabels)) ?></strong>
+            <?php } else { ?>
+                🗺 <span style="color:#c0392b;">⚠ Kraj neuveden — všechny</span>
+            <?php } ?>
         </div>
         <div>
             💰 <strong><?= number_format($price, 2, ',', ' ') ?> Kč</strong> za vyčištěný lead

@@ -89,6 +89,49 @@ final class Router
                 'roles' => ['obchodak'],
                 'handler' => [RegionController::class, 'postSwitch'],
             ],
+            // ── Profil: 2FA setup / disable / backup codes ──
+            [
+                'method' => 'GET',
+                'path' => '/profile/2fa/setup',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel', 'navolavacka', 'obchodak', 'backoffice', 'cisticka'],
+                'handler' => [ProfileController::class, 'getSetup'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/profile/2fa/setup',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel', 'navolavacka', 'obchodak', 'backoffice', 'cisticka'],
+                'handler' => [ProfileController::class, 'postSetup'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/profile/2fa/done',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel', 'navolavacka', 'obchodak', 'backoffice', 'cisticka'],
+                'handler' => [ProfileController::class, 'getDone'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/profile/2fa/disable',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel', 'navolavacka', 'obchodak', 'backoffice', 'cisticka'],
+                'handler' => [ProfileController::class, 'getDisable'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/profile/2fa/disable',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel', 'navolavacka', 'obchodak', 'backoffice', 'cisticka'],
+                'handler' => [ProfileController::class, 'postDisable'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/profile/2fa/revoke-all',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel', 'navolavacka', 'obchodak', 'backoffice', 'cisticka'],
+                'handler' => [ProfileController::class, 'postRevokeAll'],
+            ],
             // ── Self-service změna hesla (povinná po resetu adminem) ──
             [
                 'method' => 'GET',

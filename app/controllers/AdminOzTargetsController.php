@@ -26,10 +26,15 @@ final class AdminOzTargetsController
         $year  = max(2024, min(2030, (int) ($_GET['year']  ?? date('Y'))));
         $month = max(1,    min(12,   (int) ($_GET['month'] ?? date('n'))));
 
-        // Všichni aktivní OZ
+        // Všichni aktivní OZ — primární role NEBO multi-role obchodák (z roles_extra)
+        // Bez tohoto bys minul uživatele kteří mají primární `majitel` a obchodáka
+        // jen jako sekundární roli (typický pattern u majitel-obchodáků).
         $ozList = $this->pdo->query(
             "SELECT id, jmeno FROM users
-             WHERE role = 'obchodak' AND aktivni = 1 ORDER BY jmeno ASC"
+             WHERE aktivni = 1
+               AND (role = 'obchodak'
+                    OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"'))
+             ORDER BY jmeno ASC"
         );
         $ozList = $ozList ? $ozList->fetchAll(PDO::FETCH_ASSOC) : [];
 

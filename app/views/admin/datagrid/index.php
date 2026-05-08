@@ -150,6 +150,16 @@
     border-bottom: 1px solid #e2e8f0 !important;
     vertical-align: middle;
 }
+/* Email — single-line s ellipsis (kdyby byl výjimečně přes 230px),
+   plný text vidíš v tooltipu při najetí myší. */
+.dg-email {
+    display: inline-block;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+}
 .gridjs-search { background: #ffffff; padding: 0.5rem; border-bottom: 1px solid #e2e8f0; }
 .gridjs-search-input {
     background: #f9fafb !important;
@@ -662,7 +672,13 @@
                       } },
                     { name: 'IČO',         width: '90px' },
                     { name: 'Telefon',     width: '115px' },
-                    { name: 'Email',       width: '160px' },
+                    { name: 'Email',       width: '230px',
+                      formatter: e => {
+                          const v = String(e || '');
+                          if (v === '') return '';
+                          // Wrap do title=... tooltipu pro případ že by email byl delší než 230px
+                          return gridjs.html('<span class="dg-email" title="' + escapeHtml(v) + '">' + escapeHtml(v) + '</span>');
+                      } },
                     { name: 'Adresa',      width: '180px' },
                     { name: 'Kraj',        width: '105px' },
                     { name: 'Operátor',    width: '85px' },

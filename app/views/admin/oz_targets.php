@@ -23,6 +23,15 @@ foreach ($ozRegions as $regions) {
 }
 ksort($allRegions);
 $allRegions = array_keys($allRegions);
+
+// OZ bez nastavených regionů — pro warning banner nahoře
+$ozWithoutRegions = [];
+foreach ($ozList as $oz) {
+    $regs = $ozRegions[(int) $oz['id']] ?? [];
+    if ($regs === []) {
+        $ozWithoutRegions[] = $oz;
+    }
+}
 ?>
 
 <style>
@@ -69,6 +78,30 @@ $allRegions = array_keys($allRegions);
 
 .ozt-no-region { color:var(--muted); font-size:0.72rem; }
 
+/* Warning banner pro OZ bez regionů */
+.ozt-warn {
+    background: rgba(231,76,60,0.06);
+    border: 1px solid rgba(231,76,60,0.3);
+    border-left: 4px solid #e74c3c;
+    border-radius: 0 8px 8px 0;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1rem;
+    line-height: 1.55;
+}
+.ozt-warn__title {
+    font-weight: 700; color: #e74c3c; font-size: 0.92rem; margin-bottom: 0.4rem;
+}
+.ozt-warn__list { margin: 0.3rem 0; padding-left: 1.4rem; font-size: 0.85rem; }
+.ozt-warn__list li { margin-bottom: 0.2rem; }
+.ozt-warn__list a {
+    color: #e74c3c; font-weight: 600; text-decoration: none;
+    border-bottom: 1px dashed rgba(231,76,60,0.5);
+}
+.ozt-warn__list a:hover {
+    color: #c0392b; border-bottom-style: solid;
+}
+.ozt-warn__hint { font-size: 0.78rem; color: var(--muted); margin-top: 0.4rem; }
+
 /* Celkem sloupec */
 .ozt-total-cell { display:flex; flex-direction:column; align-items:center; gap:0.3rem; }
 .ozt-total-numbers { font-size:0.85rem; font-weight:700; }
@@ -90,6 +123,32 @@ $allRegions = array_keys($allRegions);
 
     <?php if (!empty($flash)) { ?>
         <p class="alert alert-info"><?= crm_h($flash) ?></p>
+    <?php } ?>
+
+    <?php if ($ozWithoutRegions !== []) { ?>
+        <div class="ozt-warn">
+            <div class="ozt-warn__title">
+                ⚠ <?= count($ozWithoutRegions) ?>
+                <?= count($ozWithoutRegions) === 1 ? 'obchodník nemá' : 'obchodníků nemá' ?>
+                přiřazené žádné regiony
+            </div>
+            <p style="margin:0 0 0.3rem;font-size:0.85rem;">
+                Bez regionů nelze zadat per-region kvóty. Otevři profil OZ a zaškrtni
+                <strong>„Povolené regiony"</strong> + nastav <strong>„Primární region"</strong>.
+            </p>
+            <ul class="ozt-warn__list">
+                <?php foreach ($ozWithoutRegions as $oz) { ?>
+                    <li>
+                        <a href="<?= crm_h(crm_url('/admin/users/edit/' . (int) $oz['id'])) ?>">
+                            🔧 <?= crm_h((string) $oz['jmeno']) ?> → nastavit regiony
+                        </a>
+                    </li>
+                <?php } ?>
+            </ul>
+            <p class="ozt-warn__hint">
+                💡 Po uložení regionů se vrať sem (F5) a uvidíš per-region sloupce kam se zadávají kvóty.
+            </p>
+        </div>
     <?php } ?>
 
     <!-- Navigace měsíc / rok -->

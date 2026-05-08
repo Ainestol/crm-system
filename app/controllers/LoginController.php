@@ -13,6 +13,30 @@ final class LoginController
         if (crm_auth_user_id() !== null) {
             crm_redirect('/dashboard');
         }
+
+        // ── Trusted device cookie auto-login ────────────────────────────
+        // Pokud má user platnou cookie z předchozího "důvěryhodného zařízení",
+        // přeskočíme heslo. Pokud je vyžadován reverify (>7 dní od poslední 2FA),
+        // pošleme rovnou na /login/two-factor (pouze 2FA, žádné heslo).
+        $trusted = crm_trusted_device_validate($this->pdo);
+        if ($trusted['ok'] === true && isset($trusted['user_id'])) {
+            $userId = (int) $trusted['user_id'];
+            // Načti usera ať ověříme že je aktivní
+            $user = crm_auth_user_by_id($this->pdo, $userId);
+            if ($user !== null && (int) ($user['aktivni'] ?? 0) === 1) {
+                if (!empty($trusted['reverify_needed'])) {
+                    // 2FA reverify potřebný — pošli na /login/two-factor jen s 2FA
+                    crm_auth_start_two_factor($userId);
+                    crm_redirect('/login/two-factor');
+                }
+                // Plný auto-login bez hesla i 2FA
+                crm_auth_finish_login($this->pdo, $userId);
+                $this->postLoginRoleHandling($user);
+            }
+            // User neaktivní / smazán → cookie zruš
+            crm_trusted_device_revoke($this->pdo);
+        }
+
         // Návrat na přihlášení ruší rozpracované 2FA (uživatel zadá znovu heslo).
         crm_auth_cancel_two_factor();
         $flash = crm_flash_take();
@@ -91,6 +115,8 @@ final class LoginController
             crm_redirect('/login/two-factor');
         }
         $code = (string) ($_POST['code'] ?? '');
+        $remember = (int) ($_POST['remember_device'] ?? 0) === 1;
+
         $result = crm_auth_try_two_factor($this->pdo, $code);
         if ($result['type'] === 'locked') {
             crm_flash_set('2FA dočasně zablokováno – příliš mnoho pokusů.');
@@ -104,8 +130,22 @@ final class LoginController
             crm_flash_set('Neplatný ověřovací kód.');
             crm_redirect('/login/two-factor');
         }
-        // 2FA OK — multi-role flow stejně jako u password
-        $this->postLoginRoleHandling((array) ($result['user'] ?? []));
+        // 2FA OK
+        $user = (array) ($result['user'] ?? []);
+        $userId = (int) ($user['id'] ?? 0);
+
+        // ── Trusted device handling ──────────────────────────────────────
+        // 1) Pokud měl user už trusted cookie (= reverify scenario), prodluž ji o 7 dní
+        // 2) Pokud chce vystavit novou (zaškrtl "Důvěřovat zařízení 30 dní"), vystav
+        if (crm_trusted_device_get_cookie_token() !== null) {
+            // Existující cookie — uživatel právě zreverifikoval 2FA → prodlouž
+            crm_trusted_device_mark_reverified($this->pdo);
+        } elseif ($remember && $userId > 0) {
+            crm_trusted_device_issue($this->pdo, $userId);
+        }
+
+        // multi-role flow stejně jako u password
+        $this->postLoginRoleHandling($user);
     }
 
     // ════════════════════════════════════════════════════════════════

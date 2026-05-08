@@ -220,6 +220,25 @@ if (!$_isAuthPage
                     </a>
                 <?php } ?>
                 <a href="<?= crm_h(crm_url('/account/password')) ?>" class="btn" title="Změna hesla">🔑 Heslo</a>
+
+                <?php
+                // 2FA tlačítko — pulzuje modře pokud aktivní (= bezpečně), žluté jemně pokud ne
+                $_tfaEnabled = (int) ($user['totp_enabled'] ?? 0) === 1;
+                if ($_tfaEnabled) {
+                ?>
+                    <a href="<?= crm_h(crm_url('/profile/2fa/disable')) ?>"
+                       class="btn crm-2fa-btn crm-2fa-btn--on"
+                       title="Dvoufaktorové ověření je aktivní (klikni pro nastavení)">
+                        🔐 2FA
+                    </a>
+                <?php } else { ?>
+                    <a href="<?= crm_h(crm_url('/profile/2fa/setup')) ?>"
+                       class="btn crm-2fa-btn crm-2fa-btn--off"
+                       title="Doporučujeme zapnout dvoufaktorové ověření pro vyšší bezpečnost">
+                        🔓 Zapnout 2FA
+                    </a>
+                <?php } ?>
+
                 <form method="post" action="<?= crm_h(crm_url('/logout')) ?>" style="margin:0;">
                     <input type="hidden"
                            name="<?= crm_h(crm_csrf_field_name()) ?>"
@@ -229,6 +248,39 @@ if (!$_isAuthPage
             </div>
             <?php } ?>
         </div>
+
+        <style>
+        /* ── 2FA topbar tlačítko: pulzující modré když aktivní, jemně žluté když ne ── */
+        .crm-2fa-btn {
+            position: relative;
+            border-radius: 6px;
+            font-weight: 600;
+        }
+        .crm-2fa-btn--on {
+            background: linear-gradient(135deg, #3d8bfd, #5a9eff);
+            color: #fff;
+            border: 1px solid rgba(61,139,253,0.6);
+            box-shadow: 0 0 0 0 rgba(61,139,253, 0.5);
+            animation: crm-2fa-pulse 2.4s ease-in-out infinite;
+        }
+        .crm-2fa-btn--on:hover {
+            background: linear-gradient(135deg, #2e7ee8, #3d8bfd);
+            transform: translateY(-1px);
+        }
+        @keyframes crm-2fa-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(61,139,253, 0.45); }
+            50%      { box-shadow: 0 0 0 6px rgba(61,139,253, 0.0); }
+        }
+        .crm-2fa-btn--off {
+            background: rgba(241,160,48,0.10);
+            color: #c47c0a;
+            border: 1px dashed rgba(241,160,48,0.5);
+        }
+        .crm-2fa-btn--off:hover {
+            background: rgba(241,160,48,0.18);
+            border-style: solid;
+        }
+        </style>
 
         <div class="crm-content">
             <?= $content ?>

@@ -545,8 +545,12 @@ if (!function_exists('crm_auth_current_user')) {
 }
 
 if (!function_exists('crm_auth_logout')) {
-    function crm_auth_logout(): void
+    function crm_auth_logout(?PDO $pdo = null): void
     {
+        // Při logout zneplatnit i trusted device cookie (pokud existuje)
+        if ($pdo !== null && function_exists('crm_trusted_device_revoke')) {
+            crm_trusted_device_revoke($pdo);
+        }
         crm_session_start();
         if (function_exists('crm_region_clear_session')) {
             crm_region_clear_session();
@@ -559,5 +563,373 @@ if (!function_exists('crm_auth_logout')) {
         );
         crm_session_regenerate_id();
         crm_session_destroy();
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Trusted Device cookie ("Důvěřovat tomuto zařízení 30 dní")
+// ────────────────────────────────────────────────────────────────────
+//  Tokenový auto-login pro uživatele s aktivním 2FA. Cookie obsahuje
+//  plain-text token (64 hex znaků), v DB uložen jen SHA256 hash.
+//  Krádež DB = útočník nezíská validní cookie.
+//
+//  Životní cyklus:
+//    1. Po úspěšném loginu (heslo + 2FA) + zaškrtnuto "důvěřovat 30 dní":
+//       crm_trusted_device_issue() → DB INSERT + setcookie()
+//    2. Při dalším návratu (request middleware nebo crm_require_user):
+//       crm_trusted_device_validate() → vrátí user_id nebo null
+//    3. Pokud reverify_at v minulosti, ale expires_at v budoucnosti:
+//       systém vyžádá JEN 2FA kód (ne heslo) → po úspěchu volá
+//       crm_trusted_device_mark_reverified() → +7 dní
+//    4. Pokud expires_at v minulosti → DELETE + cookie smazána → plný login
+//    5. Logout → crm_trusted_device_revoke() (jen aktuální cookie)
+//    6. Admin "odhlásit ze všech zařízení" → crm_trusted_device_revoke_all()
+// ════════════════════════════════════════════════════════════════════
+
+if (!defined('CRM_TRUSTED_COOKIE')) {
+    define('CRM_TRUSTED_COOKIE', 'crm_trusted_device');
+}
+if (!defined('CRM_TRUSTED_DEFAULT_EXPIRES_DAYS')) {
+    define('CRM_TRUSTED_DEFAULT_EXPIRES_DAYS', 30);
+}
+if (!defined('CRM_TRUSTED_DEFAULT_REVERIFY_DAYS')) {
+    define('CRM_TRUSTED_DEFAULT_REVERIFY_DAYS', 7);
+}
+
+if (!function_exists('crm_trusted_device_hash')) {
+    /** SHA256 hash plain-text tokenu pro DB storage. */
+    function crm_trusted_device_hash(string $plain): string
+    {
+        return hash('sha256', $plain);
+    }
+}
+
+if (!function_exists('crm_trusted_device_get_cookie_token')) {
+    /** Plain-text token z cookie (64 hex znaků), nebo null pokud nenastaveno / nevalidní. */
+    function crm_trusted_device_get_cookie_token(): ?string
+    {
+        $raw = $_COOKIE[CRM_TRUSTED_COOKIE] ?? null;
+        if (!is_string($raw)) return null;
+        $raw = trim($raw);
+        // Bezpečnost: očekáváme 64 hex znaků (32 bytes)
+        if (preg_match('/^[a-f0-9]{64}$/i', $raw) !== 1) return null;
+        return strtolower($raw);
+    }
+}
+
+if (!function_exists('crm_trusted_device_set_cookie')) {
+    /** Nastaví trusted device cookie s nastaveným expires_at (Unix timestamp). */
+    function crm_trusted_device_set_cookie(string $token, int $expiresUnix): void
+    {
+        // Secure flag: jen HTTPS pokud server běží přes HTTPS, jinak ne (DEV).
+        $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+        setcookie(CRM_TRUSTED_COOKIE, $token, [
+            'expires'  => $expiresUnix,
+            'path'     => '/',
+            'secure'   => $secure,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+    }
+}
+
+if (!function_exists('crm_trusted_device_clear_cookie')) {
+    function crm_trusted_device_clear_cookie(): void
+    {
+        $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+        setcookie(CRM_TRUSTED_COOKIE, '', [
+            'expires'  => time() - 3600,
+            'path'     => '/',
+            'secure'   => $secure,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+        unset($_COOKIE[CRM_TRUSTED_COOKIE]);
+    }
+}
+
+if (!function_exists('crm_trusted_device_issue')) {
+    /**
+     * Vystaví nový trusted device token, uloží do DB, nastaví cookie.
+     * Vrací plain-text token (pro debug / unit testy), v praxi se nepoužívá.
+     */
+    function crm_trusted_device_issue(
+        PDO $pdo,
+        int $userId,
+        int $expiresInDays = CRM_TRUSTED_DEFAULT_EXPIRES_DAYS,
+        int $reverifyInDays = CRM_TRUSTED_DEFAULT_REVERIFY_DAYS
+    ): string {
+        $plain = bin2hex(random_bytes(32));
+        $hash  = crm_trusted_device_hash($plain);
+
+        $userAgent = mb_substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 500);
+        $ipAddr    = mb_substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45);
+
+        $expiresAt  = (new DateTimeImmutable('+' . $expiresInDays . ' days'))->format('Y-m-d H:i:s');
+        $reverifyAt = (new DateTimeImmutable('+' . $reverifyInDays . ' days'))->format('Y-m-d H:i:s');
+
+        try {
+            $stmt = $pdo->prepare(
+                'INSERT INTO auth_trusted_devices
+                   (user_id, token_hash, user_agent, ip_address, expires_at, reverify_at)
+                 VALUES (:uid, :th, :ua, :ip, :exp, :rev)'
+            );
+            $stmt->execute([
+                'uid' => $userId,
+                'th'  => $hash,
+                'ua'  => $userAgent !== '' ? $userAgent : null,
+                'ip'  => $ipAddr !== ''    ? $ipAddr    : null,
+                'exp' => $expiresAt,
+                'rev' => $reverifyAt,
+            ]);
+        } catch (\PDOException $e) {
+            error_log('[CRM Trusted] issue failed: ' . $e->getMessage());
+            return $plain;
+        }
+
+        $expiresUnix = (int) (new DateTimeImmutable($expiresAt))->format('U');
+        crm_trusted_device_set_cookie($plain, $expiresUnix);
+
+        return $plain;
+    }
+}
+
+if (!function_exists('crm_trusted_device_validate')) {
+    /**
+     * Ověří trusted device cookie. Vrací:
+     *   - ['ok' => true,  'user_id' => N, 'reverify_needed' => bool]    pokud cookie validní
+     *   - ['ok' => false, 'reason' => 'no_cookie']                       pokud cookie chybí
+     *   - ['ok' => false, 'reason' => 'expired'   /  'unknown' / 'invalid']
+     *
+     * Při 'expired' / 'unknown' / 'invalid' → cookie smažeme + DB cleanup.
+     *
+     * @return array{ok: bool, user_id?: int, reverify_needed?: bool, reason?: string}
+     */
+    function crm_trusted_device_validate(PDO $pdo): array
+    {
+        $token = crm_trusted_device_get_cookie_token();
+        if ($token === null) {
+            return ['ok' => false, 'reason' => 'no_cookie'];
+        }
+
+        $hash = crm_trusted_device_hash($token);
+        try {
+            $stmt = $pdo->prepare(
+                'SELECT user_id, expires_at, reverify_at
+                 FROM auth_trusted_devices
+                 WHERE token_hash = :th
+                 LIMIT 1'
+            );
+            $stmt->execute(['th' => $hash]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        } catch (\PDOException $e) {
+            error_log('[CRM Trusted] validate failed: ' . $e->getMessage());
+            return ['ok' => false, 'reason' => 'invalid'];
+        }
+
+        if (!is_array($row)) {
+            // Token v cookie, ale ne v DB → cookie zruš
+            crm_trusted_device_clear_cookie();
+            return ['ok' => false, 'reason' => 'unknown'];
+        }
+
+        $now = new DateTimeImmutable('now');
+        $exp = new DateTimeImmutable((string) $row['expires_at']);
+        if ($now > $exp) {
+            // Token expiroval → DB cleanup + cookie smaž
+            try {
+                $pdo->prepare('DELETE FROM auth_trusted_devices WHERE token_hash = :th')->execute(['th' => $hash]);
+            } catch (\PDOException) {}
+            crm_trusted_device_clear_cookie();
+            return ['ok' => false, 'reason' => 'expired'];
+        }
+
+        $rev = new DateTimeImmutable((string) $row['reverify_at']);
+        $reverifyNeeded = $now > $rev;
+
+        // Update last_used_at (best-effort)
+        try {
+            $pdo->prepare('UPDATE auth_trusted_devices SET last_used_at = NOW(3) WHERE token_hash = :th')
+                ->execute(['th' => $hash]);
+        } catch (\PDOException) {}
+
+        return [
+            'ok' => true,
+            'user_id' => (int) $row['user_id'],
+            'reverify_needed' => $reverifyNeeded,
+        ];
+    }
+}
+
+if (!function_exists('crm_trusted_device_mark_reverified')) {
+    /** Po úspěšném 2FA reverify prodlouží reverify_at o N dní. */
+    function crm_trusted_device_mark_reverified(
+        PDO $pdo,
+        int $reverifyInDays = CRM_TRUSTED_DEFAULT_REVERIFY_DAYS
+    ): void {
+        $token = crm_trusted_device_get_cookie_token();
+        if ($token === null) return;
+        $hash = crm_trusted_device_hash($token);
+        $reverifyAt = (new DateTimeImmutable('+' . $reverifyInDays . ' days'))->format('Y-m-d H:i:s');
+        try {
+            $pdo->prepare(
+                'UPDATE auth_trusted_devices SET reverify_at = :rev, last_used_at = NOW(3) WHERE token_hash = :th'
+            )->execute(['rev' => $reverifyAt, 'th' => $hash]);
+        } catch (\PDOException) {}
+    }
+}
+
+if (!function_exists('crm_trusted_device_revoke')) {
+    /** Zruší aktuální trusted device cookie + DB záznam. */
+    function crm_trusted_device_revoke(PDO $pdo): void
+    {
+        $token = crm_trusted_device_get_cookie_token();
+        if ($token === null) {
+            crm_trusted_device_clear_cookie();
+            return;
+        }
+        $hash = crm_trusted_device_hash($token);
+        try {
+            $pdo->prepare('DELETE FROM auth_trusted_devices WHERE token_hash = :th')->execute(['th' => $hash]);
+        } catch (\PDOException) {}
+        crm_trusted_device_clear_cookie();
+    }
+}
+
+if (!function_exists('crm_trusted_device_revoke_all')) {
+    /** Zruší VŠECHNA trusted device pro uživatele (admin "odhlásit ze všech zařízení"). */
+    function crm_trusted_device_revoke_all(PDO $pdo, int $userId): int
+    {
+        try {
+            $stmt = $pdo->prepare('DELETE FROM auth_trusted_devices WHERE user_id = :uid');
+            $stmt->execute(['uid' => $userId]);
+            return $stmt->rowCount();
+        } catch (\PDOException $e) {
+            error_log('[CRM Trusted] revoke_all failed: ' . $e->getMessage());
+            return 0;
+        }
+    }
+}
+
+if (!function_exists('crm_trusted_device_list')) {
+    /**
+     * Seznam aktivních trusted devices uživatele (pro profil / admin).
+     * @return list<array<string,mixed>>
+     */
+    function crm_trusted_device_list(PDO $pdo, int $userId): array
+    {
+        try {
+            $stmt = $pdo->prepare(
+                'SELECT id, user_agent, ip_address, expires_at, reverify_at, created_at, last_used_at
+                 FROM auth_trusted_devices
+                 WHERE user_id = :uid AND expires_at > NOW(3)
+                 ORDER BY last_used_at DESC'
+            );
+            $stmt->execute(['uid' => $userId]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\PDOException $e) {
+            error_log('[CRM Trusted] list failed: ' . $e->getMessage());
+            return [];
+        }
+    }
+}
+
+if (!function_exists('crm_trusted_device_cleanup_expired')) {
+    /** Smaže expirovaná trusted devices (volat občas, není kritické pro provoz). */
+    function crm_trusted_device_cleanup_expired(PDO $pdo): int
+    {
+        try {
+            $stmt = $pdo->prepare('DELETE FROM auth_trusted_devices WHERE expires_at < NOW(3)');
+            $stmt->execute();
+            return $stmt->rowCount();
+        } catch (\PDOException) {
+            return 0;
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  TOTP setup helpery (generování secret + backup kódů)
+// ════════════════════════════════════════════════════════════════════
+
+if (!function_exists('crm_2fa_generate_secret')) {
+    /** Vygeneruje 32-znakový Base32 secret pro nový 2FA setup. */
+    function crm_2fa_generate_secret(): string
+    {
+        $alphabet = totp_base32_alphabet(); // 'ABCDEFGHIJKLMNOPQRSTUVW234567' (28 znaků - bez X, Y, Z)
+        $alphaLen = strlen($alphabet);
+        $secret = '';
+        for ($i = 0; $i < 32; $i++) {
+            $secret .= $alphabet[random_int(0, $alphaLen - 1)];
+        }
+        return $secret;
+    }
+}
+
+if (!function_exists('crm_2fa_generate_backup_codes')) {
+    /**
+     * Vygeneruje N backup kódů (8 znaků hex každý). Vrací plain-text array.
+     * Volající si je musí ihned zobrazit user-ovi a uložit hash do DB přes
+     * crm_2fa_save_backup_codes().
+     *
+     * @return list<string> Plain-text kódy ve formátu "abcd-1234"
+     */
+    function crm_2fa_generate_backup_codes(int $count = 8): array
+    {
+        $codes = [];
+        for ($i = 0; $i < $count; $i++) {
+            $hex = bin2hex(random_bytes(4)); // 8 hex znaků
+            $codes[] = substr($hex, 0, 4) . '-' . substr($hex, 4, 4); // "abcd-1234" pro lepší čitelnost
+        }
+        return $codes;
+    }
+}
+
+if (!function_exists('crm_2fa_save_backup_codes')) {
+    /**
+     * Uloží backup kódy do `totp_backup_codes` (jako SHA256 hashe).
+     * Nejdřív smaže staré nepoužité kódy (re-issue scenario).
+     */
+    function crm_2fa_save_backup_codes(PDO $pdo, int $userId, array $plainCodes): void
+    {
+        try {
+            // Zaručit že tabulka má všechny sloupce (legacy DB instance)
+            try { $pdo->exec('CREATE TABLE IF NOT EXISTS `totp_backup_codes` (
+                `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                `user_id` BIGINT UNSIGNED NOT NULL,
+                `code_hash` VARCHAR(64) NOT NULL,
+                `used_at` DATETIME(3) NULL DEFAULT NULL,
+                `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                KEY `idx_user` (`user_id`),
+                CONSTRAINT `fk_bc_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'); } catch (\PDOException) {}
+
+            // Smaž staré nepoužité kódy (re-issue scenario — user generuje nové)
+            $pdo->prepare('DELETE FROM totp_backup_codes WHERE user_id = :uid AND used_at IS NULL')
+                ->execute(['uid' => $userId]);
+
+            $stmt = $pdo->prepare(
+                'INSERT INTO totp_backup_codes (user_id, code_hash) VALUES (:uid, :h)'
+            );
+            foreach ($plainCodes as $code) {
+                $hash = hash('sha256', strtolower(trim($code)));
+                $stmt->execute(['uid' => $userId, 'h' => $hash]);
+            }
+        } catch (\PDOException $e) {
+            error_log('[CRM 2FA] save_backup_codes failed: ' . $e->getMessage());
+        }
+    }
+}
+
+if (!function_exists('crm_2fa_count_unused_backup_codes')) {
+    function crm_2fa_count_unused_backup_codes(PDO $pdo, int $userId): int
+    {
+        try {
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM totp_backup_codes WHERE user_id = :uid AND used_at IS NULL');
+            $stmt->execute(['uid' => $userId]);
+            return (int) $stmt->fetchColumn();
+        } catch (\PDOException) {
+            return 0;
+        }
     }
 }

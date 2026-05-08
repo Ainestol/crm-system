@@ -80,7 +80,8 @@ final class DashboardController
             crm_flash_set('Neplatný CSRF token.');
             crm_redirect('/dashboard');
         }
-        crm_auth_logout();
+        // Předáváme PDO ať se zruší i trusted device cookie + DB záznam
+        crm_auth_logout($this->pdo);
         crm_flash_set('Byli jste odhlášeni.');
         crm_redirect('/login');
     }
