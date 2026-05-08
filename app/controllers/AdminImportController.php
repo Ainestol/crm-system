@@ -698,23 +698,41 @@ final class AdminImportController
                 continue;
             }
 
-            // ── Validace oz_email pro uzavřené smlouvy ────────────────────
-            // Pravidlo:
-            //   • Pokud řádek má `datum_uzavreni` → oz_email JE POVINNÝ
-            //     (uzavřená smlouva musí mít zaznamenaného OZ co ji uzavřel)
-            //   • Pokud řádek má oz_email → musí existovat v `users.email`
-            //     (jinak chyba — ať to user opraví v Excelu)
-            //   • Pokud řádek nemá ani datum_uzavreni ani oz_email → OK,
-            //     půjde standardním pipeline pro nový lead
+            // ── Validace oz_email pro uzavřené smlouvy a FOR_SALES ────────
+            // Pravidla:
+            //   • Pokud řádek má `datum_uzavreni`           → oz_email POVINNÝ (uzavřená smlouva)
+            //   • Pokud řádek má `stav` = FOR_SALES (CHCE)  → oz_email POVINNÝ (rozjednané)
+            //   • Pokud řádek má oz_email                   → musí existovat v `users.email`
+            //   • Pokud řádek nemá ani jedno → OK, půjde standardním pipeline (NEW)
             $ozEmailRaw  = $this->cell($row, $map, 'oz_email');
             $ozEmailNorm = strtolower(trim($ozEmailRaw));
             $datumUzavRaw = $this->cell($row, $map, 'datum_uzavreni');
             $hasClosedDate = trim($datumUzavRaw) !== '';
 
+            // ── Validace stav (Ne/Chce sloupec) ────────────────────────────
+            $stavRaw    = $this->cell($row, $map, 'stav');
+            $stavMapped = self::mapStavValue($stavRaw);
+            if ($stavMapped === '__INVALID__') {
+                if (count($errors) < self::MAX_ERRORS_KEPT) {
+                    $errors[] = ['row' => $rowNum, 'col' => 'stav', 'value' => $stavRaw,
+                        'reason'    => 'Neznámý stav "' . $stavRaw . '". Použijte: prázdné, NECHCE, CHCE, NEDOVOLAL, NEBERE, TÍPL TO, CALLBACK.',
+                        'snapshot'  => $rowSnap];
+                }
+                continue;
+            }
+
             if ($hasClosedDate && $ozEmailNorm === '') {
                 if (count($errors) < self::MAX_ERRORS_KEPT) {
                     $errors[] = ['row' => $rowNum, 'col' => 'oz_email', 'value' => '',
                         'reason'    => 'Uzavřená smlouva (vyplněné datum_uzavreni) musí mít sloupec oz_email s emailem obchodníka.',
+                        'snapshot'  => $rowSnap];
+                }
+                continue;
+            }
+            if ($stavMapped === 'FOR_SALES' && $ozEmailNorm === '') {
+                if (count($errors) < self::MAX_ERRORS_KEPT) {
+                    $errors[] = ['row' => $rowNum, 'col' => 'oz_email', 'value' => '',
+                        'reason'    => 'Stav "CHCE" (rozpracovaný kontakt) musí mít vyplněný sloupec oz_email — kontakt se přiřazuje konkrétnímu OZ.',
                         'snapshot'  => $rowSnap];
                 }
                 continue;
@@ -948,32 +966,60 @@ final class AdminImportController
             $datumUzav  = $this->cell($row, $map, 'datum_uzavreni');
             $ozEmailRaw = $this->cell($row, $map, 'oz_email');
             $salePriceRaw = $this->cell($row, $map, 'sale_price');
+            // Nové sloupce: stav, datum_volani, navolavacka_name (info do poznámky)
+            $stavRaw      = $this->cell($row, $map, 'stav');
+            $datumVolani  = $this->cell($row, $map, 'datum_volani');
+            $navolavacka  = $this->cell($row, $map, 'navolavacka_name');
 
             if ($firma === '' || $region === '') {
                 $stats['errors']++;
                 continue;
             }
 
-            // ── oz_email validace (stejné pravidlo jako v analyzeFile) ──
-            // Pokud preview neselhal, sem se dostanou jen platné řádky.
-            // Přesto v commit fázi pravidlo zopakujeme — bezpečnostní pojistka
-            // pro případ, že někdo upravil CSV mezi preview a commitem.
+            // ── Validace stav + oz_email (stejná pravidla jako v analyzeFile) ──
+            // Pojistka pro případ, že někdo upravil CSV mezi preview a commitem.
+            $stavMapped = self::mapStavValue($stavRaw);
+            if ($stavMapped === '__INVALID__') {
+                $stats['errors']++;
+                continue;
+            }
             $ozEmailNorm = strtolower(trim($ozEmailRaw));
             $hasClosedDate = trim($datumUzav) !== '';
             $ozUserId = null;
             if ($ozEmailNorm !== '') {
                 $ozUserId = $usersByEmail[$ozEmailNorm] ?? null;
                 if ($ozUserId === null) {
-                    // OZ email neexistuje — řádek odmítneme (stejná logika jako preview)
                     $stats['errors']++;
                     continue;
                 }
             }
             if ($hasClosedDate && $ozUserId === null) {
-                // Uzavřená smlouva bez OZ — chyba
                 $stats['errors']++;
                 continue;
             }
+            if ($stavMapped === 'FOR_SALES' && $ozUserId === null) {
+                $stats['errors']++;
+                continue;
+            }
+            // Pokud řádek má datum_uzavreni, stav přepíše na DONE bez ohledu na CSV
+            if ($hasClosedDate) $stavMapped = 'DONE';
+
+            // ── Sestavit poznámku s prefixem [Navolávačka <Dne>] ──────────
+            // Aby user viděl historii bez ztráty původní poznámky
+            $datumVolaniParsed = $this->parseDate($datumVolani);
+            $navolPrefix = '';
+            if (trim($navolavacka) !== '' || $datumVolaniParsed !== null) {
+                $navolPrefix = '[';
+                if (trim($navolavacka) !== '') $navolPrefix .= trim($navolavacka);
+                if ($datumVolaniParsed !== null) {
+                    if (trim($navolavacka) !== '') $navolPrefix .= ' ';
+                    // Convert YYYY-MM-DD → DD.MM.YYYY pro lidi
+                    $ts = strtotime($datumVolaniParsed);
+                    $navolPrefix .= $ts !== false ? date('j.n.Y', $ts) : $datumVolaniParsed;
+                }
+                $navolPrefix .= '] ';
+            }
+            $pozFinal = $navolPrefix . $poz;
             // Sale price: prefer numeric, akceptuj "14999" / "14 999" / "14999,50"
             $salePrice = null;
             if (trim($salePriceRaw) !== '') {
@@ -1038,13 +1084,16 @@ final class AdminImportController
                 'operator' => $operator === '' ? null : $operator,
                 'prilez'   => $prilez === '' ? null : $prilez,
                 'reg'      => $region,
-                'poz'      => $poz === '' ? null : $poz,
+                'poz'      => $pozFinal === '' ? null : $pozFinal,
                 'naroz'         => $this->parseDate($narozeniny),
                 'vyroci'        => $this->parseDate($vyrocni),
                 'datum_uzavreni' => $this->parseDate($datumUzav),
                 // Nová pole pro uzavřené smlouvy
                 'oz_user_id' => $ozUserId,    // null pokud sloupec oz_email prázdný
                 'sale_price' => $salePrice,   // null pokud sloupec sale_price prázdný
+                // Nová pole pro provolané kontakty (NEZAJEM, FOR_SALES, atd.)
+                'stav_mapped'  => $stavMapped,         // NEW / NEZAJEM / FOR_SALES / CALLBACK / …
+                'datum_volani' => $datumVolaniParsed,  // null nebo Y-m-d
             ];
 
             if ($dbId !== null) {
@@ -1169,6 +1218,87 @@ final class AdminImportController
     }
 
     /**
+     * Mapuje hodnotu sloupce `stav` z importu na interní DB stav.
+     *
+     * Akceptované varianty (case-insensitive, s diakritikou i bez):
+     *   • prázdné / "new" / "nový" / "nove"            → NEW (default — jde do čističky)
+     *   • "nechce" / "nezájem" / "nedovolal" /
+     *     "nebere" / "típl to" / "nedovolano" /
+     *     "called_bad"                                 → NEZAJEM (per žádost zákazníka — zjednodušení)
+     *   • "chce" / "for_sales" / "pro_oz" /
+     *     "rozjednané"                                 → FOR_SALES (objeví se OZ-ovi v panelu)
+     *   • "callback" / "volat zpět"                    → CALLBACK
+     *   • "called_ok" / "ok" / "obvoláno"              → CALLED_OK
+     *   • "chybný" / "spatny_kontakt"                  → CHYBNY_KONTAKT
+     *   • "izolace"                                    → IZOLACE
+     *   • Direct DB stavy (NEW/NEZAJEM/READY/DONE/UZAVRENO/FOR_SALES…) → ponechá jak je
+     *
+     * Pro neznámou hodnotu vrátí '__INVALID__' — caller pak zaznamená chybu v preview.
+     */
+    private static function mapStavValue(string $raw): string
+    {
+        $rawTrim = trim($raw);
+        if ($rawTrim === '') return 'NEW';
+
+        // Přímá shoda na DB enum (uppercase, např. "FOR_SALES")
+        $upper = strtoupper($rawTrim);
+        static $validInternal = [
+            'NEW', 'NEZAJEM', 'NEDOVOLANO', 'CALLED_OK', 'CALLED_BAD',
+            'CALLBACK', 'CHYBNY_KONTAKT', 'FOR_SALES', 'VF_SKIP',
+            'READY', 'DONE', 'UZAVRENO', 'IZOLACE',
+        ];
+        if (in_array($upper, $validInternal, true)) return $upper;
+
+        // Lower-case + remove diacritics + collapse whitespace
+        $s = mb_strtolower($rawTrim, 'UTF-8');
+        $from = ['á','č','ď','é','ě','í','ň','ó','ř','š','ť','ú','ů','ý','ž'];
+        $to   = ['a','c','d','e','e','i','n','o','r','s','t','u','u','y','z'];
+        $s = str_replace($from, $to, $s);
+        $s = (string) preg_replace('/\s+/', ' ', $s);
+
+        static $map = [
+            // → NEW
+            'new' => 'NEW', 'nove' => 'NEW', 'novy' => 'NEW',
+            // → NEZAJEM (per zákaznické pravidlo: nedovolal/nebere/típl_to/nezajem všechno do nezájmu)
+            'nechce'      => 'NEZAJEM', 'nechci'      => 'NEZAJEM',
+            'nezajem'     => 'NEZAJEM',
+            'nedovolal'   => 'NEZAJEM', 'nedovolala'  => 'NEZAJEM',
+            'nedovolano'  => 'NEZAJEM',
+            'nebere'      => 'NEZAJEM',
+            'tipl to'     => 'NEZAJEM', 'tiplto'      => 'NEZAJEM',
+            'typl to'     => 'NEZAJEM', 'typlto'      => 'NEZAJEM',
+            'called_bad'  => 'NEZAJEM',
+            // → FOR_SALES
+            'chce'        => 'FOR_SALES',
+            'pro oz'      => 'FOR_SALES', 'pro_oz'     => 'FOR_SALES',
+            'rozjednany'  => 'FOR_SALES', 'rozjednana' => 'FOR_SALES',
+            'rozjednane'  => 'FOR_SALES',
+            // → CALLED_OK (úspěšně obvoláno bez předání OZ)
+            'called_ok'   => 'CALLED_OK',
+            'ok'          => 'CALLED_OK',
+            'obvolano'    => 'CALLED_OK',
+            // → CALLBACK
+            'callback'    => 'CALLBACK',
+            'volat zpet'  => 'CALLBACK',
+            // → CHYBNY_KONTAKT
+            'chybny'           => 'CHYBNY_KONTAKT',
+            'chybny_kontakt'   => 'CHYBNY_KONTAKT',
+            'spatny'           => 'CHYBNY_KONTAKT',
+            'spatny_kontakt'   => 'CHYBNY_KONTAKT',
+            // → IZOLACE
+            'izolace' => 'IZOLACE',
+            // → VF_SKIP
+            'vf_skip' => 'VF_SKIP', 'vf'   => 'VF_SKIP',
+            // → DONE / UZAVRENO
+            'uzavreno' => 'DONE', 'done' => 'DONE',
+        ];
+
+        if (isset($map[$s])) return $map[$s];
+
+        return '__INVALID__';
+    }
+
+    /**
      * Načte všechny aktivní uživatele do mapy email → id.
      * Slouží k validaci sloupce `oz_email` v importu uzavřených smluv.
      *
@@ -1199,25 +1329,28 @@ final class AdminImportController
         if ($batch === []) return 0;
         $placeholders = []; $values = [];
 
-        // Připrav data: pokud řádek má datum_uzavreni, automaticky:
-        //  - dopočítej vyrocni_smlouvy = datum + 3 roky (pokud není explicitně v CSV)
-        //  - nastav contacts.stav = 'DONE' (legacy stav pro uzavřené)
-        //  - nastav assigned_sales_id na OZ co smlouvu uzavřel (z oz_email)
+        // Připrav data: pokud řádek má datum_uzavreni → DONE; jinak použij stav_mapped (NEW default)
+        //  - dopočítej vyrocni_smlouvy = datum + 3 roky (pokud uzavřená smlouva a vyrocni není v CSV)
+        //  - assigned_sales_id z oz_email (pro DONE i FOR_SALES)
+        //  - rejection_reason='nezajem' pro NEZAJEM (audit trail)
+        //  - datum_volani z `Dne` v CSV (historický záznam, nezapočítá se do aktuálního měsíce)
         foreach ($batch as $i => $r) {
-            $p = $i * 14; // 14 placeholderů per row (přibyl assigned_sales_id, sale_price)
+            $p = $i * 17; // 17 placeholderů per row (přibyl rejection_reason + datum_volani)
 
-            $stav = 'NEW';
+            // Stav: priorita: datum_uzavreni → DONE; jinak stav_mapped; jinak NEW
+            $stav = (string) ($r['stav_mapped'] ?? 'NEW');
+            if (!empty($r['datum_uzavreni'])) $stav = 'DONE';
+
             $vyroci = $r['vyroci'];
-            if (!empty($r['datum_uzavreni'])) {
-                $stav = 'DONE';
-                if ($vyroci === null) {
-                    // Auto-vypočet: datum_uzavreni + 3 roky (default trvání smlouvy)
-                    $ts = strtotime((string) $r['datum_uzavreni'] . ' +3 years');
-                    if ($ts !== false) $vyroci = date('Y-m-d', $ts);
-                }
+            if (!empty($r['datum_uzavreni']) && $vyroci === null) {
+                $ts = strtotime((string) $r['datum_uzavreni'] . ' +3 years');
+                if ($ts !== false) $vyroci = date('Y-m-d', $ts);
             }
 
-            $placeholders[] = "(:ico{$p},:firma{$p},:adr{$p},:tel{$p},:em{$p},:op{$p},:prilez{$p},:reg{$p},:stav{$p},:poz{$p},:naroz{$p},:vyroci{$p},:asid{$p},:sp{$p},:actd{$p},0,NOW(3),NOW(3))";
+            // rejection_reason: 'nezajem' pro NEZAJEM stav (jinak NULL)
+            $rejReason = ($stav === 'NEZAJEM') ? 'nezajem' : null;
+
+            $placeholders[] = "(:ico{$p},:firma{$p},:adr{$p},:tel{$p},:em{$p},:op{$p},:prilez{$p},:reg{$p},:stav{$p},:poz{$p},:rej{$p},:naroz{$p},:vyroci{$p},:asid{$p},:sp{$p},:actd{$p},:dvol{$p},0,NOW(3),NOW(3))";
             $values["ico{$p}"]    = $r['ico'];
             $values["firma{$p}"]  = $r['firma'];
             $values["adr{$p}"]    = $r['adr'];
@@ -1228,15 +1361,18 @@ final class AdminImportController
             $values["reg{$p}"]    = $r['reg'];
             $values["stav{$p}"]   = $stav;
             $values["poz{$p}"]    = $r['poz'];
+            $values["rej{$p}"]    = $rejReason;
             $values["naroz{$p}"]  = $r['naroz'];
             $values["vyroci{$p}"] = $vyroci;
-            // Nová pole pro uzavřené smlouvy
-            $values["asid{$p}"]   = $r['oz_user_id'] ?? null;       // assigned_sales_id
-            $values["sp{$p}"]     = $r['sale_price'] ?? null;       // cena smlouvy
-            // activation_date = stejné datum jako datum_uzavreni (pokud uzavřená smlouva)
+            $values["asid{$p}"]   = $r['oz_user_id'] ?? null;     // assigned_sales_id
+            $values["sp{$p}"]     = $r['sale_price'] ?? null;
             $values["actd{$p}"]   = !empty($r['datum_uzavreni']) ? $r['datum_uzavreni'] : null;
+            // datum_volani — historický záznam kdy navolávačka volala (z `Dne` sloupce)
+            $values["dvol{$p}"]   = !empty($r['datum_volani'])
+                ? ((string) $r['datum_volani']) . ' 00:00:00'
+                : null;
         }
-        $sql = 'INSERT INTO contacts (ico, firma, adresa, telefon, email, operator, prilez, region, stav, poznamka, narozeniny_majitele, vyrocni_smlouvy, assigned_sales_id, sale_price, activation_date, dnc_flag, created_at, updated_at) VALUES '
+        $sql = 'INSERT INTO contacts (ico, firma, adresa, telefon, email, operator, prilez, region, stav, poznamka, rejection_reason, narozeniny_majitele, vyrocni_smlouvy, assigned_sales_id, sale_price, activation_date, datum_volani, dnc_flag, created_at, updated_at) VALUES '
             . implode(',', $placeholders);
         try {
             $stmt = $this->pdo->prepare($sql);
@@ -1269,20 +1405,72 @@ final class AdminImportController
             // oz_user_id přebíráme přímo z $r — to je skutečný OZ co smlouvu uzavřel
             // (z oz_email sloupce v importu). Pokud chybí, fallback na admina.
             $closedRows = [];
+            $activeRows = []; // FOR_SALES — rozpracované leady, OZ s nimi pracuje
             foreach ($batch as $i => $r) {
+                $stavMapped = (string) ($r['stav_mapped'] ?? 'NEW');
                 if (!empty($r['datum_uzavreni'])) {
                     $closedRows[] = [
                         'id'             => $firstId + $i,
                         'datum_uzavreni' => (string) $r['datum_uzavreni'],
                         'oz_user_id'     => (int) ($r['oz_user_id'] ?? $adminId),
                     ];
+                } elseif ($stavMapped === 'FOR_SALES' && !empty($r['oz_user_id'])) {
+                    $activeRows[] = [
+                        'id'           => $firstId + $i,
+                        'oz_user_id'   => (int) $r['oz_user_id'],
+                        // Použijeme datum_volani z Excelu (historický kdy proběhl hovor),
+                        // jinak NULL (workflow neudává čas hovoru)
+                        'started_at'   => !empty($r['datum_volani']) ? ((string) $r['datum_volani']) . ' 00:00:00' : null,
+                    ];
                 }
             }
             if ($closedRows !== []) {
                 $this->bulkInsertClosedWorkflow($closedRows, $adminId);
             }
+            if ($activeRows !== []) {
+                $this->bulkInsertActiveWorkflow($activeRows, $adminId);
+            }
         }
         return $inserted;
+    }
+
+    /**
+     * Bulk INSERT do oz_contact_workflow pro FOR_SALES rozpracované kontakty.
+     * Vznikne řádek se `stav='FOR_SALES'` a OZ-ovo `oz_id` — kontakt se objeví
+     * v jeho panelu „Aktivní/Přijaté" a může s ním pracovat (SCHUZKA, NABIDKA…).
+     *
+     * @param list<array{id:int,oz_user_id:int,started_at:?string}> $rows
+     */
+    private function bulkInsertActiveWorkflow(array $rows, int $adminId): void
+    {
+        // Ověřit že nové sloupce existují (legacy DB instance) — analogicky k closed
+        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `stav_changed_at` DATETIME(3) NULL DEFAULT NULL'); } catch (\PDOException) {}
+
+        $placeholders = []; $values = [];
+        foreach ($rows as $i => $r) {
+            $p = $i;
+            // started_at = kdy proběhl hovor (z `Dne` v Excelu) nebo NOW pokud neuvedeno
+            $startedSql = $r['started_at'] !== null ? ":sa{$p}" : 'NOW(3)';
+            $changedSql = $r['started_at'] !== null ? ":sb{$p}" : 'NOW(3)';
+            $updatedSql = $r['started_at'] !== null ? ":sc{$p}" : 'NOW(3)';
+
+            $placeholders[] = "(:cid{$p},:uid{$p},'FOR_SALES',{$startedSql},{$changedSql},{$updatedSql})";
+            $values["cid{$p}"] = $r['id'];
+            $values["uid{$p}"] = $r['oz_user_id'];
+            if ($r['started_at'] !== null) {
+                $values["sa{$p}"] = $r['started_at'];
+                $values["sb{$p}"] = $r['started_at'];
+                $values["sc{$p}"] = $r['started_at'];
+            }
+        }
+        $sql = "INSERT INTO oz_contact_workflow
+                  (contact_id, oz_id, stav, started_at, stav_changed_at, updated_at)
+                VALUES " . implode(',', $placeholders);
+        try {
+            $this->pdo->prepare($sql)->execute($values);
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+        }
     }
 
     /**
@@ -1459,6 +1647,22 @@ final class AdminImportController
             'sale_price' => 'sale_price', 'cena' => 'sale_price',
             'cena_smlouvy' => 'sale_price', 'cena smlouvy' => 'sale_price',
             'price' => 'sale_price', 'castka' => 'sale_price',
+            // Anglické / alternativní názvy pro existující sloupce
+            'mobile' => 'telefon',
+            'subject_name' => 'firma', 'subject' => 'firma',
+            'jmeno' => 'firma', 'name' => 'firma',
+            'municipality' => 'mesto', 'obec' => 'mesto',
+            // Stav kontaktu (Ne/Chce, Status, atd.)
+            'stav' => 'stav', 'status' => 'stav', 'stav_kontaktu' => 'stav',
+            'ne_chce' => 'stav', 'nechce' => 'stav', 'chce' => 'stav',
+            'vysledek' => 'stav', 'result' => 'stav',
+            // Datum kdy se naposledy volalo
+            'dne' => 'datum_volani', 'datum_volani' => 'datum_volani',
+            'datum_telefonatu' => 'datum_volani', 'volano_dne' => 'datum_volani',
+            'date_called' => 'datum_volani',
+            // Kdo volal — pouze info do poznámky (nepřiřazujeme)
+            'navolavacka' => 'navolavacka_name', 'caller_name' => 'navolavacka_name',
+            'volala' => 'navolavacka_name', 'volal' => 'navolavacka_name',
         ];
 
         $map = [];

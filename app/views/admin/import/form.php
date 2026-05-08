@@ -83,28 +83,37 @@ declare(strict_types=1);
             ▸ Co soubor musí obsahovat (kliknutím zobrazit)
         </summary>
         <div style="font-size:0.8rem;color:var(--muted);padding:0.5rem 0 0;line-height:1.5;">
-            <strong>Povinné sloupce:</strong> <code>firma</code> (nebo <code>nazev_firmy</code>) + zdroj kraje:
-            <code>kraj</code>, <code>region</code>, nebo <code>město</code> (kraj se odvodí automaticky podle města).<br>
-            <strong>Volitelné:</strong> <code>ico</code> (i <code>ičo</code>), <code>adresa</code>, <code>telefon</code> / <code>mobil</code>,
-            <code>email</code>, <code>poznamka</code>, <code>operator</code>, <code>narozeniny_majitele</code>, <code>vyrocni_smlouvy</code>,
-            <code>datum_uzavreni</code>, <code>oz_email</code>, <code>sale_price</code>.<br>
+            <strong>Povinné sloupce:</strong> <code>firma</code> (nebo <code>nazev_firmy</code> / <code>subject_name</code>) + zdroj kraje:
+            <code>kraj</code>, <code>region</code>, nebo <code>mesto</code> / <code>municipality</code>.<br>
+            <strong>Volitelné:</strong> <code>ico</code> (i <code>ičo</code>), <code>adresa</code>, <code>telefon</code> / <code>mobil</code> / <code>mobile</code>,
+            <code>email</code>, <code>poznamka</code>, <code>operator</code> (TM/O2/VF), <code>narozeniny_majitele</code>, <code>vyrocni_smlouvy</code>,
+            <code>datum_uzavreni</code>, <code>oz_email</code>, <code>sale_price</code>, <code>stav</code>, <code>datum_volani</code> (i <code>dne</code>),
+            <code>navolavacka</code>.<br>
             <strong>Kraj přijímá:</strong> kód (<code>jihomoravsky</code>), český název (<code>Jihomoravský kraj</code>),
             nebo město (<code>Brno</code> → Jihomoravský).<br>
             <strong>Datum:</strong> <code>25.04.2026</code>, <code>2026-04-25</code>, nebo Excel serial number.<br><br>
 
-            <strong>💡 Speciálka pro uzavřené smlouvy</strong> (existující klienti):<br>
-            Vyplňte tyto 2 sloupce navíc:
+            <strong>📞 Sloupec <code>stav</code> — pro již provolané kontakty</strong>:
+            <table style="font-size:0.75rem;margin:0.3rem 0;border-collapse:collapse;">
+                <tr><td style="padding:0.15rem 0.6rem;"><code>NECHCE</code> / <code>NEDOVOLAL</code> / <code>NEBERE</code> / <code>TÍPL TO</code></td>
+                    <td>→ <strong>NEZAJEM</strong> (zalehne v DB pro pozdější obvolání, nezapočítává se aktuálnímu měsíci)</td></tr>
+                <tr><td style="padding:0.15rem 0.6rem;"><code>CHCE</code></td>
+                    <td>→ <strong>FOR_SALES</strong> — objeví se OZ-ovi v jeho panelu „Aktivní/Přijaté".
+                    <strong style="color:#e74c3c;">Vyžaduje sloupec <code>oz_email</code></strong> (per řádek).</td></tr>
+                <tr><td style="padding:0.15rem 0.6rem;">(prázdné)</td>
+                    <td>→ <strong>NEW</strong> — standardní pipeline (čistička → caller → OZ)</td></tr>
+            </table>
+
+            <strong>💡 Speciálka pro uzavřené smlouvy</strong> (existující klienti):
             <ul style="margin:0.3rem 0 0.3rem 1.2rem;padding:0;">
-                <li><code>datum_uzavreni</code> — kdy byla smlouva podepsána (<code>25.04.2024</code>)</li>
-                <li><code>oz_email</code> — <strong>e‑mail OZ</strong> co smlouvu uzavřel (musí existovat v <code>/admin/users</code>!).
-                    Aliasy: <code>obchodak_email</code>, <code>prodejce_email</code>, <code>sales_email</code>.</li>
-                <li><code>sale_price</code> (volitelné) — cena smlouvy v Kč (<code>14999</code> nebo <code>14 999,50</code>).
-                    Aliasy: <code>cena</code>, <code>cena_smlouvy</code>.</li>
+                <li><code>datum_uzavreni</code> — kdy byla smlouva podepsána</li>
+                <li><code>oz_email</code> — <strong>e-mail OZ co smlouvu uzavřel</strong> (musí existovat v <code>/admin/users</code>)</li>
+                <li><code>sale_price</code> (volitelné) — cena smlouvy v Kč</li>
             </ul>
-            Kontakt se založí jako <strong>UZAVRENO</strong>, přiřadí se ke správnému OZ (objeví se v jeho Uzavřeno tabu),
-            výročí se dopočítá automaticky (<code>datum_uzavreni + 3 roky</code>).<br>
-            <strong style="color:#e74c3c;">⚠ Pokud oz_email v systému neexistuje, řádek se v náhledu označí jako chyba</strong> —
-            opravte v Excelu (případně OZ založte v Admin/Uživatelé) a nahrajte znovu.
+            Kontakt se založí jako <strong>UZAVRENO</strong>, přiřadí se ke správnému OZ, výročí <code>+3 roky</code>.<br><br>
+
+            <strong style="color:#e74c3c;">⚠ OZ email v systému neexistuje?</strong> Řádek se v náhledu označí jako chyba —
+            opravte v Excelu, případně OZ založte v <em>/admin/users</em>, a nahrajte znovu.
         </div>
     </details>
 
