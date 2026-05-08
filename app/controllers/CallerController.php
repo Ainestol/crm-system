@@ -104,6 +104,15 @@ final class CallerController
         $availableRegions = [];
         $regionCounts     = [];
 
+        // POZN: Premium leady (cleaning_status='pending' nebo 'tradeable' v premium_lead_pool)
+        // se z standardní queue VYLOUČÍ — patří do separátní /caller/premium plochy.
+        // Non_tradeable leady zde zůstávají (vrátily se do běžného poolu).
+        $excludePremium = " AND NOT EXISTS (
+            SELECT 1 FROM premium_lead_pool plp
+            WHERE plp.contact_id = contacts.id
+              AND plp.cleaning_status IN ('pending', 'tradeable')
+        )";
+
         if ($tab === 'aktivni') {
             if ($hasCallerRegions) {
                 $ph = implode(',', array_fill(0, count($callerRegions), '?'));
@@ -111,6 +120,7 @@ final class CallerController
                     "SELECT DISTINCT region FROM contacts
                      WHERE stav='READY' AND operator IN('TM','O2')
                        AND assigned_caller_id IS NULL AND region IN($ph) AND region!=''
+                       $excludePremium
                      ORDER BY region"
                 );
                 $avStmt->execute($callerRegions);
@@ -119,6 +129,7 @@ final class CallerController
                     "SELECT DISTINCT region FROM contacts
                      WHERE stav='READY' AND operator IN('TM','O2')
                        AND assigned_caller_id IS NULL AND region!=''
+                       $excludePremium
                      ORDER BY region"
                 );
             }
@@ -136,6 +147,7 @@ final class CallerController
                      WHERE stav='READY' AND operator IN('TM','O2')
                        AND assigned_caller_id IS NULL AND region IN($ph2)
                        AND (locked_by IS NULL OR locked_until < NOW(3) OR locked_by = ?)
+                       $excludePremium
                      GROUP BY region"
                 );
                 $rcStmt->execute(array_merge($availableRegions, [$callerId]));
@@ -285,18 +297,38 @@ final class CallerController
             )->execute(['cid' => $callerId]);
 
             // 3. Kolik kontaktů má caller aktuálně zamčeno z poolu?
-            $lockedCntStmt = $this->pdo->prepare(
-                "SELECT COUNT(*) FROM contacts
-                 WHERE locked_by = :cid AND stav = 'READY' AND locked_until > NOW(3)"
-            );
-            $lockedCntStmt->execute(['cid' => $callerId]);
+            //    DŮLEŽITÉ: pokud caller vybral konkrétní region, počítáme zámky JEN v tom regionu.
+            //    Důvod: jinak při plné queue z Liberec (20 leadů) by se nedalo claim z Prahy
+            //    (globální limit dosažen). Per-region limit umožňuje paralelně pracovat napříč
+            //    regiony — Jana může mít 20 v Liberci + 20 v Praze + 20 ve Středočeském.
+            //    Když nevybrala region (Vše), počítáme globálně jako dřív.
+            if ($selectedRegion !== '') {
+                $lockedCntStmt = $this->pdo->prepare(
+                    "SELECT COUNT(*) FROM contacts
+                     WHERE locked_by = :cid AND stav = 'READY'
+                       AND locked_until > NOW(3) AND region = :reg"
+                );
+                $lockedCntStmt->execute(['cid' => $callerId, 'reg' => $selectedRegion]);
+            } else {
+                $lockedCntStmt = $this->pdo->prepare(
+                    "SELECT COUNT(*) FROM contacts
+                     WHERE locked_by = :cid AND stav = 'READY' AND locked_until > NOW(3)"
+                );
+                $lockedCntStmt->execute(['cid' => $callerId]);
+            }
             $lockedCount = (int) $lockedCntStmt->fetchColumn();
 
             // 4. Doklaiming: atomicky zabrat volné kontakty do PAGE_SIZE
+            //    POZN: NOT EXISTS premium_lead_pool — premium leady patří do /caller/premium
             $needed = self::PAGE_SIZE - $lockedCount;
             if ($needed > 0) {
                 $claimWhere  = "stav = 'READY' AND operator IN('TM','O2') AND assigned_caller_id IS NULL
-                                AND (locked_by IS NULL OR locked_until < NOW(3))";
+                                AND (locked_by IS NULL OR locked_until < NOW(3))
+                                AND NOT EXISTS (
+                                    SELECT 1 FROM premium_lead_pool plp
+                                    WHERE plp.contact_id = contacts.id
+                                      AND plp.cleaning_status IN ('pending', 'tradeable')
+                                )";
                 $claimParams = [];
 
                 if ($selectedRegion !== '') {
@@ -570,9 +602,15 @@ final class CallerController
 
         $ozProgress = []; // ozProgress[oz_id][region] = ['received' => int, 'target' => int]
         try {
+            // POZN: JOIN users + aktivni=1 — header musí počítat jen aktivní obchodáky,
+            // jinak by se total nesedl s tabulkou (která renderuje jen aktivní).
+            // Stejná logika u obou queries (targets + received).
             $tgtStmt = $this->pdo->prepare(
-                'SELECT user_id, region, target_count FROM oz_targets
-                 WHERE year = :y AND month = :m'
+                "SELECT t.user_id, t.region, t.target_count
+                 FROM oz_targets t
+                 JOIN users u ON u.id = t.user_id
+                 WHERE t.year = :y AND t.month = :m
+                   AND u.role = 'obchodak' AND u.aktivni = 1"
             );
             $tgtStmt->execute(['y' => $cqYear, 'm' => $cqMonth]);
             $ozTargetData = [];
@@ -581,13 +619,15 @@ final class CallerController
             }
 
             $recStmt = $this->pdo->prepare(
-                "SELECT assigned_sales_id AS uid, region, COUNT(*) AS cnt
-                 FROM contacts
-                 WHERE stav IN ('CALLED_OK', 'FOR_SALES')
-                   AND assigned_sales_id IS NOT NULL
-                   AND YEAR(datum_volani) = :y
-                   AND MONTH(datum_volani) = :m
-                 GROUP BY assigned_sales_id, region"
+                "SELECT c.assigned_sales_id AS uid, c.region, COUNT(*) AS cnt
+                 FROM contacts c
+                 JOIN users u ON u.id = c.assigned_sales_id
+                 WHERE c.stav IN ('CALLED_OK', 'FOR_SALES')
+                   AND c.assigned_sales_id IS NOT NULL
+                   AND u.role = 'obchodak' AND u.aktivni = 1
+                   AND YEAR(c.datum_volani) = :y
+                   AND MONTH(c.datum_volani) = :m
+                 GROUP BY c.assigned_sales_id, c.region"
             );
             $recStmt->execute(['y' => $cqYear, 'm' => $cqMonth]);
             $ozReceivedData = [];
@@ -1142,6 +1182,13 @@ final class CallerController
             );
             $stmt->execute(['q1' => $like, 'q2' => $like]);
             $results = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+            // Anotuj výsledky o info o sdílených telefonech (stejně jako v hlavní queue).
+            // Důležité — bez toho by navolávačka v search neviděla, že číslo používá víc firem
+            // a v jakém jsou stavu. Hledá přitom hlavně proto, aby si rychle ověřila duplikáty.
+            if ($results !== []) {
+                $results = $this->enrichSharedPhoneInfo($results);
+            }
         }
 
         // OZ pro akční formuláře v search výsledcích
@@ -1450,7 +1497,7 @@ final class CallerController
             // (REGEXP_REPLACE pro normalizaci na digits-only).
             $placeholders = implode(',', array_fill(0, count($uniquePhones), '?'));
             $stmt = $this->pdo->prepare(
-                "SELECT id, firma, REGEXP_REPLACE(telefon, '[^0-9]+', '') AS phone_digits
+                "SELECT id, firma, stav, REGEXP_REPLACE(telefon, '[^0-9]+', '') AS phone_digits
                  FROM contacts
                  WHERE telefon IS NOT NULL AND TRIM(telefon) <> ''
                    AND REGEXP_REPLACE(telefon, '[^0-9]+', '') IN ($placeholders)"
@@ -1465,6 +1512,7 @@ final class CallerController
                     $shared[$pd]['firms'][] = [
                         'id'    => (int) $row['id'],
                         'firma' => (string) ($row['firma'] ?? ''),
+                        'stav'  => (string) ($row['stav']  ?? ''),
                     ];
                 }
             }

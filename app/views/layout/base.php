@@ -48,16 +48,24 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
     }
 
     if ($role === 'navolavacka') {
+        // Dvě pracovní plochy:
+        //   1) standardní pool (claim, kraje, base reward od majitele)
+        //   2) 💎 premium navolávky — objednávky od OZ s bonusem za úspěšný hovor
         $sections['Práce'] = [
-            ['label' => 'Pracovní plocha', 'href' => '/caller',          'icon' => '📞'],
-            ['label' => 'Kalendář',         'href' => '/caller/calendar', 'icon' => '📅'],
-            ['label' => 'Vyhledávání',       'href' => '/caller/search',   'icon' => '🔍'],
-            ['label' => 'Statistiky',         'href' => '/caller/stats',    'icon' => '📊'],
+            ['label' => 'Pracovní plocha',           'href' => '/caller',          'icon' => '📞'],
+            ['label' => 'Premium navolávky',         'href' => '/caller/premium',  'icon' => '💎'],
+            ['label' => 'Kalendář',                  'href' => '/caller/calendar', 'icon' => '📅'],
+            ['label' => 'Vyhledávání',               'href' => '/caller/search',   'icon' => '🔍'],
+            ['label' => 'Statistiky',                'href' => '/caller/stats',    'icon' => '📊'],
         ];
     }
     if ($role === 'cisticka') {
+        // Čistička má dvě pracovní plochy:
+        //   1) standardní — první čištění (NEW → READY/VF_SKIP, sazba od majitele)
+        //   2) premium    — druhé čištění na objednávku OZ (READY → tradeable/non_tradeable, sazba od OZ)
         $sections['Práce'] = [
-            ['label' => 'Pracovní plocha', 'href' => '/cisticka', 'icon' => '🔍'],
+            ['label' => 'Pracovní plocha 1 — standard', 'href' => '/cisticka',         'icon' => '🔍'],
+            ['label' => 'Pracovní plocha 2 — premium', 'href' => '/cisticka/premium', 'icon' => '💎'],
         ];
     }
     if ($role === 'obchodak') {
@@ -75,6 +83,12 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
             ['label' => 'Můj měsíc',          'href' => '/oz',             'icon' => '🎯'],
             ['label' => 'Výkon celého týmu',  'href' => '/oz/performance', 'icon' => '🏆'],
         ];
+        // ── Premium pipeline (druhé čištění leadů na objednávku) ──
+        // "Nová objednávka" jde první v sekci, ať OZ má prominentní akci v menu.
+        $sections['Premium 💎'] = [
+            ['label' => 'Nová objednávka',  'href' => '/oz/premium/new', 'icon' => '➕'],
+            ['label' => 'Moje objednávky',  'href' => '/oz/premium',     'icon' => '💎'],
+        ];
     }
     if (in_array($role, ['backoffice', 'majitel', 'superadmin'], true)) {
         $sections['Back-office'] = [
@@ -82,6 +96,12 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
         ];
     }
     if (in_array($role, ['majitel', 'superadmin'], true)) {
+        // ── Premium pipeline (objednávky druhého čištění) — globální přehled ──
+        $sections['Premium 💎'] = [
+            ['label' => 'Všechny objednávky',  'href' => '/admin/premium-overview', 'icon' => '💎'],
+            ['label' => 'Plocha — čistička',   'href' => '/cisticka/premium',       'icon' => '🧹'],
+            ['label' => 'Plocha — navolávačka','href' => '/caller/premium',         'icon' => '📞'],
+        ];
         // ── Sekce sgrupované per role, na kterou nastavení míří ──
         // Logika: když chci nastavit něco pro čističky, jdu do "Čističky".
         // Když pro navolávačky, do "Navolávačky". Žádné hádání, kde co je.
@@ -187,6 +207,18 @@ if (!$_isAuthPage
                     <span class="crm-topbar-user__name"><?= crm_h((string) ($user['jmeno'] ?? '')) ?></span>
                     <span class="crm-topbar-user__role"><?= crm_h($_roleLabel) ?></span>
                 </div>
+                <?php
+                // Multi-role tlačítko — vidí jen user co má víc rolí
+                $_allRoles = (array) ($user['all_roles'] ?? []);
+                if (count($_allRoles) > 1) {
+                ?>
+                    <a href="<?= crm_h(crm_url('/login/select-role')) ?>"
+                       class="btn"
+                       style="background:#fff; border:1px solid var(--color-sidebar-accent); color:var(--color-sidebar-accent);"
+                       title="Přepnout aktivní roli (máš povoleno víc rolí)">
+                        🔄 Přepnout roli
+                    </a>
+                <?php } ?>
                 <a href="<?= crm_h(crm_url('/account/password')) ?>" class="btn" title="Změna hesla">🔑 Heslo</a>
                 <form method="post" action="<?= crm_h(crm_url('/logout')) ?>" style="margin:0;">
                     <input type="hidden"

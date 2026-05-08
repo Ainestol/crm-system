@@ -53,6 +53,21 @@ final class Router
                 'roles' => [],
                 'handler' => [LoginController::class, 'postTwoFactor'],
             ],
+            // ── Multi-role: výběr role po loginu (jen pro multi-role users) ──
+            [
+                'method' => 'GET',
+                'path'   => '/login/select-role',
+                'auth'   => true,
+                'roles'  => ['superadmin', 'majitel', 'navolavacka', 'obchodak', 'backoffice', 'cisticka'],
+                'handler'=> [LoginController::class, 'getSelectRole'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/login/select-role',
+                'auth'   => true,
+                'roles'  => ['superadmin', 'majitel', 'navolavacka', 'obchodak', 'backoffice', 'cisticka'],
+                'handler'=> [LoginController::class, 'postSelectRole'],
+            ],
             [
                 'method' => 'GET',
                 'path' => '/dashboard',
@@ -870,6 +885,146 @@ final class Router
                 'auth' => true,
                 'roles' => ['majitel', 'superadmin'],
                 'handler' => [AdminOzStagesController::class, 'postDelete'],
+            ],
+            // ════════════════════════════════════════════════════════════════
+            //  PREMIUM PIPELINE — objednávky druhého čištění (OZ side)
+            //  Fáze 2 implementace. Čistička / navolávačka / stats: další fáze.
+            // ════════════════════════════════════════════════════════════════
+            [
+                'method' => 'GET',
+                'path'   => '/oz/premium',
+                'auth'   => true,
+                'roles'  => ['obchodak', 'majitel', 'superadmin'],
+                'handler'=> [PremiumOrderController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'GET',
+                'path'   => '/oz/premium/new',
+                'auth'   => true,
+                'roles'  => ['obchodak', 'majitel', 'superadmin'],
+                'handler'=> [PremiumOrderController::class, 'getNew'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/oz/premium/create',
+                'auth'   => true,
+                'roles'  => ['obchodak', 'majitel', 'superadmin'],
+                'handler'=> [PremiumOrderController::class, 'postCreate'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/oz/premium/cancel',
+                'auth'   => true,
+                'roles'  => ['obchodak', 'majitel', 'superadmin'],
+                'handler'=> [PremiumOrderController::class, 'postCancel'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/oz/premium/close',
+                'auth'   => true,
+                'roles'  => ['obchodak', 'cisticka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumOrderController::class, 'postClose'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/cisticka/premium/close',
+                'auth'   => true,
+                'roles'  => ['cisticka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumOrderController::class, 'postClose'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/oz/premium/mark-paid',
+                'auth'   => true,
+                'roles'  => ['obchodak', 'majitel', 'superadmin'],
+                'handler'=> [PremiumOrderController::class, 'postMarkPaid'],
+            ],
+            // ── Premium pipeline (čistička side) — pracovní plocha 2 ──
+            [
+                'method' => 'GET',
+                'path'   => '/cisticka/premium',
+                'auth'   => true,
+                'roles'  => ['cisticka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumCistickaController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'GET',
+                'path'   => '/cisticka/premium/order',
+                'auth'   => true,
+                'roles'  => ['cisticka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumCistickaController::class, 'getOrder'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/cisticka/premium/verify',
+                'auth'   => true,
+                'roles'  => ['cisticka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumCistickaController::class, 'postVerify'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/cisticka/premium/undo',
+                'auth'   => true,
+                'roles'  => ['cisticka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumCistickaController::class, 'postUndo'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/cisticka/premium/accept',
+                'auth'   => true,
+                'roles'  => ['cisticka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumCistickaController::class, 'postAccept'],
+            ],
+            [
+                'method' => 'GET',
+                'path'   => '/cisticka/premium/payout/print',
+                'auth'   => true,
+                'roles'  => ['cisticka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumCistickaController::class, 'getPayoutPrint'],
+            ],
+            [
+                'method' => 'GET',
+                'path'   => '/oz/premium/payout/print',
+                'auth'   => true,
+                'roles'  => ['obchodak', 'majitel', 'superadmin'],
+                'handler'=> [PremiumOrderController::class, 'getPayoutPrint'],
+            ],
+            // ── Premium pipeline (caller side) — pracovní plocha 2 navolávačky ──
+            [
+                'method' => 'GET',
+                'path'   => '/caller/premium',
+                'auth'   => true,
+                'roles'  => ['navolavacka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumCallerController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'GET',
+                'path'   => '/caller/premium/order',
+                'auth'   => true,
+                'roles'  => ['navolavacka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumCallerController::class, 'getOrder'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/caller/premium/status',
+                'auth'   => true,
+                'roles'  => ['navolavacka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumCallerController::class, 'postStatus'],
+            ],
+            [
+                'method' => 'GET',
+                'path'   => '/caller/premium/payout/print',
+                'auth'   => true,
+                'roles'  => ['navolavacka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumCallerController::class, 'getPayoutPrint'],
+            ],
+            // ── Admin: globální přehled premium pipeline ──
+            [
+                'method' => 'GET',
+                'path'   => '/admin/premium-overview',
+                'auth'   => true,
+                'roles'  => ['majitel', 'superadmin'],
+                'handler'=> [AdminPremiumOverviewController::class, 'getIndex'],
             ],
         ];
     }

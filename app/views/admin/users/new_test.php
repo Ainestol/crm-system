@@ -39,7 +39,7 @@ declare(strict_types=1);
                placeholder="Pokud necháš prázdné, použije se přihlašovací jméno"
                value="<?= crm_h((string) ($_POST['jmeno'] ?? '')) ?>">
 
-        <label for="role">Role</label>
+        <label for="role">Primární role</label>
         <select id="role" name="role" required>
             <option value="">— vyber roli —</option>
             <?php foreach ($roleOptions as $r) { ?>
@@ -47,13 +47,36 @@ declare(strict_types=1);
             <?php } ?>
         </select>
 
+        <fieldset class="fieldset" style="margin-top: 0.6rem;">
+            <legend>🔄 Další role (multi-role) — volitelné</legend>
+            <p style="font-size:0.78rem; color:var(--muted); margin:0 0 0.5rem; line-height:1.4;">
+                Pokud má testovací účet zastávat víc rolí (např. obchodák + čistička),
+                zaškrtni další zde. Při loginu se ti zobrazí výběr „Jako kým chceš pracovat?".
+            </p>
+            <?php
+            $postedExtras = isset($_POST['roles_extra']) && is_array($_POST['roles_extra']) ? $_POST['roles_extra'] : [];
+            foreach ($roleOptions as $r) {
+                $checked = in_array($r, $postedExtras, true) ? 'checked' : '';
+            ?>
+                <label style="display:inline-flex; align-items:center; gap:0.4rem; margin-right:0.8rem; font-weight:400;">
+                    <input type="checkbox" name="roles_extra[]" value="<?= crm_h($r) ?>" <?= $checked ?>>
+                    <?= crm_h($r) ?>
+                </label>
+            <?php } ?>
+            <small style="display:block; color:var(--muted); font-size:0.72rem; margin-top:0.4rem;">
+                Tip: nezaškrtávej tu samou roli jako primární — ta je už přiřazená.
+            </small>
+        </fieldset>
+
         <label for="password">Heslo (min. 6 znaků)</label>
         <input id="password" name="password" type="text" required minlength="6" maxlength="128" autocomplete="new-password">
 
         <label for="password_confirm">Heslo znovu</label>
         <input id="password_confirm" name="password_confirm" type="text" required minlength="6" maxlength="128" autocomplete="new-password">
 
-        <button type="submit" class="btn">Vytvořit testovací účet</button>
-        <a class="btn btn-secondary" href="<?= crm_h(crm_url('/admin/users')) ?>">Zpět</a>
+        <div style="display:flex; gap:0.6rem; justify-content:center; margin-top:0.6rem;">
+            <button type="submit" class="btn" style="min-width:200px;">Vytvořit testovací účet</button>
+            <a class="btn btn-secondary" style="min-width:120px; text-align:center;" href="<?= crm_h(crm_url('/admin/users')) ?>">Zpět</a>
+        </div>
     </form>
 </section>

@@ -87,6 +87,17 @@ final class AdminUsersController
         $primary = $primary === '' ? null : strtolower($primary);
         $regions = isset($_POST['regions']) && is_array($_POST['regions']) ? $_POST['regions'] : [];
 
+        // Multi-role: další role z checkboxů
+        $extraRoles = isset($_POST['roles_extra']) && is_array($_POST['roles_extra']) ? $_POST['roles_extra'] : [];
+        $allowedRoles = ['superadmin','majitel','navolavacka','obchodak','backoffice','cisticka'];
+        $extraRoles = array_values(array_filter(
+            array_map(static fn($r) => strtolower(trim((string) $r)), $extraRoles),
+            static fn($r) => $r !== '' && in_array($r, $allowedRoles, true)
+        ));
+        $extraRoles = array_values(array_filter($extraRoles, static fn($r) => $r !== $role));
+        $extraRoles = array_values(array_unique($extraRoles));
+        $rolesExtraJson = $extraRoles !== [] ? json_encode($extraRoles, JSON_UNESCAPED_UNICODE) : null;
+
         if ($jmeno === '' || $email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             crm_flash_set('Vyplňte jméno a platný e-mail.');
             crm_redirect('/admin/users/new');
@@ -110,14 +121,15 @@ final class AdminUsersController
         $this->pdo->beginTransaction();
         try {
             $ins = $this->pdo->prepare(
-                'INSERT INTO users (jmeno, email, heslo_hash, role, primary_region, aktivni, totp_secret, totp_enabled, must_change_password, created_at, deactivated_at, created_by)
-                 VALUES (:jm, :em, :hh, :rl, :pr, 1, NULL, 0, 1, NOW(3), NULL, :cb)'
+                'INSERT INTO users (jmeno, email, heslo_hash, role, roles_extra, primary_region, aktivni, totp_secret, totp_enabled, must_change_password, created_at, deactivated_at, created_by)
+                 VALUES (:jm, :em, :hh, :rl, :re, :pr, 1, NULL, 0, 1, NOW(3), NULL, :cb)'
             );
             $ins->execute([
                 'jm' => $jmeno,
                 'em' => $email,
                 'hh' => $hash,
                 'rl' => $role,
+                're' => $rolesExtraJson,
                 'pr' => $primary,
                 'cb' => $actorId,
             ]);
@@ -145,8 +157,9 @@ final class AdminUsersController
         crm_redirect('/admin/users');
     }
 
-    /** Role povolené pro testovací účet (tester nemůže být admin). */
-    private const TEST_ACCOUNT_ROLES = ['obchodak', 'navolavacka', 'cisticka', 'backoffice'];
+    /** Role povolené pro testovací účet (tester může mít všechny krom superadmin).
+     *  Majitel je teď v seznamu — pro testování oprávnění majitele/admin přehledů. */
+    private const TEST_ACCOUNT_ROLES = ['majitel', 'obchodak', 'navolavacka', 'cisticka', 'backoffice'];
 
     public function getNewTest(): void
     {
@@ -178,6 +191,16 @@ final class AdminUsersController
         $role = (string) ($_POST['role'] ?? '');
         $password = (string) ($_POST['password'] ?? '');
         $passwordConfirm = (string) ($_POST['password_confirm'] ?? '');
+
+        // Multi-role: další role z checkboxů (jen z povoleného setu pro test účty)
+        $extraRoles = isset($_POST['roles_extra']) && is_array($_POST['roles_extra']) ? $_POST['roles_extra'] : [];
+        $extraRoles = array_values(array_filter(
+            array_map(static fn($r) => strtolower(trim((string) $r)), $extraRoles),
+            static fn($r) => $r !== '' && in_array($r, self::TEST_ACCOUNT_ROLES, true)
+        ));
+        $extraRoles = array_values(array_filter($extraRoles, static fn($r) => $r !== $role));
+        $extraRoles = array_values(array_unique($extraRoles));
+        $rolesExtraJson = $extraRoles !== [] ? json_encode($extraRoles, JSON_UNESCAPED_UNICODE) : null;
 
         if ($username === '' || !preg_match('/^[a-z0-9][a-z0-9._-]{1,31}$/', $username)) {
             crm_flash_set('Přihlašovací jméno: 2–32 znaků, povolené a–z, 0–9, tečka, podtržítko, pomlčka.');
@@ -213,14 +236,15 @@ final class AdminUsersController
 
         try {
             $ins = $this->pdo->prepare(
-                'INSERT INTO users (jmeno, email, heslo_hash, role, primary_region, aktivni, totp_secret, totp_enabled, must_change_password, created_at, deactivated_at, created_by)
-                 VALUES (:jm, :em, :hh, :rl, NULL, 1, NULL, 0, 0, NOW(3), NULL, :cb)'
+                'INSERT INTO users (jmeno, email, heslo_hash, role, roles_extra, primary_region, aktivni, totp_secret, totp_enabled, must_change_password, created_at, deactivated_at, created_by)
+                 VALUES (:jm, :em, :hh, :rl, :re, NULL, 1, NULL, 0, 0, NOW(3), NULL, :cb)'
             );
             $ins->execute([
                 'jm' => $jmeno,
                 'em' => $email,
                 'hh' => $hash,
                 'rl' => $role,
+                're' => $rolesExtraJson,
                 'cb' => $actorId,
             ]);
             $newId = (int) $this->pdo->lastInsertId();
@@ -230,12 +254,15 @@ final class AdminUsersController
             crm_redirect('/admin/users/new-test');
         }
 
-        crm_audit_log($this->pdo, $actorId, 'user_create_test', 'user', $newId, ['email' => $email, 'role' => $role]);
+        crm_audit_log($this->pdo, $actorId, 'user_create_test', 'user', $newId, [
+            'email' => $email, 'role' => $role, 'roles_extra' => $extraRoles,
+        ]);
 
+        $rolesNote = $role . ($extraRoles ? ' (+ ' . implode(', ', $extraRoles) . ')' : '');
         crm_flash_set('✓ Testovací účet vytvořen — předej testerovi:'
             . "\n👤 Login: " . $email
             . "\n🔑 Heslo: " . $password
-            . "\n🎭 Role: " . $role);
+            . "\n🎭 Role: " . $rolesNote);
         crm_redirect('/admin/users');
     }
 
@@ -312,6 +339,17 @@ final class AdminUsersController
         $regions = isset($_POST['regions']) && is_array($_POST['regions']) ? $_POST['regions'] : [];
         $disable2fa = !empty($_POST['disable_2fa']);
 
+        // Multi-role: další role z checkboxů (mimo primární)
+        $extraRoles = isset($_POST['roles_extra']) && is_array($_POST['roles_extra']) ? $_POST['roles_extra'] : [];
+        $allowedRoles = ['superadmin','majitel','navolavacka','obchodak','backoffice','cisticka'];
+        $extraRoles = array_values(array_filter(
+            array_map(static fn($r) => strtolower(trim((string) $r)), $extraRoles),
+            static fn($r) => $r !== '' && in_array($r, $allowedRoles, true)
+        ));
+        $extraRoles = array_values(array_filter($extraRoles, static fn($r) => $r !== $role));
+        $extraRoles = array_values(array_unique($extraRoles));
+        $rolesExtraJson = $extraRoles !== [] ? json_encode($extraRoles, JSON_UNESCAPED_UNICODE) : null;
+
         if ($jmeno === '' || $email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             crm_flash_set('Vyplňte jméno a platný e-mail.');
             crm_redirect('/admin/users/edit?id=' . $id);
@@ -331,12 +369,13 @@ final class AdminUsersController
         $this->pdo->beginTransaction();
         try {
             $upd = $this->pdo->prepare(
-                'UPDATE users SET jmeno = :jm, email = :em, role = :rl, primary_region = :pr WHERE id = :id'
+                'UPDATE users SET jmeno = :jm, email = :em, role = :rl, roles_extra = :re, primary_region = :pr WHERE id = :id'
             );
             $upd->execute([
                 'jm' => $jmeno,
                 'em' => $email,
                 'rl' => $role,
+                're' => $rolesExtraJson,
                 'pr' => $primary,
                 'id' => $id,
             ]);

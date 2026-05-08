@@ -19,6 +19,22 @@ if (!defined('CRM_SESSION_2FA_UID')) {
     define('CRM_SESSION_2FA_UID', 'crm_2fa_pending_uid');
 }
 
+if (!defined('CRM_SESSION_ACTIVE_ROLE')) {
+    // Aktivní role v session — pro multi-role uživatele.
+    // Když user má víc rolí (role + roles_extra), po výběru se uloží sem
+    // a všechny views dále používají user['role'] = active role.
+    define('CRM_SESSION_ACTIVE_ROLE', 'crm_active_role');
+}
+
+if (!defined('CRM_SESSION_PENDING_ROLE_SELECT_UID')) {
+    // ID usera čekajícího na výběr role po loginu (multi-role flow).
+    define('CRM_SESSION_PENDING_ROLE_SELECT_UID', 'crm_pending_role_select_uid');
+}
+
+if (!defined('CRM_PREFERRED_ROLE_COOKIE')) {
+    define('CRM_PREFERRED_ROLE_COOKIE', 'crm_preferred_role');
+}
+
 if (!function_exists('crm_pdo')) {
     function crm_pdo(): PDO
     {
@@ -419,8 +435,89 @@ if (!function_exists('crm_auth_user_id')) {
     }
 }
 
+if (!function_exists('crm_user_all_roles')) {
+    /**
+     * Vrátí seznam VŠECH rolí uživatele (primární + extra).
+     * Primární role je vždy první v poli.
+     *
+     * @return list<string>
+     */
+    function crm_user_all_roles(array $user): array
+    {
+        // DŮLEŽITÉ: bereme PRIMÁRNÍ roli z DB, ne aktuální session role.
+        // Když user přijde z crm_auth_current_user po přepnutí, $user['role']
+        // už je AKTIVNÍ (např. "majitel" po přepnutí z obchodáka). Pokud bychom
+        // brali tu, ztratíme původní DB primary a uživatel by ji nemohl přepnout zpět.
+        $primary = (string) ($user['primary_role'] ?? $user['role'] ?? '');
+
+        $extras = [];
+        $rawExtra = $user['roles_extra'] ?? null;
+        if (is_string($rawExtra) && $rawExtra !== '') {
+            $decoded = json_decode($rawExtra, true);
+            if (is_array($decoded)) {
+                foreach ($decoded as $r) {
+                    if (is_string($r) && $r !== '' && $r !== $primary) {
+                        $extras[] = $r;
+                    }
+                }
+            }
+        } elseif (is_array($rawExtra)) {
+            foreach ($rawExtra as $r) {
+                if (is_string($r) && $r !== '' && $r !== $primary) {
+                    $extras[] = $r;
+                }
+            }
+        }
+
+        return array_values(array_unique(array_merge([$primary], $extras)));
+    }
+}
+
+if (!function_exists('crm_user_is_multirole')) {
+    /** True pokud má víc než 1 roli (primární + alespoň 1 extra). */
+    function crm_user_is_multirole(array $user): bool
+    {
+        return count(crm_user_all_roles($user)) > 1;
+    }
+}
+
+if (!function_exists('crm_user_get_active_role')) {
+    /**
+     * Vrátí aktivní roli ze session (nebo primární pokud nic nezvoleno).
+     */
+    function crm_user_get_active_role(array $user): string
+    {
+        crm_session_start();
+        $allRoles = crm_user_all_roles($user);
+        $sessRole = (string) ($_SESSION[CRM_SESSION_ACTIVE_ROLE] ?? '');
+        if ($sessRole !== '' && in_array($sessRole, $allRoles, true)) {
+            return $sessRole;
+        }
+        return $allRoles[0] ?? (string) ($user['role'] ?? '');
+    }
+}
+
+if (!function_exists('crm_user_set_active_role')) {
+    /**
+     * Nastaví aktivní roli v session (jen pokud user roli skutečně má).
+     * Vrací true pokud OK, false pokud role není povolená.
+     */
+    function crm_user_set_active_role(array $user, string $role): bool
+    {
+        crm_session_start();
+        $allRoles = crm_user_all_roles($user);
+        if (!in_array($role, $allRoles, true)) {
+            return false;
+        }
+        $_SESSION[CRM_SESSION_ACTIVE_ROLE] = $role;
+        return true;
+    }
+}
+
 if (!function_exists('crm_auth_current_user')) {
-    /** Načte aktivního uživatele podle session (nebo null). */
+    /** Načte aktivního uživatele podle session (nebo null).
+     *  Pokud má user víc rolí, do `$user['role']` se nastaví AKTIVNÍ role
+     *  (z session), original primární je v `$user['primary_role']`. */
     function crm_auth_current_user(PDO $pdo): ?array
     {
         $id = crm_auth_user_id();
@@ -437,7 +534,13 @@ if (!function_exists('crm_auth_current_user')) {
             return null;
         }
         crm_session_touch();
-        return crm_auth_strip_sensitive($user);
+        $user = crm_auth_strip_sensitive($user);
+
+        // Multi-role injekce: zachovat original a přepsat role na aktivní
+        $user['primary_role'] = (string) ($user['role'] ?? '');
+        $user['all_roles']    = crm_user_all_roles($user);
+        $user['role']         = crm_user_get_active_role($user);
+        return $user;
     }
 }
 
@@ -448,7 +551,12 @@ if (!function_exists('crm_auth_logout')) {
         if (function_exists('crm_region_clear_session')) {
             crm_region_clear_session();
         }
-        unset($_SESSION[CRM_SESSION_USER_ID], $_SESSION[CRM_SESSION_2FA_UID]);
+        unset(
+            $_SESSION[CRM_SESSION_USER_ID],
+            $_SESSION[CRM_SESSION_2FA_UID],
+            $_SESSION[CRM_SESSION_ACTIVE_ROLE],
+            $_SESSION[CRM_SESSION_PENDING_ROLE_SELECT_UID]
+        );
         crm_session_regenerate_id();
         crm_session_destroy();
     }

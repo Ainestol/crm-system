@@ -32,12 +32,40 @@ $showRegions  = ($currentRole === 'obchodak');
         <label for="email">E-mail</label>
         <input id="email" name="email" type="email" required maxlength="255" value="<?= crm_h((string) ($editUser['email'] ?? '')) ?>">
 
-        <label for="role">Role</label>
+        <label for="role">Primární role</label>
         <select id="role" name="role" required>
             <?php foreach ($roleOptions as $r) { ?>
                 <option value="<?= crm_h($r) ?>"<?= ($isEdit && ($currentRole === $r)) ? ' selected' : '' ?>><?= crm_h($r) ?></option>
             <?php } ?>
         </select>
+        <p style="font-size:0.78rem; color:var(--muted); margin:0.3rem 0 0.5rem; line-height:1.4;">
+            💡 Primární role je výchozí — pro single-role uživatele jediná. Pokud uživatel zastává <strong>víc rolí</strong>
+            (např. majitel + obchodák), zaškrtni další níže.
+        </p>
+
+        <fieldset class="fieldset" style="margin-top: 0.6rem;">
+            <legend>🔄 Další role (multi-role) — uživatel si po loginu vybere kterou aktivně používá</legend>
+            <?php
+            // Aktuální extra role z DB (JSON array)
+            $currentExtras = [];
+            $rawExtras = $editUser['roles_extra'] ?? null;
+            if (is_string($rawExtras) && $rawExtras !== '') {
+                $decoded = json_decode($rawExtras, true);
+                if (is_array($decoded)) $currentExtras = array_values(array_filter($decoded, 'is_string'));
+            }
+            foreach ($roleOptions as $r) {
+                $checked = in_array($r, $currentExtras, true) ? 'checked' : '';
+            ?>
+                <label style="display:inline-flex; align-items:center; gap:0.4rem; margin-right:0.8rem; font-weight:400;">
+                    <input type="checkbox" name="roles_extra[]" value="<?= crm_h($r) ?>" <?= $checked ?>>
+                    <?= crm_h($r) ?>
+                </label>
+            <?php } ?>
+            <p style="font-size:0.72rem; color:var(--muted); margin-top:0.4rem;">
+                Tip: nezaškrtávej tu samou roli jakou má jako primární — ta je už přiřazená.
+                Při loginu user uvidí výběr „Jako kým chceš pracovat?".
+            </p>
+        </fieldset>
 
         <!--
             Region pole (Primární + Povolené) — VIDITELNÉ POUZE PRO ROLE = obchodak.
@@ -72,8 +100,10 @@ $showRegions  = ($currentRole === 'obchodak');
             <label class="check"><input type="checkbox" name="disable_2fa" value="1"> Vypnout 2FA (administrátorský zásah)</label>
         <?php } ?>
 
-        <button type="submit" class="btn"><?= $isEdit ? 'Uložit' : 'Vytvořit' ?></button>
-        <a class="btn btn-secondary" href="<?= crm_h(crm_url('/admin/users')) ?>">Zpět</a>
+        <div style="display:flex; gap:0.6rem; justify-content:center; margin-top:0.6rem;">
+            <button type="submit" class="btn" style="min-width:160px;"><?= $isEdit ? 'Uložit' : 'Vytvořit' ?></button>
+            <a class="btn btn-secondary" style="min-width:120px; text-align:center;" href="<?= crm_h(crm_url('/admin/users')) ?>">Zpět</a>
+        </div>
     </form>
 </section>
 

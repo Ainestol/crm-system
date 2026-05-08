@@ -903,9 +903,41 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
                                 <?php if ($phFirms !== []) {
                                     $names = array_slice($phFirms, 0, 3);
                                     $extra = max(0, count($phFirms) - 3);
+                                    // Helper: barevný badge pro stav
+                                    $stavBadge = static function (string $s): string {
+                                        if ($s === '') return '';
+                                        $map = [
+                                            'NEW'         => ['#e0e7ff','#3730a3','NOVÝ'],
+                                            'READY'       => ['#dcf2dd','#1d6e2c','PŘIPRAVEN'],
+                                            'ASSIGNED'    => ['#fef3c7','#92400e','PŘIDĚLENO'],
+                                            'CALLBACK'    => ['#dbeafe','#1e40af','📅 CALLBACK'],
+                                            'NEDOVOLANO'  => ['#fef3c7','#92400e','📵 NEDOVOL.'],
+                                            'CALLED_OK'   => ['#d1fae5','#065f46','✅ NAVOLÁNO'],
+                                            'FOR_SALES'   => ['#d1fae5','#065f46','✅ U OZ'],
+                                            'CALLED_BAD'  => ['#fee2e2','#991b1b','⛔ BAD'],
+                                            'NEZAJEM'     => ['#fee2e2','#991b1b','😐 NEZÁJEM'],
+                                            'IZOLACE'     => ['#fee2e2','#991b1b','🚫 IZOLACE'],
+                                            'CHYBNY_KONTAKT' => ['#fee2e2','#991b1b','⚠ CHYBNÝ'],
+                                            'VF_SKIP'     => ['#f3f4f6','#6b7280','VF SKIP'],
+                                            'BACKOFFICE'  => ['#fef3c7','#92400e','BO'],
+                                            'DONE'        => ['#d1fae5','#065f46','HOTOVO'],
+                                            'ACTIVATED'   => ['#d1fae5','#065f46','AKTIVNÍ'],
+                                            'CANCELLED'   => ['#fee2e2','#991b1b','STORNO'],
+                                        ];
+                                        [$bg, $fg, $lab] = $map[$s] ?? ['#e5e7eb','#374151', $s];
+                                        return '<span style="background:' . $bg . ';color:' . $fg
+                                             . ';font-size:0.62rem;font-weight:700;padding:1px 6px;border-radius:8px;'
+                                             . 'margin-left:4px;white-space:nowrap;">' . crm_h($lab) . '</span>';
+                                    };
                                 ?>
-                                    <div style="font-size:0.7rem;color:var(--muted);">
-                                        <?= crm_h(implode(' · ', array_map(fn ($f) => (string) $f['firma'], $names))) ?>
+                                    <div style="font-size:0.7rem;color:var(--muted);line-height:1.5;">
+                                        <?php
+                                        $parts = [];
+                                        foreach ($names as $f) {
+                                            $parts[] = crm_h((string) $f['firma']) . $stavBadge((string) ($f['stav'] ?? ''));
+                                        }
+                                        echo implode(' · ', $parts);
+                                        ?>
                                         <?php if ($extra > 0) { ?>
                                             <span style="font-style:italic;">+ <?= $extra ?> dalších</span>
                                         <?php } ?>

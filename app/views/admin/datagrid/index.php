@@ -92,17 +92,20 @@
     border: 1px solid rgba(0,0,0,0.15);
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.18);
-    overflow: hidden; /* corners se nerozsypou */
+    /* overflow: hidden zde nefunguje se sticky headerem — místo něj ošetříme corners přes border-radius */
+    overflow-x: auto; /* horizontální scroll fallback (top scrollbar je primární) */
+    overflow-y: visible; /* sticky header potřebuje vidět scroll svého rodiče */
 }
 .gridjs-wrapper {
     background: #ffffff;
     border: 0 !important;
     border-radius: 0 !important;
     box-shadow: none !important;
-    overflow-x: auto !important;     /* horizontální scrollbar TADY */
-    overflow-y: hidden !important;
+    overflow-x: auto !important;     /* horizontální scrollbar */
+    overflow-y: auto !important;     /* vlastní vertikální scroll — to je klíč pro sticky header */
+    max-height: calc(100vh - 280px); /* tabulka má vlastní scrollovací výšku → sticky thead drží uvnitř */
 }
-.gridjs-table { min-width: 1230px; } /* vynutí šířku → wrapper musí scrollovat */
+.gridjs-table { min-width: 3400px; } /* všechny sloupce se vejdou — wrapper scrolluje horizontálně */
 .gridjs-table { font-size: 0.82rem; color: #1a1a1a; background: #ffffff; }
 .gridjs-th {
     background: #f3f4f6 !important;
@@ -113,6 +116,28 @@
     letter-spacing: 0.04em;
     padding: 0.55rem 0.7rem !important;
     border-bottom: 2px solid #cbd5e0 !important;
+    /* DŮLEŽITÉ — povolit zalamování dlouhých hlaviček (jinak Grid.js zkrátí "Důvod zamítnutí" → "DŮVOD ZA…") */
+    white-space: normal !important;
+    word-wrap: break-word;
+    line-height: 1.25;
+    vertical-align: middle;
+    min-height: 2.4rem;
+}
+/* Sticky header — celý <thead> zůstává při scrollu nahoře.
+   Sticky je vůči nejbližšímu scrollujícímu rodiči — zde to je .crm-content.
+   POZN: Top je 46px (výška topbar) aby header neproplival pod page-header. */
+.gridjs-table thead,
+.gridjs-table .gridjs-head {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 100;
+    background: #f3f4f6 !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+}
+.gridjs-th-content {
+    white-space: normal !important;
+    text-overflow: clip !important;
+    overflow: visible !important;
 }
 .gridjs-th-sort:hover { background: #e2e8f0 !important; cursor: pointer; }
 .gridjs-tr { border-bottom: 1px solid #e2e8f0 !important; background: #ffffff; }
@@ -395,10 +420,21 @@
         <button type="button" id="dg-export-csv" class="primary">⬇ Export CSV</button>
     </div>
 
+    <!-- Horní scrollbar — duplikuje native scroll pro snadnější ovládání u širokých tabulek -->
+    <div id="dg-scroll-top" style="overflow-x: auto; height: 17px; margin-top: 0.5rem;
+                                    border: 1px solid rgba(0,0,0,0.15); border-bottom: none;
+                                    border-radius: 8px 8px 0 0; background: #f5f0fc;">
+        <div id="dg-scroll-spacer" style="width: 3400px; height: 1px;"></div>
+    </div>
+
     <!-- Tabulka v plné šířce — activity feed je teď samostatně na /admin/feed -->
     <div id="dg-scroll-container">
         <div id="dg-grid"></div>
     </div>
+    <p style="margin: 0.4rem 0 0; font-size: 0.78rem; color: var(--color-text-muted); text-align: center;">
+        💡 <strong>Tip:</strong> tabulkou můžeš posouvat: scrollbarem nahoře, scrollbarem dole, kolečkem myši se Shift,
+        klávesami ← →, nebo drag-and-drop přímo v tabulce (klik mimo buňky a táhni).
+    </p>
 
     <!-- Modal: historie kontaktu (otevírá se klikem na ID v tabulce) -->
     <div id="dg-history-overlay" class="dg-history-overlay" hidden>
@@ -524,19 +560,60 @@
     }
 
     // ── Render Grid.js ──────────────────────────────────────────────
+    function premiumPill(r) {
+        if (!r.premium_clean) return '';
+        const cleanColors = {
+            'pending':       'background:#ede9fe;color:#5b21b6',
+            'tradeable':     'background:#d1fae5;color:#065f46',
+            'non_tradeable': 'background:#fef3c7;color:#92400e',
+        };
+        const callColors = {
+            'success': 'background:#d1fae5;color:#065f46',
+            'failed':  'background:#fee2e2;color:#991b1b',
+            'pending': 'background:#e5e7eb;color:#374151',
+        };
+        let html = '<span class="dg-pill" style="' + (cleanColors[r.premium_clean] || '') + '">💎 ' + escapeHtml(r.premium_clean) + '</span>';
+        if (r.premium_call) {
+            html += ' <span class="dg-pill" style="' + (callColors[r.premium_call] || '') + ';font-size:0.65rem;">📞 ' + escapeHtml(r.premium_call) + '</span>';
+        }
+        if (r.premium_order) {
+            html += ' <small style="color:#6b7280;">#' + r.premium_order + '</small>';
+        }
+        return html;
+    }
+
     function renderGrid(filtered) {
         const data = filtered.map(r => [
             r.id, // jen číslo — formatter pro 'ID' sloupec udělá z toho odkaz
             r.firma,
+            r.ico,
             r.telefon,
+            r.email,
+            r.adresa,
             r.region,
+            r.operator,
+            r.prilez,
             r.caller_name,
             r.oz_name,
             pillStav(r.workflow_stav),
+            r.contact_stav,
+            r.rejection_reason,
+            r.nedovolano_count,
+            premiumPill(r),
             smlouvaCell(r),
             vyrociCell(r),
+            r.callback_at ? fmtCs(r.callback_at) : '',
+            r.datum_volani ? fmtCs(r.datum_volani) : '',
+            r.datum_predani ? fmtCs(r.datum_predani) : '',
+            r.activation_date ? fmtCs(r.activation_date) : '',
+            r.cancellation_date ? fmtCs(r.cancellation_date) : '',
+            r.dnc_flag ? '🚫 DNC' : '',
+            r.narozeniny_majitele ? fmtCs(r.narozeniny_majitele) : '',
+            r.sale_price,
+            r.poznamka || '',
             `<span class="dg-elapsed">${fmtElapsed(r.elapsed_sec)}</span>`,
             r.denik_count,
+            r.created_at ? fmtCs(r.created_at) : '',
         ]);
 
         if (grid) {
@@ -583,15 +660,34 @@
                           const id = row.cells[0].data;
                           return gridjs.html(`<a href="javascript:void(0)" onclick="dgOpenHistory(${id})" class="dg-firma-link" title="Zobrazit historii">${escapeHtml(String(firma || ''))}</a>`);
                       } },
+                    { name: 'IČO',         width: '90px' },
                     { name: 'Telefon',     width: '115px' },
+                    { name: 'Email',       width: '160px' },
+                    { name: 'Adresa',      width: '180px' },
                     { name: 'Kraj',        width: '105px' },
-                    { name: 'Navolávačka', width: '105px' },
-                    { name: 'OZ',          width: '105px' },
-                    { name: 'Stav',        width: '110px', formatter: c => gridjs.html(String(c)) },
-                    { name: 'Smlouva',     width: '155px', formatter: c => gridjs.html(String(c)) },
+                    { name: 'Operátor',    width: '85px' },
+                    { name: 'Příležitost', width: '160px' },
+                    { name: 'Navolávačka', width: '110px' },
+                    { name: 'OZ',          width: '110px' },
+                    { name: 'Stav OZ',     width: '110px', formatter: c => gridjs.html(String(c)) },
+                    { name: 'Stav kontaktu', width: '110px' },
+                    { name: 'Důvod zamítnutí', width: '130px' },
+                    { name: 'Nedovoláno ×', width: '85px' },
+                    { name: 'Premium',     width: '190px', formatter: c => gridjs.html(String(c || '')) },
+                    { name: 'Smlouva',     width: '160px', formatter: c => gridjs.html(String(c)) },
                     { name: 'Výročí',      width: '180px', formatter: c => gridjs.html(String(c)) },
-                    { name: 'Změna',       width: '65px',  formatter: c => gridjs.html(String(c)) },
-                    { name: 'Deník',       width: '60px' },
+                    { name: 'Callback',    width: '100px' },
+                    { name: 'Datum volání', width: '105px' },
+                    { name: 'Předáno OZ',  width: '105px' },
+                    { name: 'Aktivace',    width: '95px' },
+                    { name: 'Storno',      width: '95px' },
+                    { name: 'DNC',         width: '70px' },
+                    { name: 'Narozeniny', width: '100px' },
+                    { name: 'Cena (Kč)',   width: '90px' },
+                    { name: 'Poznámka',    width: '180px' },
+                    { name: 'Posl. změna', width: '90px',  formatter: c => gridjs.html(String(c)) },
+                    { name: 'Deník (počet)', width: '85px' },
+                    { name: 'Vytvořen',    width: '100px' },
                 ],
                 sort: true,
                 search: false, // používáme vlastní search (řeší tel s +420 a obnovu po auto-refresh)
@@ -740,15 +836,27 @@
     // ── Reload teď ──────────────────────────────────────────────────
     document.getElementById('dg-reload').addEventListener('click', fetchData);
 
-    // ── Export CSV (aktuálně viditelné) ─────────────────────────────
+    // ── Export CSV (aktuálně viditelné) — všechny sloupce ──────────────
     document.getElementById('dg-export-csv').addEventListener('click', () => {
         const filtered = applyFilters(allRows);
-        const headers = ['ID','Firma','Telefon','Email','Kraj','Navolávačka','OZ','Stav','Číslo smlouvy','Datum uzavření','Trvání','Výročí','Posl. změna'];
+        const headers = [
+            'ID', 'Firma', 'IČO', 'Telefon', 'Email', 'Adresa', 'Kraj', 'Operátor', 'Příležitost',
+            'Navolávačka', 'OZ', 'Stav OZ', 'Stav kontaktu', 'Důvod zamítnutí', 'Nedovoláno ×',
+            'Premium clean', 'Premium call', 'Premium objednávka',
+            'Číslo smlouvy', 'Datum uzavření', 'Trvání smlouvy (roky)', 'Výročí',
+            'Callback', 'Datum volání', 'Předáno OZ', 'Aktivace', 'Storno',
+            'DNC', 'Narozeniny', 'Cena (Kč)', 'Poznámka',
+            'Posl. změna stavu', 'Deník (počet záznamů)', 'Vytvořen', 'Aktualizován',
+        ];
         const escape = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
         const rows = filtered.map(r => [
-            r.id, r.firma, r.telefon, r.email, r.region, r.caller_name, r.oz_name,
-            r.workflow_stav, r.cislo_smlouvy, r.datum_uzavreni, r.smlouva_trvani_roky,
-            r.vyrocni_smlouvy, r.stav_changed_at,
+            r.id, r.firma, r.ico, r.telefon, r.email, r.adresa, r.region, r.operator, r.prilez,
+            r.caller_name, r.oz_name, r.workflow_stav, r.contact_stav, r.rejection_reason, r.nedovolano_count,
+            r.premium_clean, r.premium_call, r.premium_order,
+            r.cislo_smlouvy, r.datum_uzavreni, r.smlouva_trvani_roky, r.vyrocni_smlouvy,
+            r.callback_at, r.datum_volani, r.datum_predani, r.activation_date, r.cancellation_date,
+            r.dnc_flag ? 'ANO' : '', r.narozeniny_majitele, r.sale_price, r.poznamka,
+            r.stav_changed_at, r.denik_count, r.created_at, r.updated_at,
         ].map(escape).join(';'));
         const csv = '﻿' + headers.map(escape).join(';') + '\n' + rows.join('\n');
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -845,8 +953,99 @@
         })[s] || '';
     }
 
+    // ── Horizontal scroll helpers — top scrollbar sync + drag-to-scroll ─
+    function setupHorizontalScroll() {
+        const topBar = document.getElementById('dg-scroll-top');
+        if (!topBar) return;
+
+        // Najít aktuální .gridjs-wrapper (může se znovu vykreslit při forceRender)
+        function getWrapper() { return document.querySelector('#dg-grid .gridjs-wrapper'); }
+
+        // 1) Top scrollbar SYNC — když posuneš nahoře, posune se i wrapper a naopak
+        let syncing = false;
+        topBar.addEventListener('scroll', () => {
+            if (syncing) return;
+            const w = getWrapper();
+            if (!w) return;
+            syncing = true;
+            w.scrollLeft = topBar.scrollLeft;
+            requestAnimationFrame(() => syncing = false);
+        });
+
+        // Wrapper → top sync (s polling intervalem, protože Grid.js wrapper se vyrábí znovu)
+        function bindWrapperSync() {
+            const w = getWrapper();
+            if (!w || w.dataset.scrollSyncBound === '1') return;
+            w.dataset.scrollSyncBound = '1';
+            w.addEventListener('scroll', () => {
+                if (syncing) return;
+                syncing = true;
+                topBar.scrollLeft = w.scrollLeft;
+                requestAnimationFrame(() => syncing = false);
+            });
+            // Sync šířky spaceru s wrappers content
+            const table = w.querySelector('.gridjs-table');
+            if (table) {
+                const spacer = document.getElementById('dg-scroll-spacer');
+                if (spacer) spacer.style.width = table.offsetWidth + 'px';
+            }
+        }
+        // Periodicky kontroluj jestli je nový wrapper (po Grid.js forceRender)
+        setInterval(bindWrapperSync, 500);
+
+        // 2) Drag-to-scroll — myší posun s grab kurzorem.
+        //    Aktivuje se jen na pozadí buňky (ne když klikneš na odkaz/tlačítko).
+        let dragWrapper = null;
+        let isDragging = false;
+        let startX = 0, startScrollLeft = 0, dragDistance = 0;
+
+        document.addEventListener('mousedown', (e) => {
+            const w = getWrapper();
+            if (!w || !w.contains(e.target)) return;
+            // Nepouštět drag na klikatelné prvky
+            if (e.target.closest('a, button, input, select, .gridjs-th-sort')) return;
+            dragWrapper = w;
+            isDragging = true;
+            startX = e.pageX;
+            startScrollLeft = w.scrollLeft;
+            dragDistance = 0;
+            w.style.cursor = 'grabbing';
+            w.style.userSelect = 'none';
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging || !dragWrapper) return;
+            const dx = e.pageX - startX;
+            dragDistance = Math.abs(dx);
+            if (dragDistance > 3) {
+                e.preventDefault();
+                dragWrapper.scrollLeft = startScrollLeft - dx;
+            }
+        });
+        document.addEventListener('mouseup', () => {
+            if (dragWrapper) {
+                dragWrapper.style.cursor = '';
+                dragWrapper.style.userSelect = '';
+            }
+            isDragging = false;
+            dragWrapper = null;
+        });
+
+        // 3) Shift+wheel = horizontal scroll (browsers obvykle umí, ale pro jistotu)
+        document.addEventListener('wheel', (e) => {
+            const w = getWrapper();
+            if (!w || !w.contains(e.target)) return;
+            if (e.shiftKey && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+                e.preventDefault();
+                w.scrollLeft += e.deltaY;
+            }
+        }, { passive: false });
+    }
+
     // ── Boot ────────────────────────────────────────────────────────
-    fetchData().then(setupAutoRefresh);
+    fetchData().then(() => {
+        setupAutoRefresh();
+        setupHorizontalScroll();
+    });
     // Activity feed je nyní samostatná stránka /admin/feed
 })();
 </script>

@@ -177,6 +177,7 @@
                 <option value="">vše</option>
                 <option value="stav_change">🔁 změny stavů</option>
                 <option value="action">📝 záznamy v deníku</option>
+                <option value="premium">💎 premium pipeline</option>
             </select>
         </span>
 
@@ -202,12 +203,40 @@
     <div id="feed-list" class="feed-list">
         <div class="feed-loading">Načítání aktivit…</div>
     </div>
+
+    <!-- Stránkování — dynamicky se vykreslí v JS po načtení dat -->
+    <style>
+        .feed-pg { display:flex; gap:0.3rem; justify-content:center; align-items:center;
+                   margin-top: 1rem; padding: 0.6rem; flex-wrap:wrap; }
+        .feed-pg-btn {
+            background:#fff; border:1px solid var(--color-border-strong); color:var(--color-text);
+            padding:0.35rem 0.7rem; border-radius:5px; font-size:0.85rem; cursor:pointer;
+            min-width: 2rem; text-align:center;
+        }
+        .feed-pg-btn:hover:not(:disabled) { background: #f5f0fc; border-color: #7e3ff2; color: #7e3ff2; }
+        .feed-pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .feed-pg-btn.is-active {
+            background: #7e3ff2; color: #fff; border-color: #7e3ff2; font-weight: 700;
+        }
+        .feed-pg-ellipsis {
+            color: var(--color-text-muted); padding: 0.35rem 0.3rem; font-size: 0.85rem;
+        }
+        .feed-pg-info {
+            margin-left: 0.6rem; font-size: 0.78rem; color: var(--color-text-muted);
+        }
+    </style>
+    <div id="feed-pagination" class="feed-pg"></div>
 </section>
 
 <script>
 (function () {
     const ENDPOINT = '<?= crm_h(crm_url('/admin/datagrid/feed')) ?>';
     const REFRESH_MS = 12_000;
+
+    // Stránkování — page=N z URL (default 1). Polling jen na page=1.
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentPage = Math.max(1, parseInt(urlParams.get('page') || '1', 10) || 1);
+    const isPaginated = currentPage > 1;
 
     let allEvents = [];
     let lastSeenIds = new Set();
@@ -221,6 +250,16 @@
         if (sec < 3600) return 'před ' + Math.floor(sec / 60) + ' min';
         if (sec < 86400) return 'před ' + Math.floor(sec / 3600) + ' h';
         return 'před ' + Math.floor(sec / 86400) + ' d';
+    }
+    function fmtAbs(unixTs) {
+        if (!unixTs) return '';
+        const d = new Date(unixTs * 1000);
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const yy = d.getFullYear();
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mi = String(d.getMinutes()).padStart(2, '0');
+        return dd + '.' + mm + '.' + yy + ' ' + hh + ':' + mi;
     }
     function escapeHtml(s) {
         return String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]);
@@ -246,19 +285,50 @@
             icon    = '🔁';
             verb    = 'změnil stav →';
             payload = `<span class="feed-stav ${stavClass(ev.payload)}">${escapeHtml(ev.payload || '—')}</span>`;
+        } else if (ev.kind === 'premium') {
+            icon = '💎';
+            // Mapování premium akcí na human-readable popis
+            const premiumLabels = {
+                'premium_order_create':    'vytvořil objednávku',
+                'premium_order_close':     'uzavřel objednávku 🏁',
+                'premium_order_cancel':    'zrušil objednávku ✖',
+                'premium_order_mark_paid': 'označil platbu 💰',
+                'premium_lead_verify':     'označil lead (čistička)',
+                'premium_lead_undo':       'vrátil lead na pending',
+                'premium_call_status':     'zaznamenal výsledek hovoru',
+            };
+            verb = premiumLabels[ev.payload] || ev.payload;
+            // Z extra (JSON detailů) zkusíme vytáhnout užitečné info
+            let detail = '';
+            try {
+                if (ev.extra) {
+                    const d = JSON.parse(ev.extra);
+                    const parts = [];
+                    if (d.action)     parts.push(d.action);
+                    if (d.target)     parts.push('→ ' + d.target);
+                    if (d.new_stav)   parts.push('stav: ' + d.new_stav);
+                    if (d.requested)  parts.push('počet: ' + d.requested);
+                    if (d.released_pending) parts.push('uvolněno: ' + d.released_pending);
+                    if (d.order_id)   parts.push('obj. #' + d.order_id);
+                    detail = parts.length ? parts.join(' · ') : '';
+                }
+            } catch (e) {}
+            payload = detail ? `<span class="feed-stav" style="background:#ede9fe;color:#5b21b6;">${escapeHtml(detail)}</span>` : '';
         } else {
             icon    = '📝';
             verb    = 'zapsal záznam:';
             payload = '"' + escapeHtml(ev.payload || '').slice(0, 200) + (ev.payload && ev.payload.length > 200 ? '…' : '') + '"';
         }
 
+        const absTime = fmtAbs(ev.event_unix);
         return `
         <div class="feed-item ${isNew ? 'feed-item--new' : ''}" data-uid="${ev.kind}-${ev.contact_id}-${ev.event_unix}" data-kind="${ev.kind}">
             <div class="feed-item__head">
                 <span class="feed-item__icon">${icon}</span>
                 <span class="feed-item__actor">${actor}</span>
                 <span class="feed-item__verb">${verb}</span>
-                <span class="feed-item__elapsed">${elapsed}</span>
+                <span class="feed-item__elapsed" title="${absTime}">${elapsed}</span>
+                <span style="font-size:0.72rem; color:var(--color-text-muted); margin-left:4px;">· ${absTime}</span>
             </div>
             <div class="feed-item__payload">${payload}</div>
             <div class="feed-item__sub">→ <strong>${firma}</strong>${region ? ' · ' + region : ''} <small>(#${ev.contact_id})</small></div>
@@ -315,10 +385,24 @@
         status.className = 'feed-status feed-status--loading';
         status.textContent = '… načítá';
         try {
-            const url = ENDPOINT + (lastFeedTime > 0 && !initial ? '?since=' + lastFeedTime : '');
+            // Polling (since param) jen na page=1, jinak full load podle ?page=
+            let url;
+            if (initial || isPaginated) {
+                url = ENDPOINT + '?page=' + currentPage;
+            } else if (lastFeedTime > 0) {
+                url = ENDPOINT + '?since=' + lastFeedTime;
+            } else {
+                url = ENDPOINT;
+            }
             const res = await fetch(url, { credentials: 'same-origin' });
             const json = await res.json();
             if (!json.ok) throw new Error(json.error || 'feed error');
+
+            // Stránkování — vykreslit smart pagination s čísly
+            const pageNum    = json.page || 1;
+            const totalPages = json.total_pages || 1;
+            const totalEvts  = json.total_events || 0;
+            renderPagination(pageNum, totalPages, totalEvts);
 
             const events = json.events || [];
             lastFeedTime = json.now_unix || lastFeedTime;
@@ -362,10 +446,15 @@
 
     function setupAutoRefresh() {
         const cb = document.getElementById('feed-autorefresh');
-        function tick() { if (cb.checked && !userIsTyping) fetchFeed(false); }
+        // Page > 1 — auto-refresh nedává smysl (procházíš starší)
+        if (isPaginated) {
+            cb.checked = false;
+            cb.disabled = true;
+        }
+        function tick() { if (cb.checked && !userIsTyping && !isPaginated) fetchFeed(false); }
         function reset() {
             if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-            if (cb.checked) {
+            if (cb.checked && !isPaginated) {
                 autoRefreshTimer = setInterval(tick, REFRESH_MS);
                 document.getElementById('feed-info-status').textContent = '⏱ čeká';
             } else {
@@ -377,6 +466,74 @@
         cb.addEventListener('change', reset);
         try { if (localStorage.getItem('feed_autorefresh') === '0') cb.checked = false; } catch {}
         reset();
+
+        // Pagination handler — wire-up je v renderPagination (event delegation)
+    }
+
+    /**
+     * Smart pagination — zobrazí: ← Novější · 1 2 3 ... currentPage-1 [currentPage] currentPage+1 ... last-2 last-1 last · Starší →
+     * @param {number} currentPage  aktuální stránka
+     * @param {number} totalPages   celkem stránek
+     * @param {number} totalEvts    celkem událostí (info)
+     */
+    function renderPagination(currentPage, totalPages, totalEvts) {
+        const cont = document.getElementById('feed-pagination');
+        if (!cont) return;
+
+        // Build set of pages to show
+        const pages = new Set();
+        // První 3
+        for (let i = 1; i <= Math.min(3, totalPages); i++) pages.add(i);
+        // Kolem aktuální (±1)
+        for (let i = Math.max(1, currentPage - 1); i <= Math.min(totalPages, currentPage + 1); i++) pages.add(i);
+        // Poslední 3
+        for (let i = Math.max(1, totalPages - 2); i <= totalPages; i++) pages.add(i);
+
+        const sorted = Array.from(pages).sort((a, b) => a - b);
+
+        let html = '';
+
+        // ← Novější
+        const prevDisabled = currentPage <= 1;
+        html += `<button class="feed-pg-btn" data-pg="${currentPage - 1}" ${prevDisabled ? 'disabled' : ''}>← Novější</button>`;
+
+        // Číselné tlačítka s ellipsis
+        let prev = 0;
+        sorted.forEach(p => {
+            if (prev !== 0 && p > prev + 1) {
+                html += '<span class="feed-pg-ellipsis">…</span>';
+            }
+            const isActive = p === currentPage;
+            html += `<button class="feed-pg-btn ${isActive ? 'is-active' : ''}" data-pg="${p}">${p}</button>`;
+            prev = p;
+        });
+
+        // Starší →
+        const nextDisabled = currentPage >= totalPages;
+        html += `<button class="feed-pg-btn" data-pg="${currentPage + 1}" ${nextDisabled ? 'disabled' : ''}>Starší →</button>`;
+
+        // Info text
+        html += `<span class="feed-pg-info">${totalEvts.toLocaleString('cs-CZ')} událostí · ${totalPages} ${
+            totalPages === 1 ? 'stránka' : (totalPages < 5 ? 'stránky' : 'stránek')
+        }</span>`;
+        if (isPaginated) {
+            html += `<span class="feed-pg-info" style="color:#92400e;">⏸ auto-refresh vypnutý</span>`;
+        }
+
+        cont.innerHTML = html;
+
+        // Event delegation pro všechna tlačítka
+        cont.querySelectorAll('.feed-pg-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                if (btn.disabled) return;
+                const target = parseInt(btn.dataset.pg, 10);
+                if (!target || target === currentPage) return;
+                const url = new URL(window.location.href);
+                if (target <= 1) url.searchParams.delete('page');
+                else url.searchParams.set('page', target);
+                window.location.href = url.toString();
+            });
+        });
     }
 
     // Filter wiring — všechny inputy a quick-range buttony spouštějí rerender

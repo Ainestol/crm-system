@@ -57,10 +57,25 @@ final class AdminDatagridController
         $sql = "SELECT
                     c.id,
                     c.firma,
+                    c.ico,
                     c.telefon,
                     c.email,
+                    c.adresa,
                     c.region,
+                    c.operator,
+                    c.prilez,
+                    c.poznamka,
                     c.stav AS contact_stav,
+                    c.rejection_reason,
+                    c.nedovolano_count,
+                    c.callback_at,
+                    c.datum_volani,
+                    c.datum_predani,
+                    c.dnc_flag,
+                    c.narozeniny_majitele,
+                    c.sale_price,
+                    c.activation_date,
+                    c.cancellation_date,
                     c.created_at,
                     c.updated_at,
                     c.vyrocni_smlouvy,
@@ -68,10 +83,14 @@ final class AdminDatagridController
                     w.stav_changed_at,
                     w.cislo_smlouvy,
                     w.datum_uzavreni,
+                    w.schuzka_at,
                     COALESCE(w.smlouva_trvani_roky, 3) AS smlouva_trvani_roky,
                     COALESCE(u_oz.jmeno, '')           AS oz_name,
                     COALESCE(u_cl.jmeno, '')           AS caller_name,
-                    (SELECT COUNT(*) FROM oz_contact_actions a WHERE a.contact_id = c.id) AS deník_count
+                    (SELECT COUNT(*) FROM oz_contact_actions a WHERE a.contact_id = c.id) AS denik_count,
+                    (SELECT p.cleaning_status FROM premium_lead_pool p WHERE p.contact_id = c.id LIMIT 1) AS premium_clean,
+                    (SELECT p.call_status     FROM premium_lead_pool p WHERE p.contact_id = c.id LIMIT 1) AS premium_call,
+                    (SELECT p.order_id        FROM premium_lead_pool p WHERE p.contact_id = c.id LIMIT 1) AS premium_order
                 FROM contacts c
                 LEFT JOIN oz_contact_workflow w
                        ON w.contact_id = c.id
@@ -111,22 +130,42 @@ final class AdminDatagridController
             $out[] = [
                 'id'                  => (int) $r['id'],
                 'firma'               => (string) ($r['firma']            ?? ''),
+                'ico'                 => (string) ($r['ico']              ?? ''),
                 'telefon'             => (string) ($r['telefon']          ?? ''),
                 'email'               => (string) ($r['email']            ?? ''),
+                'adresa'              => (string) ($r['adresa']           ?? ''),
                 'region'              => (string) ($r['region']           ?? ''),
+                'operator'            => (string) ($r['operator']         ?? ''),
+                'prilez'              => (string) ($r['prilez']           ?? ''),
+                'poznamka'            => (string) ($r['poznamka']         ?? ''),
                 'contact_stav'        => (string) ($r['contact_stav']     ?? ''),
+                'rejection_reason'    => (string) ($r['rejection_reason'] ?? ''),
+                'nedovolano_count'    => (int)    ($r['nedovolano_count'] ?? 0),
+                'callback_at'         => (string) ($r['callback_at']      ?? ''),
+                'datum_volani'        => (string) ($r['datum_volani']     ?? ''),
+                'datum_predani'       => (string) ($r['datum_predani']    ?? ''),
+                'dnc_flag'            => (int)    ($r['dnc_flag']         ?? 0),
+                'narozeniny_majitele' => (string) ($r['narozeniny_majitele'] ?? ''),
+                'sale_price'          => (string) ($r['sale_price']       ?? ''),
+                'activation_date'     => (string) ($r['activation_date']  ?? ''),
+                'cancellation_date'   => (string) ($r['cancellation_date'] ?? ''),
                 'workflow_stav'       => (string) ($r['workflow_stav']    ?? '—'),
                 'oz_name'             => (string) ($r['oz_name']          ?? ''),
                 'caller_name'         => (string) ($r['caller_name']      ?? ''),
                 'cislo_smlouvy'       => (string) ($r['cislo_smlouvy']    ?? ''),
                 'datum_uzavreni'      => (string) ($r['datum_uzavreni']   ?? ''),
+                'schuzka_at'          => (string) ($r['schuzka_at']       ?? ''),
                 'smlouva_trvani_roky' => (int)    ($r['smlouva_trvani_roky'] ?? 3),
                 'vyrocni_smlouvy'     => $vyrocniDate,
                 'vyroci_in_days'      => $vyrociInDays,
                 'elapsed_sec'         => $elapsedSec,
                 'stav_changed_at'     => (string) ($r['stav_changed_at']  ?? ''),
-                'denik_count'         => (int)    ($r['deník_count']      ?? 0),
+                'denik_count'         => (int)    ($r['denik_count']      ?? 0),
                 'created_at'          => (string) ($r['created_at']       ?? ''),
+                'updated_at'          => (string) ($r['updated_at']       ?? ''),
+                'premium_clean'       => (string) ($r['premium_clean']    ?? ''),
+                'premium_call'        => (string) ($r['premium_call']     ?? ''),
+                'premium_order'       => (string) ($r['premium_order']    ?? ''),
             ];
         }
 
@@ -234,20 +273,28 @@ final class AdminDatagridController
             $sinceWhere = "WHERE event_ts > '" . $sinceDt . "'";
         }
 
-        // UNION dvou zdrojů událostí + sjednoceně setřídíme od nejnovějšího
+        // Stránkování — ?page=N (default 1). 100 záznamů per stránka.
+        // POZN: Při polling (since param) stránkování nemá smysl — to vrací jen nové.
+        $page = max(1, (int) ($_GET['page'] ?? 1));
+        $page = min($page, 1000); // sanity max 100k záznamů
+        $offset = ($page - 1) * 100;
+
+        // UNION 3 zdrojů událostí — sjednoceně setřídíme od nejnovějšího:
+        //   1) workflow_log     = KOMPLETNÍ HISTORIE změn stavu (navolávačky, čističky, OZ, BO, …)
+        //   2) oz_contact_actions = záznamy v pracovním deníku OZ
+        //   3) audit_log (premium) = premium pipeline akce (objednávka, čištění, navolávání)
         $sql = "(
                   SELECT 'stav_change' AS kind,
                          w.contact_id,
-                         w.stav_changed_at AS event_ts,
-                         w.stav AS payload,
+                         w.created_at  AS event_ts,
+                         w.new_status  AS payload,
                          c.firma,
                          c.region,
                          COALESCE(u.jmeno, '—') AS actor_name,
-                         w.stav AS extra
-                  FROM oz_contact_workflow w
+                         IFNULL(w.note, '') AS extra
+                  FROM workflow_log w
                   INNER JOIN contacts c ON c.id = w.contact_id
-                  LEFT JOIN users u ON u.id = w.oz_id
-                  WHERE w.stav_changed_at IS NOT NULL
+                  LEFT JOIN users u ON u.id = w.user_id
                 ) UNION ALL (
                   SELECT 'action' AS kind,
                          a.contact_id,
@@ -260,16 +307,75 @@ final class AdminDatagridController
                   FROM oz_contact_actions a
                   INNER JOIN contacts c ON c.id = a.contact_id
                   LEFT JOIN users u ON u.id = a.oz_id
+                ) UNION ALL (
+                  SELECT 'premium' AS kind,
+                         COALESCE(
+                             (SELECT p.contact_id FROM premium_lead_pool p
+                                WHERE p.id = al.entity_id AND al.entity_type = 'premium_lead_pool'
+                                LIMIT 1),
+                             0
+                         ) AS contact_id,
+                         al.created_at AS event_ts,
+                         al.action AS payload,
+                         COALESCE(
+                             (SELECT c2.firma FROM contacts c2
+                                JOIN premium_lead_pool p2 ON p2.contact_id = c2.id
+                                WHERE p2.id = al.entity_id AND al.entity_type = 'premium_lead_pool'
+                                LIMIT 1),
+                             ''
+                         ) AS firma,
+                         '' AS region,
+                         COALESCE(u.jmeno, '—') AS actor_name,
+                         IFNULL(CAST(al.details AS CHAR), '') AS extra
+                  FROM audit_log al
+                  LEFT JOIN users u ON u.id = al.user_id
+                  WHERE al.action LIKE 'premium%'
                 )";
         if ($sinceWhere !== '') {
+            // Polling mode — jen nové od posledního pollu, bez stránkování (offset by zničil polling)
             $sql = "SELECT * FROM ({$sql}) AS evt {$sinceWhere} ORDER BY event_ts DESC LIMIT 100";
         } else {
-            $sql = "SELECT * FROM ({$sql}) AS evt ORDER BY event_ts DESC LIMIT 100";
+            // Normal mode — stránkování přes ?page=N
+            $sql = "SELECT * FROM ({$sql}) AS evt ORDER BY event_ts DESC LIMIT 100 OFFSET {$offset}";
         }
 
         $events = [];
         try {
             $rows = $this->pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\PDOException $e) {
+            // Fallback: pokud selže UNION s premium (např. premium_lead_pool nebo audit_log
+            // má jinou strukturu na produkci), vrátíme aspoň workflow + actions bez premium.
+            crm_db_log_error($e, __METHOD__);
+            try {
+                $fallbackSql = "(
+                                  SELECT 'stav_change' AS kind, w.contact_id, w.created_at AS event_ts,
+                                         w.new_status AS payload, c.firma, c.region,
+                                         COALESCE(u.jmeno, '—') AS actor_name, IFNULL(w.note, '') AS extra
+                                  FROM workflow_log w
+                                  INNER JOIN contacts c ON c.id = w.contact_id
+                                  LEFT JOIN users u ON u.id = w.user_id
+                                ) UNION ALL (
+                                  SELECT 'action' AS kind, a.contact_id, a.created_at AS event_ts,
+                                         LEFT(a.action_text, 120) AS payload, c.firma, c.region,
+                                         COALESCE(u.jmeno, '—') AS actor_name, '' AS extra
+                                  FROM oz_contact_actions a
+                                  INNER JOIN contacts c ON c.id = a.contact_id
+                                  LEFT JOIN users u ON u.id = a.oz_id
+                                )";
+                if ($sinceWhere !== '') {
+                    $fallbackSql = "SELECT * FROM ({$fallbackSql}) AS evt {$sinceWhere} ORDER BY event_ts DESC LIMIT 100";
+                } else {
+                    $fallbackSql = "SELECT * FROM ({$fallbackSql}) AS evt ORDER BY event_ts DESC LIMIT 100 OFFSET {$offset}";
+                }
+                $rows = $this->pdo->query($fallbackSql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            } catch (\PDOException $e2) {
+                http_response_code(500);
+                echo json_encode(['ok' => false, 'error' => 'DB chyba'], JSON_UNESCAPED_UNICODE);
+                return;
+            }
+        }
+
+        try {
             $now  = time();
             foreach ($rows as $r) {
                 $ts = strtotime((string) $r['event_ts']);
@@ -280,6 +386,7 @@ final class AdminDatagridController
                     'region'       => (string) ($r['region']     ?? ''),
                     'actor_name'   => (string) ($r['actor_name'] ?? '—'),
                     'payload'      => (string) ($r['payload']    ?? ''),
+                    'extra'        => (string) ($r['extra']      ?? ''),
                     'event_ts'     => (string) $r['event_ts'],
                     'event_unix'   => $ts,
                     'elapsed_sec'  => $ts ? max(0, $now - $ts) : null,
@@ -291,11 +398,34 @@ final class AdminDatagridController
             return;
         }
 
+        // Total events napříč všemi 3 zdroji — pro výpočet počtu stránek.
+        // Polling mode (since param) tohle nepotřebuje, ušetříme query.
+        $totalEvents = 0;
+        $totalPages  = 1;
+        if ($sinceWhere === '') {
+            try {
+                $tw = (int) ($this->pdo->query("SELECT COUNT(*) FROM workflow_log")->fetchColumn() ?: 0);
+                $ta = (int) ($this->pdo->query("SELECT COUNT(*) FROM oz_contact_actions")->fetchColumn() ?: 0);
+                $tp = 0;
+                try {
+                    $tp = (int) ($this->pdo->query("SELECT COUNT(*) FROM audit_log WHERE action LIKE 'premium%'")->fetchColumn() ?: 0);
+                } catch (\PDOException) { /* fallback bez premium */ }
+                $totalEvents = $tw + $ta + $tp;
+                $totalPages  = max(1, (int) ceil($totalEvents / 100));
+            } catch (\PDOException $e) {
+                crm_db_log_error($e, __METHOD__);
+            }
+        }
+
         echo json_encode([
-            'ok'         => true,
-            'events'     => $events,
-            'fetched_at' => date('c'),
-            'now_unix'   => time(),
+            'ok'           => true,
+            'events'       => $events,
+            'page'         => $page,
+            'total_pages'  => $totalPages,
+            'total_events' => $totalEvents,
+            'has_more'     => count($events) === 100,
+            'fetched_at'   => date('c'),
+            'now_unix'     => time(),
         ], JSON_UNESCAPED_UNICODE);
     }
 }

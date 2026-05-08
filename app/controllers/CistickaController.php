@@ -1087,13 +1087,27 @@ final class CistickaController
 
             [$mStart, $mEnd] = $this->monthRangeFromPeriod($period);
 
-            // Hromadný count per region za daný měsíc.
-            // DISTINCT contact_id — pokud je stejný kontakt v měsíci ověřen vícekrát
-            // (READY/VF_SKIP toggling), počítá se jen jednou.
+            // SDÍLENÝ progress per kraj — počítá VŠECHNY čističky dohromady.
+            // Cíle jsou sdílené (1000 leadů Praha = pro všechny čističky dohromady),
+            // takže když 2 čističky pracují, obě vidí stejné celkové progress.
+            // DISTINCT contact_id — kontakt ověřený 2× se počítá 1×.
             $regions = array_map(static fn($r) => (string) $r['region'], $goalRows);
             $ph = implode(',', array_fill(0, count($regions), '?'));
             $cStmt = $this->pdo->prepare(
                 "SELECT c.region, COUNT(DISTINCT wl.contact_id) AS done
+                 FROM workflow_log wl
+                 JOIN contacts c ON c.id = wl.contact_id
+                 WHERE wl.new_status IN ('READY','VF_SKIP')
+                   AND wl.created_at BETWEEN ? AND ?
+                   AND c.region IN ($ph)
+                 GROUP BY c.region"
+            );
+            $cStmt->execute(array_merge([$mStart, $mEnd], $regions));
+            $progress = $cStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+
+            // PER-USER progress (jen má část) — pro info "z toho ty: X"
+            $myStmt = $this->pdo->prepare(
+                "SELECT c.region, COUNT(DISTINCT wl.contact_id) AS my_done
                  FROM workflow_log wl
                  JOIN contacts c ON c.id = wl.contact_id
                  WHERE wl.user_id = ?
@@ -1102,14 +1116,15 @@ final class CistickaController
                    AND c.region IN ($ph)
                  GROUP BY c.region"
             );
-            $cStmt->execute(array_merge([$cistickaId, $mStart, $mEnd], $regions));
-            $progress = $cStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
+            $myStmt->execute(array_merge([$cistickaId, $mStart, $mEnd], $regions));
+            $myProgress = $myStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
 
             foreach ($goalRows as $row) {
                 $region = (string) $row['region'];
                 $target = (int) $row['monthly_target'];
                 $prio   = (int) ($row['priority'] ?? 5);
                 $done   = (int) ($progress[$region] ?? 0);
+                $myDone = (int) ($myProgress[$region] ?? 0);
                 $pct    = $target > 0 ? min(100, (int) round($done / $target * 100)) : 0;
                 $out[] = [
                     'region'    => $region,
@@ -1117,7 +1132,8 @@ final class CistickaController
                                    ? crm_region_label($region)
                                    : $region,
                     'target'    => $target,
-                    'done'      => $done,
+                    'done'      => $done,         // SDÍLENÝ — všechny čističky dohromady
+                    'my_done'   => $myDone,       // jen aktuální uživatel
                     'percent'   => $pct,
                     'completed' => $done >= $target,
                     'priority'  => $prio,

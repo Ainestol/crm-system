@@ -357,7 +357,8 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
                 $reg     = (string) $g['region'];
                 $label   = (string) $g['label'];
                 $target  = (int) $g['target'];
-                $done    = (int) $g['done'];
+                $done    = (int) $g['done'];        // SDÍLENÉ — všechny čističky dohromady
+                $myDone  = (int) ($g['my_done'] ?? 0); // jen aktuální uživatel
                 $pct     = (int) $g['percent'];
                 $done100 = (bool) $g['completed'];
                 $prio    = (int) ($g['priority'] ?? 5);
@@ -411,11 +412,18 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
                             Zbývá: <?= max(0, $target - $done) ?> · <?= $pct ?> %
                         </span>
                     <?php } ?>
+                    <?php if ($myDone > 0 && $myDone < $done) { ?>
+                        <span style="color:#7e3ff2; font-size:0.7rem; font-weight:600; margin-left:6px;"
+                              title="Z celkového progresu jsi vyčistila ty <?= $myDone ?> kontaktů">
+                            (z toho ty: <?= $myDone ?>)
+                        </span>
+                    <?php } ?>
                     <?php /* Badge "X NEW" pouze na záložce K-ověření — jinak by
                               ukazovala historický count, což je zavádějící. */ ?>
                     <?php if ($tab === 'overit' && $newCnt > 0 && !$done100) { ?>
-                        <span class="cist-goal__newcnt" id="goal-newcnt-<?= crm_h($reg) ?>">
-                            <?= $newCnt ?> NEW
+                        <span class="cist-goal__newcnt" id="goal-newcnt-<?= crm_h($reg) ?>"
+                              title="Kolik nečištěných NEW kontaktů je v tomto kraji k dispozici (z celkového poolu)">
+                            <?= $newCnt ?> NEW k dispozici
                         </span>
                     <?php } ?>
                 </div>

@@ -10,13 +10,15 @@
  */
 
 :root {
-  /* ── SIDEBAR ── */
+  /* ── SIDEBAR — původní tmavě modrá (nejlepší čitelnost).
+     Jen logo HEADER nahoře má decentní VF red akcent (subtilní připomínka). */
   --color-sidebar-bg:           #1a2332;
   --color-sidebar-hover:        #243448;
   --color-sidebar-active:       #2d5080;
   --color-sidebar-text:         #8bacc8;
   --color-sidebar-text-active:  #ffffff;
   --color-sidebar-border:       #243448;
+  --color-sidebar-accent:       #e60000;  /* VF red — pro logo header */
 
   /* ── ACCENT — Clockwork Man oranžová ── */
   --color-accent:               #e8920a;
@@ -186,6 +188,10 @@ body {
 .crm-sidebar-logo {
   padding: 14px 16px;
   border-bottom: 1px solid var(--color-sidebar-border);
+  /* Decentní VF (Vodafone) červený header — subtilní připomínka že firma pracuje pro VF.
+     Tmavě vínový gradient s jemnou červenou linkou dole. Zbytek sidebaru zůstává tmavě modrý. */
+  background: linear-gradient(135deg, #3d1818 0%, #2a1010 100%);
+  border-bottom: 2px solid var(--color-sidebar-accent);
 }
 .crm-logo-title {
   color: #ffffff;
@@ -194,7 +200,7 @@ body {
   letter-spacing: 0.3px;
 }
 .crm-logo-sub {
-  color: var(--color-accent);
+  color: var(--color-sidebar-accent);  /* VF red — logo accent */
   font-size: 10px;
   margin-top: 3px;
 }
@@ -207,7 +213,7 @@ body {
 .crm-nav-section {
   padding: 10px 14px 3px;
   font-size: 9px;
-  color: #4a6a8a;
+  color: #4a6a8a;  /* tlumená modrá — původní */
   text-transform: uppercase;
   letter-spacing: 0.9px;
 }

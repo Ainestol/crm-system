@@ -96,6 +96,112 @@ $callerId = (int) ($user['id'] ?? 0);
                     <?php if (!empty($c['sales_name'])) { ?>
                         <div class="contact-sales">Obchodák: <?= crm_h((string) $c['sales_name']) ?></div>
                     <?php } ?>
+
+                    <?php
+                    // ══ Sdílený telefon — widget (kopie z /caller hlavní queue) ══
+                    $phShared = (int) ($c['phone_shared_count'] ?? 0);
+                    if ($phShared > 0) {
+                        $phFirms = (array) ($c['phone_shared_firms'] ?? []);
+                        $phLast  = $c['phone_last_status'] ?? null;
+                        $lastLabel = ''; $lastClass = '';
+                        if (is_array($phLast) && !empty($phLast['stav'])) {
+                            $when = (string) ($phLast['when'] ?? '');
+                            $whenAgo = '';
+                            if ($when !== '') {
+                                $diff = time() - strtotime($when);
+                                if ($diff < 3600)         $whenAgo = 'před ' . max(1, (int)($diff/60)) . ' min';
+                                elseif ($diff < 86400)    $whenAgo = 'před ' . (int)($diff/3600) . ' h';
+                                elseif ($diff < 30*86400) $whenAgo = 'před ' . (int)($diff/86400) . ' dny';
+                                else                       $whenAgo = date('d.m.Y', strtotime($when));
+                            }
+                            $stavCz = match ((string) $phLast['stav']) {
+                                'CALLED_OK'      => '✓ ÚSPĚCH',
+                                'CALLED_BAD'     => '✗ NEÚSPĚCH',
+                                'NEZAJEM'        => '✗ NEZÁJEM',
+                                'CALLBACK'       => '↻ CALLBACK',
+                                'NEDOVOLANO'     => '📵 NEDOVOLÁNO',
+                                'IZOLACE'        => '🚫 IZOLACE',
+                                'CHYBNY_KONTAKT' => '⚠ CHYBNÝ KONTAKT',
+                                default          => (string) $phLast['stav'],
+                            };
+                            $lastLabel = $stavCz . ($whenAgo !== '' ? ' · ' . $whenAgo : '');
+                            $lastClass = match ((string) $phLast['stav']) {
+                                'CALLED_OK', 'CALLBACK'                                  => 'green',
+                                'NEZAJEM','IZOLACE','CHYBNY_KONTAKT','CALLED_BAD'        => 'red',
+                                default                                                  => 'amber',
+                            };
+                        }
+                        $bgColor = $lastClass === 'red'   ? 'rgba(231,76,60,0.10)'
+                                 : ($lastClass === 'green' ? 'rgba(46,204,113,0.08)'
+                                                            : 'rgba(241,196,15,0.10)');
+                        $brColor = $lastClass === 'red'   ? '#e74c3c'
+                                 : ($lastClass === 'green' ? '#2ecc71' : '#f1c40f');
+
+                        $stavBadge = static function (string $s): string {
+                            if ($s === '') return '';
+                            $map = [
+                                'NEW'         => ['#e0e7ff','#3730a3','NOVÝ'],
+                                'READY'       => ['#dcf2dd','#1d6e2c','PŘIPRAVEN'],
+                                'ASSIGNED'    => ['#fef3c7','#92400e','PŘIDĚLENO'],
+                                'CALLBACK'    => ['#dbeafe','#1e40af','📅 CALLBACK'],
+                                'NEDOVOLANO'  => ['#fef3c7','#92400e','📵 NEDOVOL.'],
+                                'CALLED_OK'   => ['#d1fae5','#065f46','✅ NAVOLÁNO'],
+                                'FOR_SALES'   => ['#d1fae5','#065f46','✅ U OZ'],
+                                'CALLED_BAD'  => ['#fee2e2','#991b1b','⛔ BAD'],
+                                'NEZAJEM'     => ['#fee2e2','#991b1b','😐 NEZÁJEM'],
+                                'IZOLACE'     => ['#fee2e2','#991b1b','🚫 IZOLACE'],
+                                'CHYBNY_KONTAKT' => ['#fee2e2','#991b1b','⚠ CHYBNÝ'],
+                                'VF_SKIP'     => ['#f3f4f6','#6b7280','VF SKIP'],
+                                'BACKOFFICE'  => ['#fef3c7','#92400e','BO'],
+                                'DONE'        => ['#d1fae5','#065f46','HOTOVO'],
+                                'ACTIVATED'   => ['#d1fae5','#065f46','AKTIVNÍ'],
+                                'CANCELLED'   => ['#fee2e2','#991b1b','STORNO'],
+                            ];
+                            [$bg, $fg, $lab] = $map[$s] ?? ['#e5e7eb','#374151', $s];
+                            return '<span style="background:' . $bg . ';color:' . $fg
+                                 . ';font-size:0.62rem;font-weight:700;padding:1px 6px;border-radius:8px;'
+                                 . 'margin-left:4px;white-space:nowrap;">' . crm_h($lab) . '</span>';
+                        };
+                        ?>
+                        <div style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.2rem;
+                                    background:<?= $bgColor ?>;border:1px solid <?= $brColor ?>;
+                                    border-left:3px solid <?= $brColor ?>;border-radius:0 6px 6px 0;
+                                    padding:0.4rem 0.6rem;font-size:0.74rem;">
+                            <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+                                <span style="color:<?= $brColor ?>;font-weight:700;">⚠ Sdílený telefon</span>
+                                <span>— toto číslo používá <strong><?= $phShared ?></strong>
+                                    dalších <?= $phShared === 1 ? 'firma' : ($phShared < 5 ? 'firmy' : 'firem') ?></span>
+                            </div>
+                            <?php if ($phFirms !== []) {
+                                $names = array_slice($phFirms, 0, 3);
+                                $extra = max(0, count($phFirms) - 3);
+                            ?>
+                                <div style="font-size:0.7rem;line-height:1.5;">
+                                    <?php
+                                    $parts = [];
+                                    foreach ($names as $f) {
+                                        $parts[] = crm_h((string) $f['firma']) . $stavBadge((string) ($f['stav'] ?? ''));
+                                    }
+                                    echo implode(' · ', $parts);
+                                    ?>
+                                    <?php if ($extra > 0) { ?>
+                                        <span style="font-style:italic;">+ <?= $extra ?> dalších</span>
+                                    <?php } ?>
+                                </div>
+                            <?php } ?>
+                            <?php if ($lastLabel !== '') { ?>
+                                <div style="font-size:0.72rem;border-top:1px dashed rgba(0,0,0,0.08);padding-top:0.25rem;">
+                                    Naposledy:
+                                    <strong style="color:<?= $brColor ?>;"><?= crm_h($lastLabel) ?></strong>
+                                    <?php if (is_array($phLast) && !empty($phLast['firma'])) { ?>
+                                        <span style="font-size:0.65rem;opacity:0.85;">
+                                            (u: <?= crm_h((string) $phLast['firma']) ?>)
+                                        </span>
+                                    <?php } ?>
+                                </div>
+                            <?php } ?>
+                        </div>
+                    <?php } ?>
                 </div>
 
                 <?php if ($canAct) { ?>
