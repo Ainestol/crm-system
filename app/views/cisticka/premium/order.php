@@ -237,6 +237,7 @@ $price = (float) $order['price_per_lead'];
                 <tr>
                     <th>#</th>
                     <th>Firma</th>
+                    <th>IČO</th>
                     <th>Telefon</th>
                     <th>Kraj</th>
                     <th>Operátor</th>
@@ -253,11 +254,34 @@ $price = (float) $order['price_per_lead'];
                     'non_tradeable' => 'lead-row--non_tradeable',
                     default         => '',
                 };
+                $_ico = trim((string) ($l['ico'] ?? ''));
+                $_tel = trim((string) ($l['telefon'] ?? ''));
             ?>
                 <tr class="<?= crm_h($rowClass) ?>">
                     <td><?= (int) $l['contact_id'] ?></td>
                     <td><strong><?= crm_h((string) $l['firma']) ?></strong></td>
-                    <td><?= crm_h((string) ($l['telefon'] ?? '—')) ?></td>
+                    <td>
+                        <?php if ($_ico !== '') { ?>
+                            <span class="cist-copy"
+                                  data-copy="<?= crm_h($_ico) ?>"
+                                  data-copy-label="IČO"
+                                  title="Klikni — zkopíruje IČO do schránky (Ctrl+V kamkoliv)"
+                                  style="font-family:monospace;"><?= crm_h($_ico) ?></span>
+                        <?php } else { ?>
+                            <span style="color:var(--color-text-muted);">—</span>
+                        <?php } ?>
+                    </td>
+                    <td>
+                        <?php if ($_tel !== '') { ?>
+                            <span class="cist-copy"
+                                  data-copy="<?= crm_h($_tel) ?>"
+                                  data-copy-label="Telefon"
+                                  title="Klikni — zkopíruje telefon do schránky"
+                                  style="font-family:monospace;"><?= crm_h($_tel) ?></span>
+                        <?php } else { ?>
+                            <span style="color:var(--color-text-muted);">—</span>
+                        <?php } ?>
+                    </td>
                     <td><?= crm_h(crm_region_label((string) $l['region'])) ?></td>
                     <td><?= crm_h((string) ($l['operator'] ?? '—')) ?></td>
                     <td style="max-width: 260px; font-size: 0.82rem; line-height: 1.35;">
@@ -310,3 +334,64 @@ $price = (float) $order['price_per_lead'];
         </table>
     <?php } ?>
 </section>
+
+<script>
+// ── Click-to-copy: IČO / telefon → schránka (sdílí CSS .cist-copy z Plochy 1) ──
+// Bez frameworku, vanilla JS. Buňky s .cist-copy + data-copy="VALUE" jsou klikací.
+// Po kliknutí se hodnota zkopíruje do clipboardu, krátce se zobrazí toast a buňka
+// problikne zeleně.
+(function () {
+    document.addEventListener('click', function (e) {
+        var copyEl = e.target.closest('.cist-copy');
+        if (!copyEl) return;
+
+        var val = (copyEl.dataset.copy || '').trim();
+        var label = copyEl.dataset.copyLabel || 'Hodnota';
+        if (val === '') return;
+
+        var doneOk = function () { showToast('✓ ' + label + ' zkopírováno: ' + truncate(val, 30), copyEl); };
+        var doneFail = function () { alert('Kopírování selhalo. Vyber a Ctrl+C ručně.'); };
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(val).then(doneOk).catch(execFallback);
+        } else {
+            execFallback();
+        }
+
+        function execFallback() {
+            var ta = document.createElement('textarea');
+            ta.value = val;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); doneOk(); }
+            catch (_) { doneFail(); }
+            document.body.removeChild(ta);
+        }
+
+        e.stopPropagation();
+    });
+
+    function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
+
+    function showToast(msg, srcEl) {
+        var t = document.getElementById('cist-copy-toast');
+        if (!t) {
+            t = document.createElement('div');
+            t.id = 'cist-copy-toast';
+            t.className = 'cist-copy-toast';
+            document.body.appendChild(t);
+        }
+        t.textContent = msg;
+        t.classList.add('is-visible');
+        clearTimeout(t._hideTimer);
+        t._hideTimer = setTimeout(function () { t.classList.remove('is-visible'); }, 1600);
+
+        if (srcEl) {
+            srcEl.classList.add('cist-copy--copied');
+            setTimeout(function () { srcEl.classList.remove('cist-copy--copied'); }, 600);
+        }
+    }
+})();
+</script>

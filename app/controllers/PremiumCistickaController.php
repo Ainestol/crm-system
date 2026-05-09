@@ -300,7 +300,7 @@ final class PremiumCistickaController
                     p.contact_id,
                     p.cleaning_status,
                     p.cleaned_at,
-                    c.firma, c.telefon, c.email, c.region, c.operator, c.prilez
+                    c.firma, c.ico, c.telefon, c.email, c.region, c.operator, c.prilez
              FROM premium_lead_pool p
              JOIN contacts c ON c.id = p.contact_id
              WHERE p.order_id = :oid

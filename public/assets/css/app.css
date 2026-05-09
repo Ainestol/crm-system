@@ -1588,6 +1588,56 @@ select option:checked   { background: var(--color-surface); color: var(--color-t
 .cist-info  { display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; flex:1; }
 .cist-firma { font-weight:700; font-size:1.15rem; color:var(--text); }   /* větší než předtím */
 .cist-phone { color:var(--text); font-size:1rem; font-family:monospace; letter-spacing:0.02em; opacity:0.85; }
+
+/* Click-to-copy: telefon (Plocha 1) a IČO (Plocha 2 premium) — klik kopíruje do schránky */
+.cist-copy {
+    cursor: pointer;
+    padding: 0.18rem 0.45rem;
+    border-radius: 4px;
+    border: 1px dashed transparent;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+    user-select: none;
+}
+.cist-copy:hover {
+    background: rgba(61,139,253,0.10);
+    border-color: rgba(61,139,253,0.4);
+    color: #3d8bfd;
+}
+.cist-copy::after {
+    content: " 📋";
+    font-size: 0.78rem;
+    opacity: 0.45;
+    transition: opacity 0.12s;
+}
+.cist-copy:hover::after { opacity: 0.95; }
+.cist-copy--copied {
+    background: rgba(46,204,113,0.18) !important;
+    border-color: rgba(46,204,113,0.55) !important;
+    color: #1f9e4d !important;
+}
+
+/* Toast notifikace pro copy potvrzení */
+.cist-copy-toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(46,204,113,0.95);
+    color: #fff;
+    padding: 0.6rem 1.2rem;
+    border-radius: 8px;
+    font-size: 0.92rem;
+    font-weight: 600;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 9999;
+    transition: opacity 0.18s, transform 0.18s;
+}
+.cist-copy-toast.is-visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
 .cist-region{ font-size:0.7rem; opacity:0.55; }   /* zmenšený a šedý — nerušivý */
 .cist-actions { display:flex; gap:0.45rem; }
 /* Klávesová zkratka indikátor v rohu tlačítka */

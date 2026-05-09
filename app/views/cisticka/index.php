@@ -550,7 +550,10 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
                     <div class="cist-row" id="cist-row-<?= $cId ?>" data-region="<?= crm_h((string) ($c['region'] ?? '')) ?>" data-cid="<?= $cId ?>">
                         <div class="cist-info">
                             <span class="cist-firma"><?= crm_h((string) ($c['firma'] ?? '—')) ?></span>
-                            <span class="cist-phone"><?= crm_h((string) ($c['telefon'] ?? '—')) ?></span>
+                            <span class="cist-phone cist-copy"
+                                  data-copy="<?= crm_h((string) ($c['telefon'] ?? '')) ?>"
+                                  data-copy-label="Telefon"
+                                  title="Klikni — zkopíruje telefon do schránky (Ctrl+V kamkoliv)"><?= crm_h((string) ($c['telefon'] ?? '—')) ?></span>
                             <span class="cist-op-badge <?= $opClass ?>"><?= $currentOp !== '' ? crm_h($currentOp) : '?' ?></span>
                             <span class="cist-region muted"><?= crm_h((string) ($c['region'] ?? '')) ?></span>
                         </div>
@@ -600,7 +603,10 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
                     <div class="cist-row <?= $rowClass ?>" id="zkont-row-<?= $cId ?>">
                         <div class="cist-info">
                             <span class="cist-firma"><?= crm_h((string) ($c['firma'] ?? '—')) ?></span>
-                            <span class="cist-phone"><?= crm_h((string) ($c['telefon'] ?? '—')) ?></span>
+                            <span class="cist-phone cist-copy"
+                                  data-copy="<?= crm_h((string) ($c['telefon'] ?? '')) ?>"
+                                  data-copy-label="Telefon"
+                                  title="Klikni — zkopíruje telefon do schránky (Ctrl+V kamkoliv)"><?= crm_h((string) ($c['telefon'] ?? '—')) ?></span>
                             <span class="cist-op-badge <?= 'op-' . strtolower($op) ?>" id="zkont-badge-<?= $cId ?>"><?= crm_h($op !== '' ? $op : '?') ?></span>
                             <span class="cist-region muted"><?= crm_h((string) ($c['region'] ?? '')) ?></span>
                         </div>
@@ -1239,11 +1245,62 @@ document.addEventListener('keydown', function(e) {
 
 // Klik na řádek (mimo tlačítka) → aktivovat ho
 document.addEventListener('click', function(e) {
+    // ── Click-to-copy: telefon / IČO → schránka ──
+    // Buňka označená .cist-copy s data-copy atributem se po kliknutí
+    // zkopíruje do schránky a uživatel hned může vložit přes Ctrl+V.
+    var copyEl = e.target.closest('.cist-copy');
+    if (copyEl) {
+        var val = (copyEl.dataset.copy || '').trim();
+        var label = copyEl.dataset.copyLabel || 'Hodnota';
+        if (val !== '') {
+            (navigator.clipboard && navigator.clipboard.writeText
+                ? navigator.clipboard.writeText(val)
+                : Promise.reject('no-clipboard-api'))
+                .then(function () { cistShowCopyToast(label, val, copyEl); })
+                .catch(function () {
+                    // Fallback pro starší browsery / nezabezpečené spojení
+                    var ta = document.createElement('textarea');
+                    ta.value = val;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    try { document.execCommand('copy'); cistShowCopyToast(label, val, copyEl); }
+                    catch (_) { alert('Kopírování selhalo. Vyber a Ctrl+C ručně.'); }
+                    document.body.removeChild(ta);
+                });
+        }
+        e.stopPropagation();
+        return; // Klik na copy buňku nemění aktivní řádek
+    }
+
     var row = e.target.closest('.cist-row');
     if (!row || !row.dataset.cid) return;
     if (e.target.tagName === 'BUTTON') return; // klik na tlačítko nemění aktivní
     cistSetActive(row);
 });
+
+// Toast notifikace + flash highlight buňky
+function cistShowCopyToast(label, val, srcEl) {
+    var t = document.getElementById('cist-copy-toast');
+    if (!t) {
+        t = document.createElement('div');
+        t.id = 'cist-copy-toast';
+        t.className = 'cist-copy-toast';
+        document.body.appendChild(t);
+    }
+    var shortVal = val.length > 30 ? val.slice(0, 30) + '…' : val;
+    t.textContent = '✓ ' + label + ' zkopírován: ' + shortVal;
+    t.classList.add('is-visible');
+    clearTimeout(t._hideTimer);
+    t._hideTimer = setTimeout(function () { t.classList.remove('is-visible'); }, 1600);
+
+    // Flash zdrojovou buňku (zelený highlight 0.6 s)
+    if (srcEl) {
+        srcEl.classList.add('cist-copy--copied');
+        setTimeout(function () { srcEl.classList.remove('cist-copy--copied'); }, 600);
+    }
+}
 
 // Init: po načtení stránky aktivuj první nezpracovaný řádek
 document.addEventListener('DOMContentLoaded', function() {
