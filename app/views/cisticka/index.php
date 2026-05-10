@@ -555,7 +555,7 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
                                   data-copy-label="Telefon"
                                   title="Klikni — zkopíruje telefon do schránky (Ctrl+V kamkoliv)"><?= crm_h((string) ($c['telefon'] ?? '—')) ?></span>
                             <span class="cist-op-badge <?= $opClass ?>"><?= $currentOp !== '' ? crm_h($currentOp) : '?' ?></span>
-                            <span class="cist-region muted"><?= crm_h((string) ($c['region'] ?? '')) ?></span>
+                            <span class="cist-region muted"><?= crm_h(crm_region_label_short((string) ($c['region'] ?? ''))) ?></span>
                         </div>
                         <div class="cist-actions">
                             <button type="button" class="btn-cist-vf" onclick="cistVerify(<?= $cId ?>, 'vf_skip', this)" title="Klávesa: 1">
@@ -608,7 +608,7 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
                                   data-copy-label="Telefon"
                                   title="Klikni — zkopíruje telefon do schránky (Ctrl+V kamkoliv)"><?= crm_h((string) ($c['telefon'] ?? '—')) ?></span>
                             <span class="cist-op-badge <?= 'op-' . strtolower($op) ?>" id="zkont-badge-<?= $cId ?>"><?= crm_h($op !== '' ? $op : '?') ?></span>
-                            <span class="cist-region muted"><?= crm_h((string) ($c['region'] ?? '')) ?></span>
+                            <span class="cist-region muted"><?= crm_h(crm_region_label_short((string) ($c['region'] ?? ''))) ?></span>
                         </div>
                         <div class="cist-verified-info">
                             <?php if ($verifiedAt !== '') {

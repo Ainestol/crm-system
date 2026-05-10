@@ -475,6 +475,28 @@
     let userIsTyping = false; // pauza auto-refresh když user píše do search
     let lastRenderedHash = ''; // hash dat při posledním renderu — když se nezmění, neforceRender
 
+    // Mapa kód kraje → lidské jméno (synced s helpers/users_admin.php crm_region_label)
+    const REGION_LABELS = {
+        'praha': 'Hlavní město Praha',
+        'stredocesky': 'Středočeský kraj',
+        'jihocesky': 'Jihočeský kraj',
+        'plzensky': 'Plzeňský kraj',
+        'karlovarsky': 'Karlovarský kraj',
+        'ustecky': 'Ústecký kraj',
+        'liberecky': 'Liberecký kraj',
+        'kralovehradecky': 'Královéhradecký kraj',
+        'pardubicky': 'Pardubický kraj',
+        'vysocina': 'Kraj Vysočina',
+        'jihomoravsky': 'Jihomoravský kraj',
+        'olomoucky': 'Olomoucký kraj',
+        'zlinsky': 'Zlínský kraj',
+        'moravskoslezsky': 'Moravskoslezský kraj',
+    };
+    function regionLabel(code) {
+        if (!code) return '';
+        return REGION_LABELS[code] || (code.charAt(0).toUpperCase() + code.slice(1));
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────
     function fmtCs(dateStr) {
         if (!dateStr || dateStr === '0000-00-00') return '';
@@ -541,6 +563,7 @@
                 (r.firma || '') + ' ' +
                 (r.email || '') + ' ' +
                 (r.region || '') + ' ' +
+                regionLabel(r.region) + ' ' +  // i v lidsky čitelném názvu kraje
                 (r.oz_name || '') + ' ' +
                 (r.caller_name || '') + ' ' +
                 (r.cislo_smlouvy || '')
@@ -680,7 +703,7 @@
                           return gridjs.html('<span class="dg-email" title="' + escapeHtml(v) + '">' + escapeHtml(v) + '</span>');
                       } },
                     { name: 'Adresa',      width: '180px' },
-                    { name: 'Kraj',        width: '105px' },
+                    { name: 'Kraj',        width: '140px', formatter: c => regionLabel(String(c || '')) },
                     { name: 'Operátor',    width: '85px' },
                     { name: 'Příležitost', width: '160px' },
                     { name: 'Navolávačka', width: '110px' },

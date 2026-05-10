@@ -52,6 +52,34 @@ function crm_region_label(string $code): string
     return $labels[$code] ?? $code;
 }
 
+/**
+ * Vrátí KRÁTKOU verzi labelu kraje — pro kompaktní badge / sloupce
+ * kde plný „Královéhradecký kraj" je moc široký.
+ *
+ * Příklady: praha → Praha, stredocesky → Středočeský, jihocesky → Jihočeský,
+ *           kralovehradecky → Královéhradecký, vysocina → Vysočina.
+ */
+function crm_region_label_short(string $code): string
+{
+    static $shortLabels = [
+        'praha' => 'Praha',
+        'stredocesky' => 'Středočeský',
+        'jihocesky' => 'Jihočeský',
+        'plzensky' => 'Plzeňský',
+        'karlovarsky' => 'Karlovarský',
+        'ustecky' => 'Ústecký',
+        'liberecky' => 'Liberecký',
+        'kralovehradecky' => 'Královéhradecký',
+        'pardubicky' => 'Pardubický',
+        'vysocina' => 'Vysočina',
+        'jihomoravsky' => 'Jihomoravský',
+        'olomoucky' => 'Olomoucký',
+        'zlinsky' => 'Zlínský',
+        'moravskoslezsky' => 'Moravskoslezský',
+    ];
+    return $shortLabels[$code] ?? ucfirst($code);
+}
+
 /** @return list<string> */
 function crm_all_role_values(): array
 {
