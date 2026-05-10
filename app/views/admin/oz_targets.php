@@ -139,7 +139,7 @@ foreach ($ozList as $oz) {
             <ul class="ozt-warn__list">
                 <?php foreach ($ozWithoutRegions as $oz) { ?>
                     <li>
-                        <a href="<?= crm_h(crm_url('/admin/users/edit/' . (int) $oz['id'])) ?>">
+                        <a href="<?= crm_h(crm_url('/admin/users/edit?id=' . (int) $oz['id'])) ?>">
                             🔧 <?= crm_h((string) $oz['jmeno']) ?> → nastavit regiony
                         </a>
                     </li>
