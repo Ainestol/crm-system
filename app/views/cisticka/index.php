@@ -15,9 +15,10 @@ declare(strict_types=1);
 /** @var string|null               $flash */
 /** @var string                    $csrf */
 
-$readyToday = (int) ($todayStats['ready_count'] ?? 0);
-$vfToday    = (int) ($todayStats['vf_count']    ?? 0);
-$totalToday = (int) ($todayStats['total_today'] ?? 0);
+$readyToday  = (int) ($todayStats['ready_count']  ?? 0);
+$vfToday     = (int) ($todayStats['vf_count']     ?? 0);
+$chybnyToday = (int) ($todayStats['chybny_count'] ?? 0);
+$totalToday  = (int) ($todayStats['total_today']  ?? 0);
 /** @var list<array<string,mixed>> $regionGoals — kraje s cílem + progress pro VYBRANÝ měsíc */
 /** @var string $monthLabel                     — např. "květen 2026" (vybraný měsíc) */
 /** @var bool   $hasGoals                       — jsou nějaké aktivní goals pro AKTUÁLNÍ měsíc? */
@@ -125,6 +126,10 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
         <div class="cist-stat-box cist-stat-vf">
             <span class="cist-stat-num" id="stat-vf"><?= $vfToday ?></span>
             <span class="cist-stat-label">VF přeskočeno</span>
+        </div>
+        <div class="cist-stat-box cist-stat-chybny">
+            <span class="cist-stat-num" id="stat-chybny"><?= $chybnyToday ?></span>
+            <span class="cist-stat-label">Chybné</span>
         </div>
         <div class="cist-stat-box cist-stat-queue">
             <span class="cist-stat-num" id="stat-queue"><?= $newCount ?></span>
@@ -567,6 +572,9 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
                             <button type="button" class="btn-cist-o2" onclick="cistVerify(<?= $cId ?>, 'o2', this)" title="Klávesa: 3">
                                 🔵 O2<span class="cist-kbd-hint">3</span>
                             </button>
+                            <button type="button" class="btn-cist-chybny" onclick="cistVerify(<?= $cId ?>, 'chybny', this)" title="Klávesa: 4 — chybné / zahraniční / nesmyslné číslo">
+                                🚫 Chybný<span class="cist-kbd-hint">4</span>
+                            </button>
                         </div>
                     </div>
                 <?php } ?>
@@ -692,11 +700,25 @@ function cistVerify(contactId, action, btn) {
             if (data.ok) {
                 var op = data.operator;
                 row.classList.remove('cist-row--vf', 'cist-row--tm', 'cist-row--o2');
-                if (op === 'VF') row.classList.add('cist-row--vf');
-                if (op === 'TM') row.classList.add('cist-row--tm');
-                if (op === 'O2') row.classList.add('cist-row--o2');
 
-                var icon = op === 'VF' ? '🔴 VF' : (op === 'TM' ? '🌸 TM' : '🔵 O2');
+                // Speciální větev pro chybný kontakt — backend vrátí operator='',
+                // tedy nemůžeme spadnout do ternárního defaultu na "O2"!
+                var icon;
+                if (action === 'chybny') {
+                    icon = '🚫 Chybný';
+                } else if (op === 'VF') {
+                    row.classList.add('cist-row--vf');
+                    icon = '🔴 VF';
+                } else if (op === 'TM') {
+                    row.classList.add('cist-row--tm');
+                    icon = '🌸 TM';
+                } else if (op === 'O2') {
+                    row.classList.add('cist-row--o2');
+                    icon = '🔵 O2';
+                } else {
+                    icon = '✓';
+                }
+
                 var actDiv = row.querySelector('.cist-actions');
                 if (actDiv) {
                     actDiv.innerHTML =
@@ -707,7 +729,8 @@ function cistVerify(contactId, action, btn) {
                     cistStartUndoCountdown(contactId);
                 }
 
-                cistUpdateStats(op, +1, contactId);
+                // Stats: pro 'chybny' předáme 'CHYBNY' (nemá vlastní badge, ale počítá se do total/ready)
+                cistUpdateStats(action === 'chybny' ? 'CHYBNY' : op, +1, contactId);
             } else {
                 row.dataset.done = '0';
                 buttons.forEach(function(b) { b.disabled = false; });
@@ -734,18 +757,23 @@ function cistUndo(contactId, originalAction) {
                     row.dataset.done = '0';
                     row.classList.remove('cist-row--vf', 'cist-row--tm', 'cist-row--o2');
 
-                    // Obnovit původní tlačítka (s klávesovými hinty)
+                    // Obnovit původní tlačítka (s klávesovými hinty) — všech 4 včetně Chybný
                     var actDiv = row.querySelector('.cist-actions');
                     if (actDiv) {
                         actDiv.innerHTML =
                             '<button type="button" class="btn-cist-vf" onclick="cistVerify(' + contactId + ', \'vf_skip\', this)" title="Klávesa: 1">🔴 VF<span class="cist-kbd-hint">1</span></button>' +
                             '<button type="button" class="btn-cist-tm" onclick="cistVerify(' + contactId + ', \'tm\', this)" title="Klávesa: 2">🌸 TM<span class="cist-kbd-hint">2</span></button>' +
-                            '<button type="button" class="btn-cist-o2" onclick="cistVerify(' + contactId + ', \'o2\', this)" title="Klávesa: 3">🔵 O2<span class="cist-kbd-hint">3</span></button>';
+                            '<button type="button" class="btn-cist-o2" onclick="cistVerify(' + contactId + ', \'o2\', this)" title="Klávesa: 3">🔵 O2<span class="cist-kbd-hint">3</span></button>' +
+                            '<button type="button" class="btn-cist-chybny" onclick="cistVerify(' + contactId + ', \'chybny\', this)" title="Klávesa: 4 — chybné / zahraniční / nesmyslné číslo">🚫 Chybný<span class="cist-kbd-hint">4</span></button>';
                     }
                 }
 
                 // Určit jaký operator byl (abychom odečetli ze stats)
-                var wasOp = originalAction === 'vf_skip' ? 'VF' : (originalAction === 'tm' ? 'TM' : 'O2');
+                var wasOp;
+                if (originalAction === 'chybny')      wasOp = 'CHYBNY';
+                else if (originalAction === 'vf_skip') wasOp = 'VF';
+                else if (originalAction === 'tm')      wasOp = 'TM';
+                else                                   wasOp = 'O2';
                 cistUpdateStats(wasOp, -1, contactId);
             } else {
                 if (btn) btn.disabled = false;
@@ -874,19 +902,23 @@ function cistReclassify(contactId, action, btn) {
 window._cwAddedContactIds = window._cwAddedContactIds || new Set();
 
 function cistUpdateStats(op, delta, contactId) {
-    var elTotal = document.getElementById('stat-total');
-    var elReady = document.getElementById('stat-ready');
-    var elVf    = document.getElementById('stat-vf');
-    var elQueue = document.getElementById('stat-queue');
-    var elNew   = document.getElementById('tab-badge-new');
-    var elDone  = document.getElementById('tab-badge-done');
+    var elTotal  = document.getElementById('stat-total');
+    var elReady  = document.getElementById('stat-ready');
+    var elVf     = document.getElementById('stat-vf');
+    var elChybny = document.getElementById('stat-chybny');
+    var elQueue  = document.getElementById('stat-queue');
+    var elNew    = document.getElementById('tab-badge-new');
+    var elDone   = document.getElementById('tab-badge-done');
 
     if (delta > 0) {
         // Přidání (verify)
         if (elTotal) elTotal.textContent = (parseInt(elTotal.textContent, 10) || 0) + 1;
         if (op === 'VF') {
             if (elVf) elVf.textContent = (parseInt(elVf.textContent, 10) || 0) + 1;
+        } else if (op === 'CHYBNY') {
+            if (elChybny) elChybny.textContent = (parseInt(elChybny.textContent, 10) || 0) + 1;
         } else {
+            // TM nebo O2 → TM+O2 badge
             if (elReady) elReady.textContent = (parseInt(elReady.textContent, 10) || 0) + 1;
         }
         if (elQueue) elQueue.textContent = Math.max(0, (parseInt(elQueue.textContent, 10) || 1) - 1);
@@ -911,6 +943,8 @@ function cistUpdateStats(op, delta, contactId) {
         if (elTotal) elTotal.textContent = Math.max(0, (parseInt(elTotal.textContent, 10) || 1) - 1);
         if (op === 'VF') {
             if (elVf) elVf.textContent = Math.max(0, (parseInt(elVf.textContent, 10) || 1) - 1);
+        } else if (op === 'CHYBNY') {
+            if (elChybny) elChybny.textContent = Math.max(0, (parseInt(elChybny.textContent, 10) || 1) - 1);
         } else {
             if (elReady) elReady.textContent = Math.max(0, (parseInt(elReady.textContent, 10) || 1) - 1);
         }
@@ -975,6 +1009,10 @@ function cwWidgetIncrement(op, contactId) {
     if (elTotal) elTotal.textContent = newTotal;
     if (op === 'VF') {
         if (elVf) elVf.textContent = (parseInt(elVf.textContent, 10) || 0) + 1;
+    } else if (op === 'CHYBNY') {
+        // Chybný kontakt: nepřipisujeme ho ani do ready ani do vf — jen do totalu
+        // (widget breakdown ukazuje TM+O2 ready vs VF skip; chybné je separátní kategorie).
+        // Výdělek se počítá z totalu, takže odměna sedí (0,70 Kč × total).
     } else {
         if (elReady) elReady.textContent = (parseInt(elReady.textContent, 10) || 0) + 1;
     }
@@ -1063,7 +1101,9 @@ function cistFindPrevRow(currentRow) {
 /** Po kliknutí: krátký flash + posun na další. */
 function cistFlashAndAdvance(row, action) {
     if (!row) return;
-    var flashClass = action === 'vf_skip' ? 'cist-row--flash-vf' : 'cist-row--flash-ok';
+    var flashClass = action === 'vf_skip' ? 'cist-row--flash-vf'
+                   : action === 'chybny'  ? 'cist-row--flash-chybny'
+                   : 'cist-row--flash-ok';
     row.classList.add(flashClass);
     setTimeout(function() { row.classList.remove(flashClass); }, 460);
 
@@ -1206,7 +1246,7 @@ function cistRemoveContactsByRegion(region) {
     }
 }
 
-// Klávesové zkratky: 1 = VF, 2 = TM, 3 = O2, ↑ = předchozí, ↓ = další
+// Klávesové zkratky: 1 = VF, 2 = TM, 3 = O2, 4 = Chybný, ↑ = předchozí, ↓ = další
 document.addEventListener('keydown', function(e) {
     // Ignoruj pokud uživatel píše do inputu/textarea
     var t = e.target;
@@ -1231,6 +1271,10 @@ document.addEventListener('keydown', function(e) {
     } else if (key === '3') {
         e.preventDefault();
         var btn = active.querySelector('.btn-cist-o2');
+        if (btn && !btn.disabled) btn.click();
+    } else if (key === '4') {
+        e.preventDefault();
+        var btn = active.querySelector('.btn-cist-chybny');
         if (btn && !btn.disabled) btn.click();
     } else if (key === 'ArrowDown' || key === 'j') {
         e.preventDefault();

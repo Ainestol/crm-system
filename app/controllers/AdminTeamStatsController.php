@@ -18,13 +18,14 @@ final class AdminTeamStatsController
         'cisticka' => [
             'label'    => 'Čističky',
             'icon'     => '🧹',
-            'statuses' => ['READY', 'VF_SKIP'],
-            'col_keys' => ['ready_tm', 'ready_o2', 'ready_total', 'vf_skip'],
+            'statuses' => ['READY', 'VF_SKIP', 'CHYBNY_KONTAKT'],
+            'col_keys' => ['ready_tm', 'ready_o2', 'ready_total', 'vf_skip', 'chybny'],
             'columns'  => [
                 'ready_tm'    => ['label' => 'TM',         'cls' => 'acol--tm'],
                 'ready_o2'    => ['label' => 'O2',         'cls' => 'acol--o2'],
                 'ready_total' => ['label' => 'TM+O2',      'cls' => 'acol--win'],
                 'vf_skip'     => ['label' => 'VF skip',    'cls' => 'acol--bad'],
+                'chybny'      => ['label' => 'Chybné',     'cls' => 'acol--bad'],
             ],
             'win_key' => 'ready_total',
         ],

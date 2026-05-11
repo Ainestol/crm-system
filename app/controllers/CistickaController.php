@@ -7,7 +7,7 @@ require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'helpers' . DIRECTORY_SEPA
 /**
  * Obrazovka čističky:
  *   - Ověřuje kontakty jeden po druhém (firma, telefon, operátor)
- *   - Klikne: VF_SKIP (nechceme) | READY_TM | READY_O2
+ *   - Klikne: VF_SKIP (Vodafone zákazník) | READY_TM | READY_O2 | CHYBNY_KONTAKT (zahraniční/nesmyslné)
  *   - TM a O2 → stav READY → viditelné navolávačkám
  *   - VF_SKIP → zmizí z fronty navolávačky, ale zůstane v přehledu čističky
  *   - Přehled "Zkontrolováno" ukazuje vše co udělala dnes (statistika)
@@ -163,7 +163,7 @@ final class CistickaController
                      FROM contacts c
                      JOIN workflow_log wl ON wl.contact_id = c.id
                      WHERE wl.user_id = ?
-                       AND wl.new_status IN ('READY', 'VF_SKIP')
+                       AND wl.new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')
                        AND c.region IN ($ph2)
                      GROUP BY c.region"
                 );
@@ -225,7 +225,7 @@ final class CistickaController
                      SELECT contact_id, MAX(id) AS last_id
                      FROM workflow_log
                      WHERE user_id = ?
-                       AND new_status IN (\'READY\', \'VF_SKIP\')
+                       AND new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
                      GROUP BY contact_id
                  ) latest ON latest.last_id = wl.id
                  WHERE 1=1 ' . $regionFilter . '
@@ -239,7 +239,7 @@ final class CistickaController
                 'SELECT COUNT(DISTINCT c.id) FROM contacts c
                  JOIN workflow_log wl ON wl.contact_id = c.id
                  WHERE wl.user_id = ?
-                   AND wl.new_status IN (\'READY\', \'VF_SKIP\')
+                   AND wl.new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
                    ' . ($regionParams !== [] ? 'AND c.region IN (' . implode(',', array_fill(0, count($regionParams), '?')) . ')' : '')
             );
             $cntStmt->execute(array_merge([$cistickaId], $regionParams));
@@ -272,15 +272,16 @@ final class CistickaController
         // (subquery najde pro každý contact_id maximální workflow_log id).
         $statsStmt = $this->pdo->prepare(
             "SELECT
-                SUM(CASE WHEN wl.new_status = 'READY'   THEN 1 ELSE 0 END) AS ready_count,
-                SUM(CASE WHEN wl.new_status = 'VF_SKIP' THEN 1 ELSE 0 END) AS vf_count,
-                COUNT(*)                                                    AS total_today
+                SUM(CASE WHEN wl.new_status = 'READY'          THEN 1 ELSE 0 END) AS ready_count,
+                SUM(CASE WHEN wl.new_status = 'VF_SKIP'        THEN 1 ELSE 0 END) AS vf_count,
+                SUM(CASE WHEN wl.new_status = 'CHYBNY_KONTAKT' THEN 1 ELSE 0 END) AS chybny_count,
+                COUNT(*)                                                            AS total_today
              FROM workflow_log wl
              INNER JOIN (
                  SELECT contact_id, MAX(id) AS last_id
                  FROM workflow_log
                  WHERE user_id = :uid1
-                   AND new_status IN ('READY', 'VF_SKIP')
+                   AND new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')
                    AND DATE(created_at) = CURDATE()
                  GROUP BY contact_id
              ) last_per_contact ON last_per_contact.last_id = wl.id
@@ -288,7 +289,7 @@ final class CistickaController
         );
         $statsStmt->execute(['uid1' => $cistickaId, 'uid2' => $cistickaId]);
         $todayStats = $statsStmt->fetch(PDO::FETCH_ASSOC)
-            ?: ['ready_count' => 0, 'vf_count' => 0, 'total_today' => 0];
+            ?: ['ready_count' => 0, 'vf_count' => 0, 'chybny_count' => 0, 'total_today' => 0];
 
         // Celkový počet NEW k ověření (pro badge K-ověření tabu).
         // STRICT MODE: bez nastavených goals nemá čistička co dělat → 0.
@@ -309,7 +310,7 @@ final class CistickaController
         // (DISTINCT contact_id, regardless of date — Zkontrolováno je all-time view).
         $zkontTotalStmt = $this->pdo->prepare(
             "SELECT COUNT(DISTINCT contact_id) FROM workflow_log
-             WHERE user_id = :uid AND new_status IN ('READY', 'VF_SKIP')"
+             WHERE user_id = :uid AND new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')"
         );
         $zkontTotalStmt->execute(['uid' => $cistickaId]);
         $zkontrolovaneTotal = (int) $zkontTotalStmt->fetchColumn();
@@ -334,7 +335,7 @@ final class CistickaController
                 COUNT(DISTINCT CASE WHEN new_status = 'VF_SKIP' THEN contact_id END)  AS vf_count
              FROM workflow_log
              WHERE user_id = :uid
-               AND new_status IN ('READY', 'VF_SKIP')
+               AND new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')
                AND YEAR(created_at)  = :y
                AND MONTH(created_at) = :m"
         );
@@ -368,9 +369,9 @@ final class CistickaController
 
         $cistickaId = (int) $user['id'];
         $contactId  = (int) ($_POST['contact_id'] ?? 0);
-        $action     = (string) ($_POST['action'] ?? ''); // vf_skip | tm | o2
+        $action     = (string) ($_POST['action'] ?? ''); // vf_skip | tm | o2 | chybny
 
-        if ($contactId <= 0 || !in_array($action, ['vf_skip', 'tm', 'o2'], true)) {
+        if ($contactId <= 0 || !in_array($action, ['vf_skip', 'tm', 'o2', 'chybny'], true)) {
             crm_flash_set('Neplatný požadavek.');
             crm_redirect('/cisticka');
         }
@@ -394,10 +395,12 @@ final class CistickaController
         }
 
         // Určení nového stavu a operátora
+        // CHYBNY_KONTAKT = stav (zahraniční / nesmyslné číslo). Operator zůstává '' (nemá smysl jej značit).
         [$newStatus, $operatorVal, $label] = match ($action) {
-            'vf_skip' => ['VF_SKIP', 'VF', 'VF – přeskočeno'],
-            'tm'      => ['READY',   'TM', 'TM – připraveno pro navolávačku'],
-            'o2'      => ['READY',   'O2', 'O2 – připraveno pro navolávačku'],
+            'vf_skip' => ['VF_SKIP',        'VF', 'VF – přeskočeno'],
+            'tm'      => ['READY',          'TM', 'TM – připraveno pro navolávačku'],
+            'o2'      => ['READY',          'O2', 'O2 – připraveno pro navolávačku'],
+            'chybny'  => ['CHYBNY_KONTAKT', '',   'Chybný / nepoužitelný kontakt'],
         };
 
         // Aktualizace kontaktu
@@ -458,13 +461,14 @@ final class CistickaController
 
         foreach ($actions as $contactIdStr => $action) {
             $contactId = (int) $contactIdStr;
-            if ($contactId <= 0 || !in_array($action, ['vf_skip', 'tm', 'o2'], true)) {
+            if ($contactId <= 0 || !in_array($action, ['vf_skip', 'tm', 'o2', 'chybny'], true)) {
                 continue;
             }
             [$newStatus, $operatorVal, $label] = match ($action) {
-                'vf_skip' => ['VF_SKIP', 'VF', 'Čistička: VF – přeskočeno'],
-                'tm'      => ['READY',   'TM', 'Čistička: TM – připraveno'],
-                'o2'      => ['READY',   'O2', 'Čistička: O2 – připraveno'],
+                'vf_skip' => ['VF_SKIP',        'VF', 'Čistička: VF – přeskočeno'],
+                'tm'      => ['READY',          'TM', 'Čistička: TM – připraveno'],
+                'o2'      => ['READY',          'O2', 'Čistička: O2 – připraveno'],
+                'chybny'  => ['CHYBNY_KONTAKT', '',   'Čistička: Chybný / nepoužitelný kontakt'],
             };
             $upd->execute([':stav' => $newStatus, ':op' => $operatorVal, ':id' => $contactId]);
             if ($upd->rowCount() > 0) {
@@ -501,15 +505,15 @@ final class CistickaController
             exit;
         }
 
-        // Kontakt musí být ve stavu READY nebo VF_SKIP
+        // Kontakt musí být ve stavu READY, VF_SKIP nebo CHYBNY_KONTAKT (čistička může vrátit i chybně označený)
         $check = $this->pdo->prepare(
-            "SELECT id, stav, operator FROM contacts WHERE id = ? AND stav IN ('READY','VF_SKIP') LIMIT 1"
+            "SELECT id, stav, operator FROM contacts WHERE id = ? AND stav IN ('READY','VF_SKIP','CHYBNY_KONTAKT') LIMIT 1"
         );
         $check->execute([$contactId]);
         $contact = $check->fetch(PDO::FETCH_ASSOC);
 
         if (!$contact) {
-            echo json_encode(['ok' => false, 'error' => 'Kontakt nenalezen nebo není v stavu READY/VF_SKIP.']);
+            echo json_encode(['ok' => false, 'error' => 'Kontakt nenalezen nebo není v stavu READY/VF_SKIP/CHYBNY_KONTAKT.']);
             exit;
         }
 
@@ -651,7 +655,7 @@ final class CistickaController
                  WHERE user_id = :uid1
                    AND YEAR(created_at)  = :yr1
                    AND MONTH(created_at) = :mo1
-                   AND new_status IN (\'READY\', \'VF_SKIP\')
+                   AND new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
                  GROUP BY contact_id
              ) latest ON latest.last_id = wl.id
              GROUP BY wl.new_status, c.operator'
@@ -689,7 +693,7 @@ final class CistickaController
                  WHERE user_id = :uid1
                    AND YEAR(created_at)  = :yr1
                    AND MONTH(created_at) = :mo1
-                   AND new_status IN (\'READY\', \'VF_SKIP\')
+                   AND new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
                  GROUP BY DAY(created_at), contact_id
              ) latest ON latest.last_id = wl.id
              GROUP BY DAY(wl.created_at), wl.new_status, c.operator
@@ -1476,7 +1480,7 @@ final class CistickaController
                  SELECT contact_id, MAX(id) AS last_id
                  FROM workflow_log
                  WHERE user_id = :uid1
-                   AND new_status IN ('READY', 'VF_SKIP')
+                   AND new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')
                    AND YEAR(created_at)  = :y
                    AND MONTH(created_at) = :m
                  GROUP BY contact_id

@@ -1522,6 +1522,7 @@ select option:checked   { background: var(--color-surface); color: var(--color-t
 .cist-stat-label{ display:block; font-size:0.75rem; color:var(--muted); margin-top:0.1rem; }
 .cist-stat-tm  .cist-stat-num { color:#e91e8c; }
 .cist-stat-vf  .cist-stat-num { color:#e74c3c; }
+.cist-stat-chybny .cist-stat-num { color:#222; }
 .cist-stat-total .cist-stat-num { color:#2ecc71; }
 .cist-stat-queue .cist-stat-num { color:var(--accent); }
 /* Region filtr */
@@ -1583,8 +1584,10 @@ select option:checked   { background: var(--color-surface); color: var(--color-t
 /* Krátký flash po kliknutí (vizuální feedback) */
 @keyframes cist-flash-green { 0%,100%{background:rgba(0,0,0,0.04);} 50%{background:rgba(46,204,113,0.35);} }
 @keyframes cist-flash-red   { 0%,100%{background:rgba(0,0,0,0.04);} 50%{background:rgba(231,76,60,0.35);} }
-.cist-row--flash-ok  { animation: cist-flash-green 0.45s ease-out; }
-.cist-row--flash-vf  { animation: cist-flash-red 0.45s ease-out; }
+.cist-row--flash-ok      { animation: cist-flash-green 0.45s ease-out; }
+.cist-row--flash-vf      { animation: cist-flash-red 0.45s ease-out; }
+@keyframes cist-flash-black { 0%,100%{background:rgba(0,0,0,0.04);} 50%{background:rgba(20,20,20,0.45);} }
+.cist-row--flash-chybny  { animation: cist-flash-black 0.45s ease-out; }
 .cist-info  { display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; flex:1; }
 .cist-firma { font-weight:700; font-size:1.15rem; color:var(--text); }   /* větší než předtím */
 .cist-phone { color:var(--text); font-size:1rem; font-family:monospace; letter-spacing:0.02em; opacity:0.85; }
@@ -1935,18 +1938,21 @@ select option:checked   { background: var(--color-surface); color: var(--color-t
 .cist-pagination { display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; }
 /* Tlačítka akcí čističky — VĚTŠÍ pro snadné kliknutí + position:relative
    pro umístění klávesového hintu v rohu */
-.btn-cist-vf,.btn-cist-tm,.btn-cist-o2 {
+.btn-cist-vf,.btn-cist-tm,.btn-cist-o2,.btn-cist-chybny {
     position: relative;
     padding: 0.55rem 1.2rem; border:none; border-radius: 7px;
     cursor: pointer; font-size: 0.95rem; font-weight: 700;
     transition: filter 0.15s, transform 0.1s;
     min-width: 64px;
 }
-.btn-cist-vf:hover,.btn-cist-tm:hover,.btn-cist-o2:hover { filter:brightness(1.3); transform:scale(1.04); }
-.btn-cist-vf:disabled,.btn-cist-tm:disabled,.btn-cist-o2:disabled { opacity:0.4; cursor:default; transform:none; }
+.btn-cist-vf:hover,.btn-cist-tm:hover,.btn-cist-o2:hover,.btn-cist-chybny:hover { filter:brightness(1.3); transform:scale(1.04); }
+.btn-cist-vf:disabled,.btn-cist-tm:disabled,.btn-cist-o2:disabled,.btn-cist-chybny:disabled { opacity:0.4; cursor:default; transform:none; }
 .btn-cist-vf { background:rgba(231,76,60,0.3);  color:#e74c3c; }
 .btn-cist-tm { background:rgba(255,105,180,0.25); color:#ff69b4; }
 .btn-cist-o2 { background:rgba(61,139,253,0.3);  color:#3d8bfd; }
+/* Chybný / nepoužitelný kontakt — černá (finální vyřazení) */
+.btn-cist-chybny { background:rgba(20,20,20,0.78); color:#fff; }
+.btn-cist-chybny:hover { filter:brightness(1.5); }
 /* Malá varianta pro Zkontrolováno */
 .btn-cist-sm { padding:0.2rem 0.55rem; font-size:0.75rem; }
 /* Undo tlačítko */
