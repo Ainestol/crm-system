@@ -2232,169 +2232,34 @@ final class OzController
     //  Helpers
     // ────────────────────────────────────────────────────────────────
 
+    /**
+     * DEPRECATED 5/2026 — schema je teď deklarativně v migracích:
+     *   - sql/migrations/017_normalize_oz_contact_workflow.sql (kompletní set sloupců)
+     *   - + historické migrace 003-016
+     *
+     * Tělo úmyslně prázdné (no-op):
+     *   - Před touto změnou se každý request snažil 20× ALTER TABLE ADD COLUMN
+     *     → MySQL log spam "Duplicate column".
+     *   - 13 call sites v tomto controlleru ponecháno beze změny (BC) —
+     *     volání projdou, nic se nepokazí, žádný DDL nepoběží.
+     *
+     * Pokud na úplně čerstvé DB sloupce chybí, spusť migraci 017
+     * (`sudo mariadb crm < sql/migrations/017_normalize_oz_contact_workflow.sql`).
+     */
     private function ensureWorkflowTable(): void
     {
-        $this->pdo->exec(
-            "CREATE TABLE IF NOT EXISTS `oz_contact_workflow` (
-              `id`                   BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-              `contact_id`           BIGINT UNSIGNED NOT NULL,
-              `oz_id`                INT UNSIGNED NOT NULL,
-              `stav`                 VARCHAR(20) NOT NULL DEFAULT 'NOVE',
-              `started_at`           DATETIME(3) NULL DEFAULT NULL,
-              `poznamka`             TEXT NULL,
-              `callback_at`          DATETIME(3) NULL DEFAULT NULL,
-              `schuzka_at`           DATETIME(3) NULL DEFAULT NULL,
-              `schuzka_acknowledged` TINYINT(1) NOT NULL DEFAULT 0,
-              `updated_at`           DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
-                                     ON UPDATE CURRENT_TIMESTAMP(3),
-              PRIMARY KEY (`id`),
-              UNIQUE KEY `uq_oz_workflow` (`contact_id`, `oz_id`),
-              KEY `idx_oz_stav` (`oz_id`, `stav`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
-        );
-        // Opravit starší tabulky bez nových sloupců
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 MODIFY COLUMN `poznamka` TEXT NULL'
-            );
-        } catch (\PDOException $e) {
-            crm_db_log_error($e, __METHOD__);
-        }
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `schuzka_at` DATETIME(3) NULL DEFAULT NULL'
-            );
-        } catch (\PDOException) {
-            // Sloupec již existuje — ignorovat
-        }
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `schuzka_acknowledged` TINYINT(1) NOT NULL DEFAULT 0'
-            );
-        } catch (\PDOException) {
-            // Sloupec již existuje — ignorovat
-        }
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `bmsl` DECIMAL(10,2) NULL DEFAULT NULL'
-            );
-        } catch (\PDOException) {
-            // Sloupec již existuje — ignorovat
-        }
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `smlouva_date` DATE NULL DEFAULT NULL'
-            );
-        } catch (\PDOException) {
-            // Sloupec již existuje — ignorovat
-        }
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `nabidka_id` VARCHAR(50) NULL DEFAULT NULL'
-            );
-        } catch (\PDOException) {
-            // Sloupec již existuje — ignorovat
-        }
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `install_internet` TINYINT(1) NOT NULL DEFAULT 0'
-            );
-        } catch (\PDOException $e) {
-            crm_db_log_error($e, __METHOD__);
-        }
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `install_ulice` VARCHAR(200) NULL DEFAULT NULL'
-            );
-        } catch (\PDOException $e) {
-            crm_db_log_error($e, __METHOD__);
-        }
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `install_mesto` VARCHAR(100) NULL DEFAULT NULL'
-            );
-        } catch (\PDOException $e) {
-            crm_db_log_error($e, __METHOD__);
-        }
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `install_psc` VARCHAR(10) NULL DEFAULT NULL'
-            );
-        } catch (\PDOException $e) {
-            crm_db_log_error($e, __METHOD__);
-        }
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `install_byt` VARCHAR(50) NULL DEFAULT NULL'
-            );
-        } catch (\PDOException $e) {
-            crm_db_log_error($e, __METHOD__);
-        }
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `install_adresy` TEXT NULL DEFAULT NULL'
-            );
-        } catch (\PDOException $e) {
-            crm_db_log_error($e, __METHOD__);
-        }
-        // closed_at — kdy BO uzavřel kontrakt (UZAVRENO). Slouží pro filtr měsíců v "Dokončené".
-        try {
-            $this->pdo->exec(
-                'ALTER TABLE `oz_contact_workflow`
-                 ADD COLUMN `closed_at` DATETIME(3) NULL DEFAULT NULL'
-            );
-        } catch (\PDOException $e) {
-            crm_db_log_error($e, __METHOD__);
-        }
-        // stav_changed_at — kdy se naposledy změnil workflow stav (pro UX badge "v této záložce: před X")
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `stav_changed_at` DATETIME(3) NULL DEFAULT NULL'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        // BO progress checkboxy
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `priprava_smlouvy` TINYINT(1) NOT NULL DEFAULT 0'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `datovka_odeslana` TINYINT(1) NOT NULL DEFAULT 0'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `podpis_potvrzen` TINYINT(1) NOT NULL DEFAULT 0'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `podpis_potvrzen_at` DATETIME(3) NULL DEFAULT NULL'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `podpis_potvrzen_by` INT UNSIGNED NULL DEFAULT NULL'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `ubotem_zpracovano` TINYINT(1) NOT NULL DEFAULT 0'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
+        // No-op — schema spravované migracemi.
     }
 
+    /**
+     * DEPRECATED 5/2026 — schema je teď deklarativně v migraci
+     *   sql/migrations/018_normalize_oz_flags_and_prefs.sql
+     *
+     * No-op. Call sites ponechány beze změny (BC).
+     */
     private function ensureFlagsTable(): void
     {
-        $this->pdo->exec(
-            "CREATE TABLE IF NOT EXISTS `contact_oz_flags` (
-              `id`               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-              `contact_id`       BIGINT UNSIGNED NOT NULL,
-              `oz_id`            INT UNSIGNED NOT NULL,
-              `reason`           VARCHAR(500) NOT NULL DEFAULT '',
-              `flagged_at`       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-              `caller_comment`   TEXT NULL DEFAULT NULL,
-              `caller_confirmed` TINYINT(1) NOT NULL DEFAULT 0,
-              `oz_comment`       TEXT NULL DEFAULT NULL,
-              `oz_confirmed`     TINYINT(1) NOT NULL DEFAULT 0,
-              PRIMARY KEY (`id`),
-              UNIQUE KEY `uq_flag` (`contact_id`, `oz_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
-        );
-        // Migrace: přidat nové sloupce pokud tabulka již existuje bez nich
-        foreach ([
-            "ALTER TABLE `contact_oz_flags` ADD COLUMN `caller_comment`   TEXT NULL DEFAULT NULL",
-            "ALTER TABLE `contact_oz_flags` ADD COLUMN `caller_confirmed` TINYINT(1) NOT NULL DEFAULT 0",
-            "ALTER TABLE `contact_oz_flags` ADD COLUMN `oz_comment`       TEXT NULL DEFAULT NULL",
-            "ALTER TABLE `contact_oz_flags` ADD COLUMN `oz_confirmed`     TINYINT(1) NOT NULL DEFAULT 0",
-        ] as $sql) {
-            try { $this->pdo->exec($sql); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        }
+        // No-op — schema spravované migracemi.
     }
 
     private function ensureNotesTable(): void
@@ -2414,31 +2279,15 @@ final class OzController
 
     /**
      * Tabulka per-user prefs pro OZ taby — skryté záložky + pořadí.
+     *
+     * DEPRECATED 5/2026 — schema je teď deklarativně v migraci
+     *   sql/migrations/018_normalize_oz_flags_and_prefs.sql
+     *
+     * No-op. Call sites ponechány beze změny (BC).
      */
     private function ensureTabPrefsTable(): void
     {
-        $this->pdo->exec(
-            "CREATE TABLE IF NOT EXISTS `oz_tab_prefs` (
-              `user_id`       INT UNSIGNED NOT NULL,
-              `hidden_tabs`   TEXT NOT NULL DEFAULT ('[]'),
-              `tab_order`     TEXT NULL DEFAULT NULL,
-              `sub_tab_order` TEXT NULL DEFAULT NULL,
-              `updated_at`    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-              PRIMARY KEY (`user_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
-        );
-        // Migrace: přidat sloupec tab_order pokud chybí (idempotentně)
-        try {
-            $this->pdo->exec("ALTER TABLE `oz_tab_prefs` ADD COLUMN `tab_order` TEXT NULL DEFAULT NULL");
-        } catch (\PDOException $e) {
-            crm_db_log_error($e, __METHOD__);
-        }
-        // Migrace: přidat sloupec sub_tab_order (super-tab refactor 2026-04-29)
-        try {
-            $this->pdo->exec("ALTER TABLE `oz_tab_prefs` ADD COLUMN `sub_tab_order` TEXT NULL DEFAULT NULL");
-        } catch (\PDOException $e) {
-            crm_db_log_error($e, __METHOD__);
-        }
+        // No-op — schema spravované migracemi.
     }
 
     /**

@@ -655,24 +655,15 @@ final class BackofficeController
     }
 
     // ────────────────────────────────────────────────────────────────
-    //  Idempotentní migrace nových sloupců do oz_contact_workflow.
-    //  Duplikát logiky z OzController::ensureWorkflowTable() — BO může otevřít
-    //  /bo jako první uživatel a sloupce ještě nemusí existovat.
+    //  DEPRECATED 5/2026 — schema je teď deklarativně v migracích:
+    //    - sql/migrations/017_normalize_oz_contact_workflow.sql
+    //
+    //  Tělo úmyslně prázdné (no-op). Call site v getIndex() ponechán beze
+    //  změny (BC). Žádný runtime DDL → konec "Duplicate column" log spamu.
     // ────────────────────────────────────────────────────────────────
     private function ensureWorkflowMigration(): void
     {
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `stav_changed_at` DATETIME(3) NULL DEFAULT NULL'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `priprava_smlouvy` TINYINT(1) NOT NULL DEFAULT 0'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `datovka_odeslana` TINYINT(1) NOT NULL DEFAULT 0'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `podpis_potvrzen` TINYINT(1) NOT NULL DEFAULT 0'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `podpis_potvrzen_at` DATETIME(3) NULL DEFAULT NULL'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `podpis_potvrzen_by` INT UNSIGNED NULL DEFAULT NULL'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `ubotem_zpracovano` TINYINT(1) NOT NULL DEFAULT 0'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        // Sloupce pro uzavření smlouvy (číslo, skutečné datum podpisu, trvání)
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `cislo_smlouvy` VARCHAR(50) NULL DEFAULT NULL'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `datum_uzavreni` DATE NULL DEFAULT NULL'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `smlouva_trvani_roky` TINYINT UNSIGNED NULL DEFAULT 3'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD INDEX `idx_cislo_smlouvy` (`cislo_smlouvy`)'); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
+        // No-op — schema spravované migracemi.
     }
 
     // ────────────────────────────────────────────────────────────────
