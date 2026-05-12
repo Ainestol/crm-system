@@ -80,6 +80,7 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
         $sections['Práce'] = [
             ['label' => 'Příchozí leady',     'href' => '/oz/queue',       'icon' => '📋'],
             ['label' => 'Pracovní plocha',    'href' => '/oz/leads',       'icon' => '💼'],
+            ['label' => 'Email leady',        'href' => '/oz/email-leads', 'icon' => '📧'],
             ['label' => 'Můj měsíc',          'href' => '/oz',             'icon' => '🎯'],
             ['label' => 'Výkon celého týmu',  'href' => '/oz/performance', 'icon' => '🏆'],
         ];
@@ -101,6 +102,11 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
             ['label' => 'Všechny objednávky',  'href' => '/admin/premium-overview', 'icon' => '💎'],
             ['label' => 'Plocha — čistička',   'href' => '/cisticka/premium',       'icon' => '🧹'],
             ['label' => 'Plocha — navolávačka','href' => '/caller/premium',         'icon' => '📞'],
+        ];
+        // ── Sázky: cílené kampaně (X kontaktů na kraj, rozdělení mezi OZ) ──
+        $sections['Sázky 🎯'] = [
+            ['label' => 'Všechny sázky',       'href' => '/admin/bet',     'icon' => '🎯'],
+            ['label' => 'Nová sázka',          'href' => '/admin/bet/new', 'icon' => '➕'],
         ];
         // ── Sekce sgrupované per role, na kterou nastavení míří ──
         // Logika: když chci nastavit něco pro čističky, jdu do "Čističky".

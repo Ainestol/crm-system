@@ -24,7 +24,7 @@ final class CallerController
     private const MAX_NEDOVOLANO = 3;
 
     /** Kontaktů na stránku v záložce K provolání */
-    private const PAGE_SIZE = 20;
+    private const PAGE_SIZE = 10;
 
     public function __construct(private PDO $pdo)
     {
@@ -283,62 +283,68 @@ final class CallerController
             $stmt->execute(['cid' => $callerId, 'y' => $filterYear, 'm' => $filterMonth]);
         } else {
             // ── Aktivní: READY pool s exkluzivním claimem (locked_by) + vlastní ASSIGNED ──
+            //
+            // NOVÁ PRAVIDLA ZÁMKU (od 5/2026):
+            //   - PAGE_SIZE = 10 kontaktů max
+            //   - Doba zámku = 10 minut (sliding window — každý refresh stejného kraje +10 min)
+            //   - Zámek se aktivuje POUZE když caller vybere konkrétní kraj (region selection).
+            //     Bez vybraného kraje (overview) se nic nezamyká — caller jen vidí přehled.
+            //   - Při přepnutí na jiný kraj se zámky v PŘEDCHOZÍM kraji okamžitě uvolní
+            //     (caller nemůže paralelně držet 10×N kontaktů napříč kraji).
+            //   - Cíl: vyřešit problém, kdy caller proklikal pět krajů, na každém zamkl
+            //     10 leadů, a tím blokoval ostatní bez aktivního volání.
 
-            // 1. Uvolnit expirované zámky tohoto callera (READY kontakty co nestačil zpracovat)
+            // (vždy) Uvolnit expirované vlastní zámky — pojistka pro případ pádu prohlížeče atd.
             $this->pdo->prepare(
                 "UPDATE contacts SET locked_by = NULL, locked_until = NULL
                  WHERE locked_by = :cid AND locked_until < NOW(3) AND stav = 'READY'"
             )->execute(['cid' => $callerId]);
 
-            // 2. Prodloužit stávající platné zámky (každé načtení stránky = +30 min)
-            $this->pdo->prepare(
-                "UPDATE contacts SET locked_until = NOW(3) + INTERVAL 30 MINUTE
-                 WHERE locked_by = :cid AND stav = 'READY' AND locked_until > NOW(3)"
-            )->execute(['cid' => $callerId]);
-
-            // 3. Kolik kontaktů má caller aktuálně zamčeno z poolu?
-            //    DŮLEŽITÉ: pokud caller vybral konkrétní region, počítáme zámky JEN v tom regionu.
-            //    Důvod: jinak při plné queue z Liberec (20 leadů) by se nedalo claim z Prahy
-            //    (globální limit dosažen). Per-region limit umožňuje paralelně pracovat napříč
-            //    regiony — Jana může mít 20 v Liberci + 20 v Praze + 20 ve Středočeském.
-            //    Když nevybrala region (Vše), počítáme globálně jako dřív.
             if ($selectedRegion !== '') {
+                // 1. Uvolnit vlastní zámky ve VŠECH OSTATNÍCH krajích — caller přepnul region.
+                //    Tím se nestává, že proklikáním krajů zamyká 10×N kontaktů paralelně.
+                $this->pdo->prepare(
+                    "UPDATE contacts SET locked_by = NULL, locked_until = NULL
+                     WHERE locked_by = :cid AND stav = 'READY' AND region != :selreg"
+                )->execute(['cid' => $callerId, 'selreg' => $selectedRegion]);
+
+                // 2. Prodloužit platné zámky v aktuálním kraji (sliding window +10 min)
+                $this->pdo->prepare(
+                    "UPDATE contacts SET locked_until = NOW(3) + INTERVAL 10 MINUTE
+                     WHERE locked_by = :cid AND stav = 'READY' AND locked_until > NOW(3)
+                       AND region = :selreg"
+                )->execute(['cid' => $callerId, 'selreg' => $selectedRegion]);
+
+                // 3. Spočítat aktuální zámky v tomto kraji
                 $lockedCntStmt = $this->pdo->prepare(
                     "SELECT COUNT(*) FROM contacts
                      WHERE locked_by = :cid AND stav = 'READY'
                        AND locked_until > NOW(3) AND region = :reg"
                 );
                 $lockedCntStmt->execute(['cid' => $callerId, 'reg' => $selectedRegion]);
+                $lockedCount = (int) $lockedCntStmt->fetchColumn();
             } else {
-                $lockedCntStmt = $this->pdo->prepare(
-                    "SELECT COUNT(*) FROM contacts
-                     WHERE locked_by = :cid AND stav = 'READY' AND locked_until > NOW(3)"
-                );
-                $lockedCntStmt->execute(['cid' => $callerId]);
+                // No region selected — caller je v "overview" módu (nevybral kraj).
+                // Žádný claim neprobíhá. Stávající zámky zůstanou platné dokud:
+                //   (a) caller klikne na region → tam zámky v jiných krajích uvolníme
+                //   (b) uplyne 10 min neaktivity → zámky expirují přirozeně
+                $lockedCount = 0;
             }
-            $lockedCount = (int) $lockedCntStmt->fetchColumn();
 
-            // 4. Doklaiming: atomicky zabrat volné kontakty do PAGE_SIZE
+            // 4. Doklaiming: atomicky zabrat volné kontakty do PAGE_SIZE — POUZE pokud
+            //    je vybraný region. V overview módu se nezamyká nic.
             //    POZN: NOT EXISTS premium_lead_pool — premium leady patří do /caller/premium
-            $needed = self::PAGE_SIZE - $lockedCount;
+            $needed = $selectedRegion !== '' ? (self::PAGE_SIZE - $lockedCount) : 0;
             if ($needed > 0) {
                 $claimWhere  = "stav = 'READY' AND operator IN('TM','O2') AND assigned_caller_id IS NULL
                                 AND (locked_by IS NULL OR locked_until < NOW(3))
+                                AND region = ?
                                 AND NOT EXISTS (
                                     SELECT 1 FROM premium_lead_pool plp
                                     WHERE plp.contact_id = contacts.id
                                       AND plp.cleaning_status IN ('pending', 'tradeable')
                                 )";
-                $claimParams = [];
-
-                if ($selectedRegion !== '') {
-                    $claimWhere  .= ' AND region = ?';
-                    $claimParams[] = $selectedRegion;
-                } elseif ($hasCallerRegions) {
-                    $ph = implode(',', array_fill(0, count($callerRegions), '?'));
-                    $claimWhere  .= " AND region IN ($ph)";
-                    $claimParams = $callerRegions;
-                }
+                $claimParams = [$selectedRegion];
 
                 $this->pdo->beginTransaction();
                 try {
@@ -352,7 +358,7 @@ final class CallerController
                     if ($ids !== []) {
                         $ph2 = implode(',', array_fill(0, count($ids), '?'));
                         $this->pdo->prepare(
-                            "UPDATE contacts SET locked_by = ?, locked_until = NOW(3) + INTERVAL 30 MINUTE
+                            "UPDATE contacts SET locked_by = ?, locked_until = NOW(3) + INTERVAL 10 MINUTE
                              WHERE id IN ($ph2)"
                         )->execute(array_merge([$callerId], $ids));
                     }
@@ -1680,6 +1686,10 @@ final class CallerController
              ORDER BY valid_from DESC LIMIT 1"
         );
         $rewardPerWin = $rewardRow ? (float) ($rewardRow->fetchColumn() ?: 0) : 0.0;
+
+        // Maskování citlivých údajů — navolávačka vidí maskovaný telefon/firmu;
+        // majitel/superadmin/atd. mají plný audit view.
+        $maskSensitive = crm_should_mask_for_role((string) ($user['role'] ?? ''));
 
         // Standalone tisková stránka — neprojde přes base layout
         header('Content-Type: text/html; charset=UTF-8');

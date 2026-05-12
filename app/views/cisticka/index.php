@@ -29,6 +29,8 @@ $totalToday  = (int) ($todayStats['total_today']  ?? 0);
 /** @var bool   $isPastPeriod */
 /** @var bool   $isFuturePeriod */
 /** @var int    $zkontrolovaneTotal — počet vsech kontaktů které čistička kdy verifikovala */
+/** @var list<array{id:int,name:string,region:string,target_count:int,cleaned_count:int,recipients:list}> $activeBetCampaigns — aktivní sázky v krajech čističky (strict mode) */
+$activeBetCampaigns = $activeBetCampaigns ?? [];
 $regionGoals       = $regionGoals       ?? [];
 $monthLabel        = $monthLabel        ?? '';
 $hasGoals          = $hasGoals          ?? ($regionGoals !== []);
@@ -111,6 +113,71 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
 
     <?php if (!empty($flash)) { ?>
         <p class="alert alert-info"><?= crm_h($flash) ?></p>
+    <?php } ?>
+
+    <!-- ── 🎯 SÁZKY (aktivní v krajích čističky) ────────────────────────────
+         Když existuje aktivní sázka v některém kraji čističky, vidí strict
+         mode (= jen sázkové kraje v queue) + progress bar pro každou sázku.
+         Po dosažení target_count se sázka uzavře automaticky (helper). -->
+    <?php if ($activeBetCampaigns !== []) { ?>
+    <div class="bet-campaigns" style="display:flex;flex-direction:column;gap:0.8rem;margin-bottom:1rem;">
+        <?php foreach ($activeBetCampaigns as $bc) {
+            $bcId       = (int) $bc['id'];
+            $bcName     = (string) $bc['name'];
+            $bcRegion   = (string) $bc['region'];
+            $bcTarget   = (int) $bc['target_count'];
+            $bcCleaned  = (int) $bc['cleaned_count'];
+            $bcPct      = $bcTarget > 0 ? min(100, (int) round($bcCleaned * 100 / $bcTarget)) : 0;
+            $bcRecip    = $bc['recipients'] ?? [];
+        ?>
+        <div class="bet-card" data-bet-id="<?= $bcId ?>"
+             style="border:2px solid #facc15;background:linear-gradient(135deg,#fef9c3 0%,#fef3c7 100%);
+                    border-radius:10px;padding:0.85rem 1.1rem;box-shadow:0 2px 6px rgba(0,0,0,0.05);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;">
+                <div>
+                    <span style="font-size:1rem;font-weight:700;color:#854d0e;">
+                        🎯 <?= crm_h($bcName) ?>
+                    </span>
+                    <span style="font-size:0.85rem;color:#92400e;margin-left:0.4rem;">
+                        · <?= crm_h(crm_region_label($bcRegion)) ?>
+                    </span>
+                </div>
+                <div style="font-weight:700;font-size:1.05rem;color:#854d0e;">
+                    <span id="bet-cleaned-<?= $bcId ?>"><?= $bcCleaned ?></span> /
+                    <span><?= $bcTarget ?></span>
+                </div>
+            </div>
+
+            <!-- Progress bar -->
+            <div style="background:#fef3c7;border-radius:6px;height:14px;overflow:hidden;border:1px solid #fbbf24;">
+                <div id="bet-progress-<?= $bcId ?>"
+                     style="width:<?= $bcPct ?>%;height:100%;background:linear-gradient(90deg,#f59e0b,#16a34a);
+                            transition:width 0.4s ease-out;"></div>
+            </div>
+
+            <!-- Per-recipient breakdown -->
+            <?php if ($bcRecip !== []) { ?>
+            <div style="display:flex;gap:0.8rem;margin-top:0.5rem;flex-wrap:wrap;font-size:0.82rem;">
+                <?php foreach ($bcRecip as $r) {
+                    $rTgt  = (int) ($r['target_count'] ?? 0);
+                    $rRcv  = (int) ($r['received_count'] ?? 0);
+                    $rType = (string) ($r['delivery_type'] ?? 'call');
+                    $rName = (string) ($r['jmeno'] ?? '?');
+                    $icon  = $rType === 'email' ? '📧' : '📞';
+                ?>
+                <span style="background:#fff;border:1px solid #fcd34d;border-radius:6px;padding:0.2rem 0.55rem;color:#78350f;">
+                    <?= $icon ?> <strong><?= crm_h($rName) ?></strong>:
+                    <span id="bet-rcv-<?= (int) $r['id'] ?>"><?= $rRcv ?></span>/<?= $rTgt ?>
+                </span>
+                <?php } ?>
+            </div>
+            <?php } ?>
+        </div>
+        <?php } ?>
+        <p style="font-size:0.78rem;color:#92400e;margin:0;text-align:center;">
+            ⚠ Strict mode: dokud běží sázka, fronta čistění je omezena jen na tyhle kraje.
+        </p>
+    </div>
     <?php } ?>
 
     <!-- Denní statistika -->
@@ -731,6 +798,12 @@ function cistVerify(contactId, action, btn) {
 
                 // Stats: pro 'chybny' předáme 'CHYBNY' (nemá vlastní badge, ale počítá se do total/ready)
                 cistUpdateStats(action === 'chybny' ? 'CHYBNY' : op, +1, contactId);
+
+                // Live update sázky (pokud kontakt byl zařazen do bet_campaigns).
+                // Backend posílá data.bet = null | {campaign_id, recipient_id, position, closed, ...}
+                if (data.bet) {
+                    betUpdateProgress(data.bet);
+                }
             } else {
                 row.dataset.done = '0';
                 buttons.forEach(function(b) { b.disabled = false; });
@@ -812,6 +885,13 @@ function cistRemoveRow(contactId) {
 
     // Dekrementuj počet kraje v region filtru (legacy spodní filtr).
     var region = row.dataset.region || '';
+
+    // Goal tile increment se děje až TADY (po 5s undo okně) — ne hned po kliku.
+    // Tím se předejde duplicitnímu počítání při TM → Zpět → TM cyklu.
+    if (region !== '') {
+        cistGoalIncrement(region);
+    }
+
     if (region) {
         var badge = document.getElementById('region-cnt-' + region);
         if (badge) {
@@ -1029,6 +1109,70 @@ function cwWidgetIncrement(op, contactId) {
     if (elSumE) elSumE.textContent = formatted;
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   Live update progress baru sázky po úspěšném verify.
+   Backend (CistickaController::postVerify) vrací v JSON odpovědi:
+     data.bet = null | {
+       campaign_id:   int,
+       recipient_id:  int,
+       oz_id:         int,
+       delivery_type: 'call' | 'email',
+       position:      int,        // chronologie 1..N
+       closed:        bool         // true pokud dosažen target
+     }
+   Při null = kontakt nepatřil do žádné aktivní sázky.
+   ───────────────────────────────────────────────────────────────────── */
+function betUpdateProgress(bet) {
+    if (!bet || !bet.campaign_id) return;
+
+    var cid = bet.campaign_id;
+    var rid = bet.recipient_id;
+
+    // 1. Inkrementovat počítadlo sázky (celkem)
+    var cleanedEl = document.getElementById('bet-cleaned-' + cid);
+    if (cleanedEl) {
+        var cleaned = (parseInt(cleanedEl.textContent, 10) || 0) + 1;
+        cleanedEl.textContent = cleaned;
+
+        // 2. Aktualizovat progress bar (šířka %)
+        var card = document.querySelector('.bet-card[data-bet-id="' + cid + '"]');
+        if (card) {
+            // target z DOM — najít sousední span s lomítkem "X / Y"
+            var targetEl = cleanedEl.parentNode ? cleanedEl.parentNode.querySelector('span:last-child') : null;
+            var target = targetEl ? (parseInt(targetEl.textContent, 10) || 0) : 0;
+            if (target > 0) {
+                var pct = Math.min(100, Math.round(cleaned * 100 / target));
+                var fillEl = document.getElementById('bet-progress-' + cid);
+                if (fillEl) fillEl.style.width = pct + '%';
+            }
+        }
+    }
+
+    // 3. Inkrementovat počet u konkrétního recipient (per OZ)
+    var rcvEl = document.getElementById('bet-rcv-' + rid);
+    if (rcvEl) {
+        rcvEl.textContent = (parseInt(rcvEl.textContent, 10) || 0) + 1;
+    }
+
+    // 4. Pokud uzavřeno (auto-close po dosažení target), upozornit + drobná animace
+    if (bet.closed) {
+        var card2 = document.querySelector('.bet-card[data-bet-id="' + cid + '"]');
+        if (card2) {
+            card2.style.transition = 'background 0.6s, border-color 0.6s';
+            card2.style.background = 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)';
+            card2.style.borderColor = '#16a34a';
+            // Drobná hláška po krátké pauze (až se uloží UI)
+            setTimeout(function() {
+                if (typeof alert === 'function') {
+                    alert('🎯 Sázka splněna! ' + (cleanedEl ? cleanedEl.textContent : '') + ' kontaktů vyčištěno.');
+                }
+                // Po potvrzení reload — strict mode se uvolní (sázka už není 'open')
+                window.location.reload();
+            }, 700);
+        }
+    }
+}
+
 /* ── Pomocná fetch funkce ─────────────────────────────────────────── */
 function cistPost(url, extraData) {
     var body = new URLSearchParams();
@@ -1121,12 +1265,9 @@ cistVerify = function(contactId, action, btn) {
     var row = document.getElementById('cist-row-' + contactId);
     var region = row ? (row.dataset.region || '') : '';
     var result = _cistVerifyOriginal(contactId, action, btn);
-    // Flash + advance + update region goal (každý zdařený klik = +1 v daném kraji)
+    // Flash + advance — region goal už NEinkrementujeme tady, ale až po 5s undo
+    // okně v cistRemoveRow(). Tím se neopakovaně přičítá při TM → Zpět → TM cyklu.
     cistFlashAndAdvance(row, action);
-    if (region !== '') {
-        // Drobné zpoždění, aby update proběhl po DB potvrzení (animace flash)
-        setTimeout(function() { cistGoalIncrement(region); }, 200);
-    }
     return result;
 };
 

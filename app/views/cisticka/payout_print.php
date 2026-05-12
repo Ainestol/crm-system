@@ -8,6 +8,7 @@ declare(strict_types=1);
 /** @var float                           $rewardPerVerify */
 /** @var int                             $year */
 /** @var int                             $month */
+/** @var bool                            $maskSensitive true = telefon/firma maskovány (cisticka role) */
 
 $monthNames = ['', 'Leden','Únor','Březen','Duben','Květen','Červen',
                'Červenec','Srpen','Září','Říjen','Listopad','Prosinec'];
@@ -91,8 +92,29 @@ $docTitle = 'Výplata čističky — ' . $cisticka['jmeno'] . ' — ' . $monthNa
             font-size: 8pt; padding: 0.05rem 0.4rem; border-radius: 3px;
             display: inline-block;
         }
-        .td-status--ready { background: #d1fae5; color: #065f46; }
-        .td-status--vf    { background: #fee2e2; color: #991b1b; }
+        .td-status--ready  { background: #d1fae5; color: #065f46; }
+        .td-status--vf     { background: #fee2e2; color: #991b1b; }
+        .td-status--chybny { background: #fef3c7; color: #92400e; }
+
+        /* Sbalitelné detaily per operátor — default zavřené, klik rozbalí */
+        details.op-block { margin-bottom: 0.6rem; page-break-inside: avoid; }
+        details.op-block > summary {
+            list-style: none;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: space-between;
+            background: #f3f4f6; border: 1px solid #d1d5db;
+            border-radius: 6px; padding: 0.45rem 0.8rem;
+            transition: background 0.15s;
+        }
+        details.op-block > summary::-webkit-details-marker { display: none; }
+        details.op-block > summary:hover { background: #e5e7eb; }
+        details.op-block[open] > summary { border-radius: 6px 6px 0 0; }
+        .op-toggle {
+            font-size: 9pt; color: #6b7280; margin-right: 0.5rem;
+            transition: transform 0.15s;
+        }
+        details.op-block[open] .op-toggle { transform: rotate(90deg); }
+        details.op-block > table { border-top: none; }
 
         .section-title {
             font-size: 10pt; font-weight: 700; text-transform: uppercase;
@@ -177,19 +199,22 @@ $docTitle = 'Výplata čističky — ' . $cisticka['jmeno'] . ' — ' . $monthNa
         </div>
     <?php } ?>
 
-    <!-- Per operátor -->
+    <!-- Per operátor — sbalitelné (default zavřené); klikem rozbalíš detail kontaktů -->
     <?php foreach ($byOperator as $op) {
         $oc = (int) $op['count'];
         $op_payout = round($oc * $rewardPerVerify, 2);
     ?>
-    <div class="op-block">
-        <div class="op-header">
-            <span class="op-name">📞 <?= htmlspecialchars((string)$op['name'], ENT_QUOTES, 'UTF-8') ?></span>
+    <details class="op-block">
+        <summary>
+            <span class="op-name">
+                <span class="op-toggle">▸</span>
+                📞 <?= htmlspecialchars((string)$op['name'], ENT_QUOTES, 'UTF-8') ?>
+            </span>
             <div class="op-meta">
                 <span>Ověření: <strong><?= $oc ?></strong></span>
                 <span class="op-payout">💰 <?= number_format($op_payout, 2, ',', ' ') ?> Kč</span>
             </div>
-        </div>
+        </summary>
         <table>
             <thead>
                 <tr>
@@ -203,12 +228,29 @@ $docTitle = 'Výplata čističky — ' . $cisticka['jmeno'] . ' — ' . $monthNa
             </thead>
             <tbody>
                 <?php foreach ($op['events'] as $i => $ev) {
-                    $isVf = ((string) $ev['new_status']) === 'VF_SKIP';
+                    $status = (string) $ev['new_status'];
+                    // 3-way status label podle skutečného stavu ve workflow_log
+                    if ($status === 'VF_SKIP') {
+                        $statusClass = 'td-status--vf';
+                        $statusLabel = 'VF skip';
+                    } elseif ($status === 'CHYBNY_KONTAKT') {
+                        $statusClass = 'td-status--chybny';
+                        $statusLabel = 'Chybný kontakt';
+                    } else {
+                        $statusClass = 'td-status--ready';
+                        $statusLabel = 'OVĚŘENO';
+                    }
+                ?>
+                <?php
+                    $firmaRaw = (string) ($ev['firma'] ?? '');
+                    $phoneRaw = (string) ($ev['telefon'] ?? '');
+                    $firmaOut = $maskSensitive ? crm_mask_firma($firmaRaw) : ($firmaRaw !== '' ? $firmaRaw : '—');
+                    $phoneOut = $maskSensitive ? crm_mask_phone($phoneRaw) : ($phoneRaw !== '' ? $phoneRaw : '—');
                 ?>
                 <tr>
                     <td class="td-num"><?= $i + 1 ?></td>
-                    <td class="td-firm"><?= htmlspecialchars((string)($ev['firma'] ?? '—'), ENT_QUOTES, 'UTF-8') ?></td>
-                    <td class="td-phone"><?= htmlspecialchars((string)($ev['telefon'] ?? '—'), ENT_QUOTES, 'UTF-8') ?></td>
+                    <td class="td-firm"><?= htmlspecialchars($firmaOut, ENT_QUOTES, 'UTF-8') ?></td>
+                    <td class="td-phone"><?= htmlspecialchars($phoneOut, ENT_QUOTES, 'UTF-8') ?></td>
                     <td><?= htmlspecialchars(crm_region_label((string)($ev['region'] ?? '')), ENT_QUOTES, 'UTF-8') ?></td>
                     <td class="td-date">
                         <?= !empty($ev['verified_at'])
@@ -216,15 +258,13 @@ $docTitle = 'Výplata čističky — ' . $cisticka['jmeno'] . ' — ' . $monthNa
                             : '—' ?>
                     </td>
                     <td>
-                        <span class="td-status <?= $isVf ? 'td-status--vf' : 'td-status--ready' ?>">
-                            <?= $isVf ? 'VF skip' : 'READY (předáno OZ)' ?>
-                        </span>
+                        <span class="td-status <?= $statusClass ?>"><?= $statusLabel ?></span>
                     </td>
                 </tr>
                 <?php } ?>
             </tbody>
         </table>
-    </div>
+    </details>
     <?php } ?>
 
     <!-- Platební tabulka -->

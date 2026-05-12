@@ -105,6 +105,30 @@ final class CistickaController
         }
         $hasGoals = $goalRegions !== [];
 
+        // ═══════════════════════════════════════════════════════════════
+        // SÁZKA — STRICT MODE OVERRIDE
+        // ───────────────────────────────────────────────────────────────
+        // Pokud existuje aktivní sázka v některém z user_regions, čistička
+        // VIDÍ POUZE TYTO KRAJE (přepíše goal-driven regions).
+        // Důvod: sázka má prioritu nad běžnými cíli — čistička soustředí
+        // úsilí na splnění sázky (admin uzavře manuálně i bez 100% cíle).
+        // ═══════════════════════════════════════════════════════════════
+        $activeBetRegions   = bet_get_active_regions(
+            $this->pdo,
+            $hasUserRegions ? $userRegions : []
+        );
+        $activeBetCampaigns = ($activeBetRegions !== [])
+            ? bet_get_active_for_dashboard($this->pdo, $activeBetRegions)
+            : [];
+
+        if ($activeBetRegions !== []) {
+            // STRICT MODE: override goalRegions na sázkové kraje
+            $goalRegions      = $activeBetRegions;
+            $goalRegionsAll   = $activeBetRegions;
+            $completedRegions = [];          // sázkové kraje nemohou být "completed" goal
+            $hasGoals         = true;
+        }
+
         // Effective region filter — řídí, jaké kontakty se zobrazí.
         //
         // Zkontrolováno (historický pohled): VŽDY user_regions, NIKDY aktuální goals.
@@ -266,10 +290,12 @@ final class CistickaController
 
         $totalPages = max(1, (int) ceil($totalCount / self::PAGE_SIZE));
 
-        // Dnešní statistika čističky — počítá UNIKÁTNÍ kontakty.
-        // Když čistička přepne stejný kontakt 3× (TM → O2 → VF), počítá se jako 1×.
-        // Per-status (ready/vf) bere POSLEDNÍ akci na daném kontaktu v rámci dne
-        // (subquery najde pro každý contact_id maximální workflow_log id).
+        // Dnešní statistika čističky — počítá UNIKÁTNÍ kontakty podle JEJICH AKTUÁLNÍHO stavu.
+        // Když čistička přepne stejný kontakt 3× (TM → Zpět → O2), počítá se jako 1×.
+        // FIX (5/2026): subquery hledá MAX(id) **napříč všemi stavy** (včetně NEW=undo),
+        // outer query pak filtruje jen verify-like řádky. Bez tohoto fixu se NEW=undo řádky
+        // ignorovaly v subquery a stats stále počítaly původní READY → po refreshi se počet
+        // navyšoval bez ohledu na undo.
         $statsStmt = $this->pdo->prepare(
             "SELECT
                 SUM(CASE WHEN wl.new_status = 'READY'          THEN 1 ELSE 0 END) AS ready_count,
@@ -281,11 +307,11 @@ final class CistickaController
                  SELECT contact_id, MAX(id) AS last_id
                  FROM workflow_log
                  WHERE user_id = :uid1
-                   AND new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')
                    AND DATE(created_at) = CURDATE()
                  GROUP BY contact_id
              ) last_per_contact ON last_per_contact.last_id = wl.id
-             WHERE wl.user_id = :uid2"
+             WHERE wl.user_id = :uid2
+               AND wl.new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')"
         );
         $statsStmt->execute(['uid1' => $cistickaId, 'uid2' => $cistickaId]);
         $todayStats = $statsStmt->fetch(PDO::FETCH_ASSOC)
@@ -308,11 +334,23 @@ final class CistickaController
         // matoucí — uživatelka viděla "Zkontrolováno 12" i když měla v listu
         // 30 historických záznamů. Teď badge odpovídá počtu řádků v listu
         // (DISTINCT contact_id, regardless of date — Zkontrolováno je all-time view).
+        //
+        // FIX (5/2026): respektovat poslední stav per kontakt. Pokud byl kontakt
+        // verify → undo → NEW, nesmí se počítat. Bez tohoto fixu badge rostl
+        // i po každém undo (kontakt v historii má READY záznam, COUNT(DISTINCT)
+        // ho stále počítal navzdory aktuálnímu NEW stavu).
         $zkontTotalStmt = $this->pdo->prepare(
-            "SELECT COUNT(DISTINCT contact_id) FROM workflow_log
-             WHERE user_id = :uid AND new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')"
+            "SELECT COUNT(*) FROM workflow_log wl
+             INNER JOIN (
+                 SELECT contact_id, MAX(id) AS last_id
+                 FROM workflow_log
+                 WHERE user_id = :uid1
+                 GROUP BY contact_id
+             ) last_per_contact ON last_per_contact.last_id = wl.id
+             WHERE wl.user_id = :uid2
+               AND wl.new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')"
         );
-        $zkontTotalStmt->execute(['uid' => $cistickaId]);
+        $zkontTotalStmt->execute(['uid1' => $cistickaId, 'uid2' => $cistickaId]);
         $zkontrolovaneTotal = (int) $zkontTotalStmt->fetchColumn();
 
         // ── Widget Moje výplata: měsíční počet ověření + sazba + Kč ──
@@ -379,8 +417,9 @@ final class CistickaController
         $isAjax = (($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'XMLHttpRequest');
 
         // Ověř existenci kontaktu ve stavu NEW
+        // FETCH region — potřebujeme pro hook bet_assign_lead (sázky)
         $check = $this->pdo->prepare(
-            'SELECT id, stav, operator FROM contacts WHERE id = :id AND stav = \'NEW\' LIMIT 1'
+            'SELECT id, stav, operator, region FROM contacts WHERE id = :id AND stav = \'NEW\' LIMIT 1'
         );
         $check->execute([':id' => $contactId]);
         $contact = $check->fetch(PDO::FETCH_ASSOC);
@@ -421,9 +460,37 @@ final class CistickaController
             ':note' => 'Čistička: ' . $label,
         ]);
 
+        // ═══════════════════════════════════════════════════════════════
+        // HOOK: Sázky (bet_campaigns)
+        // ───────────────────────────────────────────────────────────────
+        // Pokud TM/O2 (= použitelný lead) a kontakt je v kraji, kde běží
+        // aktivní sázka, automaticky ho zařadit (helpers/bet_campaign.php).
+        // Funkce sama řeší idempotenci a transakční konzistenci.
+        // ═══════════════════════════════════════════════════════════════
+        $betResult = null;
+        if (in_array($action, ['tm', 'o2'], true)) {
+            try {
+                $region = (string) ($contact['region'] ?? '');
+                if ($region !== '') {
+                    $betResult = bet_assign_lead($this->pdo, $contactId, $cistickaId, $region);
+                }
+            } catch (\Throwable $e) {
+                // Bezpečný fallback — chyba sázky nesmí shodit verify samotný.
+                // Jen logujeme; kontakt je už ve stavu READY, takže ho čistička dokončila.
+                if (function_exists('crm_db_log_error')) {
+                    crm_db_log_error($e, __METHOD__);
+                }
+            }
+        }
+
         if ($isAjax) {
             header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['ok' => true, 'operator' => $operatorVal, 'status' => $newStatus]);
+            echo json_encode([
+                'ok'       => true,
+                'operator' => $operatorVal,
+                'status'   => $newStatus,
+                'bet'      => $betResult, // null nebo {campaign_id, recipient_id, oz_id, delivery_type, position, closed}
+            ]);
             exit;
         }
 
@@ -642,6 +709,8 @@ final class CistickaController
         // Bere POUZE poslední workflow_log záznam pro daný kontakt v měsíci.
         // Tím se ignorují přepínání mezi TM/O2/VF u stejného kontaktu —
         // každý kontakt se započítá maximálně jednou (s finálním stavem).
+        // FIX (5/2026): subquery hledá MAX(id) napříč všemi stavy v daném měsíci;
+        // outer WHERE filtruje jen verify-like, takže kontakt po undo není počítán.
         $sumStmt = $this->pdo->prepare(
             'SELECT
                 wl.new_status,
@@ -655,9 +724,9 @@ final class CistickaController
                  WHERE user_id = :uid1
                    AND YEAR(created_at)  = :yr1
                    AND MONTH(created_at) = :mo1
-                   AND new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
                  GROUP BY contact_id
              ) latest ON latest.last_id = wl.id
+             WHERE wl.new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
              GROUP BY wl.new_status, c.operator'
         );
         $sumStmt->execute(['uid1' => $cistickaId, 'yr1' => $year, 'mo1' => $month]);
@@ -679,6 +748,8 @@ final class CistickaController
         // ── Denní breakdown ──
         // Stejný princip: poslední záznam per (den, kontakt). Když čistička
         // přepne kontakt 3× během dne, ten den se započítá jen jednou.
+        // FIX (5/2026): subquery hledá MAX(id) napříč všemi stavy v dni;
+        // outer WHERE filtruje jen verify-like, takže undo se neignoruje.
         $dailyStmt = $this->pdo->prepare(
             'SELECT
                 DAY(wl.created_at)          AS day,
@@ -693,9 +764,9 @@ final class CistickaController
                  WHERE user_id = :uid1
                    AND YEAR(created_at)  = :yr1
                    AND MONTH(created_at) = :mo1
-                   AND new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
                  GROUP BY DAY(created_at), contact_id
              ) latest ON latest.last_id = wl.id
+             WHERE wl.new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
              GROUP BY DAY(wl.created_at), wl.new_status, c.operator
              ORDER BY DAY(wl.created_at) ASC'
         );
@@ -1465,8 +1536,12 @@ final class CistickaController
         }
 
         // Všechna ověření této čističky za měsíc — DISTINCT contact_id, nejnovější
-        // workflow_log řádek per kontakt (kdyby čistička přepnula stejný kontakt 2×,
-        // bere se POSLEDNÍ ověření = jak je výsledný stav teď).
+        // workflow_log řádek per kontakt.
+        // FIX (5/2026): subquery hledá MAX(id) napříč všemi stavy daného měsíce;
+        // outer WHERE filtruje jen verify-like, takže kontakt po undo (poslední
+        // řádek = NEW) se ve výplatě nezobrazí a NEPOČÍTÁ se do odměny.
+        // Bez tohoto fixu se výplata navyšovala i za kontakty, které čistička
+        // vrátila zpět do NEW.
         $sqlEvents = $this->pdo->prepare(
             "SELECT c.id            AS contact_id,
                     c.firma,
@@ -1480,13 +1555,13 @@ final class CistickaController
                  SELECT contact_id, MAX(id) AS last_id
                  FROM workflow_log
                  WHERE user_id = :uid1
-                   AND new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')
                    AND YEAR(created_at)  = :y
                    AND MONTH(created_at) = :m
                  GROUP BY contact_id
              ) last_per_contact ON last_per_contact.last_id = wl.id
              INNER JOIN contacts c ON c.id = wl.contact_id
              WHERE wl.user_id = :uid2
+               AND wl.new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')
              ORDER BY wl.created_at DESC, c.id DESC"
         );
         $sqlEvents->execute([
@@ -1501,10 +1576,12 @@ final class CistickaController
         foreach ($events as $ev) {
             $opRaw = (string) ($ev['operator'] ?? '');
             $opUpper = strtoupper(trim($opRaw));
-            // Sjednotit varianty (VF / O2 / TM / atd.)
+            // Sjednotit varianty (VF / O2 / TM / Chybný / atd.)
             $opKey = match (true) {
                 $ev['new_status'] === 'VF_SKIP' || str_contains($opUpper, 'VODAFONE') || $opUpper === 'VF'
                     => 'Vodafone (skip)',
+                $ev['new_status'] === 'CHYBNY_KONTAKT'
+                    => 'Chybný kontakt',
                 str_contains($opUpper, 'O2')      => 'O2',
                 str_contains($opUpper, 'T-MOBILE') || str_contains($opUpper, 'T MOBILE') || $opUpper === 'TM'
                     => 'T-Mobile',
@@ -1521,6 +1598,10 @@ final class CistickaController
         uasort($byOperator, fn($a, $b) => $b['count'] - $a['count']);
 
         $rewardPerVerify = $this->currentRewardRate() ?? 0.0;
+
+        // Maskování citlivých údajů — jen role 'cisticka' vidí maskovaný telefon/firmu;
+        // majitel/superadmin/atd. mají plný audit view.
+        $maskSensitive = crm_should_mask_for_role((string) ($user['role'] ?? ''));
 
         header('Content-Type: text/html; charset=UTF-8');
         require dirname(__DIR__) . '/views/cisticka/payout_print.php';

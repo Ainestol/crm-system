@@ -9,6 +9,7 @@ declare(strict_types=1);
 /** @var float                           $rewardPerWin */
 /** @var int                             $year */
 /** @var int                             $month */
+/** @var bool                            $maskSensitive true = telefon/firma maskovány (navolavacka role) */
 
 $monthNames = ['', 'Leden','Únor','Březen','Duben','Květen','Červen',
                'Červenec','Srpen','Září','Říjen','Listopad','Prosinec'];
@@ -245,15 +246,21 @@ $docTitle = 'Výplata navolávačky — ' . $caller['jmeno'] . ' — ' . $monthN
                     <?php foreach ($regionContacts as $i => $c) {
                         $isFlagged = (int)($c['flagged'] ?? 0) === 1;
                     ?>
+                    <?php
+                        $firmaRaw = (string) ($c['firma'] ?? '');
+                        $phoneRaw = (string) ($c['telefon'] ?? '');
+                        $firmaOut = $maskSensitive ? crm_mask_firma($firmaRaw) : ($firmaRaw !== '' ? $firmaRaw : '—');
+                        $phoneOut = $maskSensitive ? crm_mask_phone($phoneRaw) : ($phoneRaw !== '' ? $phoneRaw : '—');
+                    ?>
                     <tr class="<?= $isFlagged ? 'row-flagged' : '' ?>">
                         <td class="td-num"><?= $i + 1 ?></td>
                         <td>
-                            <span class="td-firm"><?= htmlspecialchars((string)($c['firma'] ?? '—'), ENT_QUOTES, 'UTF-8') ?></span>
-                            <?php if (!empty($c['poznamka'])) { ?>
+                            <span class="td-firm"><?= htmlspecialchars($firmaOut, ENT_QUOTES, 'UTF-8') ?></span>
+                            <?php if (!empty($c['poznamka']) && !$maskSensitive) { ?>
                                 <div class="td-note"><?= htmlspecialchars((string)$c['poznamka'], ENT_QUOTES, 'UTF-8') ?></div>
                             <?php } ?>
                         </td>
-                        <td class="td-phone"><?= htmlspecialchars((string)($c['telefon'] ?? '—'), ENT_QUOTES, 'UTF-8') ?></td>
+                        <td class="td-phone"><?= htmlspecialchars($phoneOut, ENT_QUOTES, 'UTF-8') ?></td>
                         <td class="td-date">
                             <?= !empty($c['datum_volani'])
                                 ? htmlspecialchars(date('d.m.Y', strtotime((string)$c['datum_volani'])), ENT_QUOTES, 'UTF-8')

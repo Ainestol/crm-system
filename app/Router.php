@@ -548,6 +548,64 @@ final class Router
                 'roles' => ['majitel', 'superadmin'],
                 'handler' => [AdminOzTargetsController::class, 'getPrint'],
             ],
+            // ── Admin: Sázky (bet_campaigns) ──
+            [
+                'method' => 'GET',
+                'path' => '/admin/bet',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminBetController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/admin/bet/new',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminBetController::class, 'getNew'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/bet/create',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminBetController::class, 'postCreate'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/admin/bet/show',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminBetController::class, 'getShow'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/bet/close',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminBetController::class, 'postClose'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/bet/cancel',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminBetController::class, 'postCancel'],
+            ],
+            // ── OZ: Email leady ze sázek (delivery_type='email') ──
+            [
+                'method' => 'GET',
+                'path' => '/oz/email-leads',
+                'auth' => true,
+                'roles' => ['obchodak', 'majitel', 'superadmin'],
+                'handler' => [OzEmailLeadsController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/oz/email-leads/export',
+                'auth' => true,
+                'roles' => ['obchodak', 'majitel', 'superadmin'],
+                'handler' => [OzEmailLeadsController::class, 'getExport'],
+            ],
             // ── OZ: podání reklamace ──
             [
                 'method' => 'POST',
