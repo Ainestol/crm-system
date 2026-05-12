@@ -72,15 +72,9 @@ final class CallerController
                         ? (string) ($_GET['tab'] ?? 'aktivni') : 'aktivni';
         $page     = max(1, (int) ($_GET['page'] ?? 1));
 
-        // ── Migrace: nové sloupce contact_oz_flags (běží vždy, bezpečně) ──────
-        foreach ([
-            "ALTER TABLE `contact_oz_flags` ADD COLUMN `caller_comment`   TEXT NULL DEFAULT NULL",
-            "ALTER TABLE `contact_oz_flags` ADD COLUMN `caller_confirmed` TINYINT(1) NOT NULL DEFAULT 0",
-            "ALTER TABLE `contact_oz_flags` ADD COLUMN `oz_comment`       TEXT NULL DEFAULT NULL",
-            "ALTER TABLE `contact_oz_flags` ADD COLUMN `oz_confirmed`     TINYINT(1) NOT NULL DEFAULT 0",
-        ] as $_migrSql) {
-            try { $this->pdo->exec($_migrSql); } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
-        }
+        // ── Schema sloupců contact_oz_flags je teď v migraci 018 ──────────────
+        // (caller_comment, caller_confirmed, oz_comment, oz_confirmed)
+        // Runtime DDL odstraněn 5/2026 → konec "Duplicate column" log spamu.
 
         // ── Lazy midnight reset: NEDOVOLANO → ASSIGNED po změně dne ──────────
         $this->pdo->prepare(

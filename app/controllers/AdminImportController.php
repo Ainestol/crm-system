@@ -1443,8 +1443,8 @@ final class AdminImportController
      */
     private function bulkInsertActiveWorkflow(array $rows, int $adminId): void
     {
-        // Ověřit že nové sloupce existují (legacy DB instance) — analogicky k closed
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `stav_changed_at` DATETIME(3) NULL DEFAULT NULL'); } catch (\PDOException) {}
+        // Schema `oz_contact_workflow.stav_changed_at` je v migraci 017
+        // (žádný runtime ALTER).
 
         $placeholders = []; $values = [];
         foreach ($rows as $i => $r) {
@@ -1484,15 +1484,9 @@ final class AdminImportController
      */
     private function bulkInsertClosedWorkflow(array $rows, int $adminId): void
     {
-        // Nejdřív zaručit, že nové sloupce existují (legacy DB instance)
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `cislo_smlouvy` VARCHAR(50) NULL DEFAULT NULL'); } catch (\PDOException) {}
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `datum_uzavreni` DATE NULL DEFAULT NULL'); } catch (\PDOException) {}
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `smlouva_trvani_roky` TINYINT UNSIGNED NULL DEFAULT 3'); } catch (\PDOException) {}
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `stav_changed_at` DATETIME(3) NULL DEFAULT NULL'); } catch (\PDOException) {}
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `closed_at` DATETIME(3) NULL DEFAULT NULL'); } catch (\PDOException) {}
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `podpis_potvrzen` TINYINT(1) NOT NULL DEFAULT 0'); } catch (\PDOException) {}
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `podpis_potvrzen_at` DATETIME(3) NULL DEFAULT NULL'); } catch (\PDOException) {}
-        try { $this->pdo->exec('ALTER TABLE `oz_contact_workflow` ADD COLUMN `podpis_potvrzen_by` INT UNSIGNED NULL DEFAULT NULL'); } catch (\PDOException) {}
+        // Schema sloupců `oz_contact_workflow` (cislo_smlouvy, datum_uzavreni,
+        // smlouva_trvani_roky, stav_changed_at, closed_at, podpis_potvrzen*)
+        // je teď v migraci 017 (žádný runtime ALTER).
 
         $placeholders = []; $values = [];
         foreach ($rows as $i => $r) {
