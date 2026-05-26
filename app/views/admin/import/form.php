@@ -67,7 +67,16 @@ declare(strict_types=1);
 </style>
 
 <section class="card import-card">
-    <h1>📥 Import kontaktů</h1>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.5rem;">
+        <h1 style="margin:0;">📥 Import kontaktů</h1>
+        <a href="<?= crm_h(crm_url('/help/topic?id=import')) ?>"
+           target="_blank" rel="noopener"
+           style="background:#dbeafe;border:1px solid #93c5fd;color:#1e40af;
+                  padding:0.4rem 0.9rem;border-radius:6px;text-decoration:none;
+                  font-weight:600;font-size:0.85rem;">
+            ❓ Detailní nápověda k importu
+        </a>
+    </div>
 
     <?php if (!empty($flash)) { ?>
         <p class="alert alert-info"><?= crm_h($flash) ?></p>

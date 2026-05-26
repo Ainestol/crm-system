@@ -258,6 +258,19 @@ if (!$_isAuthPage
                         🔄 Přepnout roli
                     </a>
                 <?php } ?>
+                <?php
+                // Nápověda — jen pro admin/majitel/superadmin
+                $_userRole = (string) ($user['role'] ?? '');
+                $_userExtras = (array) ($user['all_roles'] ?? [$_userRole]);
+                $_canHelp = !empty(array_intersect(['majitel', 'superadmin'], $_userExtras));
+                if ($_canHelp) {
+                ?>
+                    <a href="<?= crm_h(crm_url('/help')) ?>" class="btn"
+                       title="Nápověda — popis funkcí systému, importy, role, fíčry"
+                       style="background:#dbeafe;border:1px solid #93c5fd;color:#1e40af;">
+                        ❓ Nápověda
+                    </a>
+                <?php } ?>
                 <a href="<?= crm_h(crm_url('/account/password')) ?>" class="btn" title="Změna hesla">🔑 Heslo</a>
 
                 <?php

@@ -724,6 +724,21 @@ final class Router
                 'roles' => ['majitel', 'superadmin'],
                 'handler' => [AdminContactMixController::class, 'postSettings'],
             ],
+            // ── Nápověda (in-app dokumentace) ──
+            [
+                'method' => 'GET',
+                'path' => '/help',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [HelpController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/help/topic',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [HelpController::class, 'getDetail'],
+            ],
             // ── OZ: podání reklamace ──
             [
                 'method' => 'POST',
