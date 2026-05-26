@@ -162,7 +162,7 @@ $_czechMonth = static fn(int $m): string => [
                     <th>Pending</th>
                     <th>Cena za lead</th>
                     <th>Pokrok</th>
-                    <th>Pro koho volat</th>
+                    <th>Kdo navolá</th>
                     <th></th>
                 </tr>
             </thead>

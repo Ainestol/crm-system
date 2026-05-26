@@ -228,6 +228,100 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
     </div><!-- /.caller-topbar -->
 
     <!-- ══════════════════════════════════════════════════════════════
+         WIDGET: Moje peníze tento měsíc — standard + rescue bonusy
+         ══════════════════════════════════════════════════════════════ -->
+    <?php
+    $earnTotalEarned    = $earnTotalEarned ?? 0;
+    $earnStandard       = $earnStandard ?? 0;
+    $earnRescueEarned   = $earnRescueEarned ?? 0;
+    $earnRescuePaid     = $earnRescuePaid ?? 0;
+    $earnRescueAwaiting = $earnRescueAwaiting ?? 0;
+    $earnWinsValid      = $earnWinsValid ?? 0;
+    $earnRewardPerWin   = $earnRewardPerWin ?? 0;
+    ?>
+    <div style="background:linear-gradient(135deg,rgba(126,34,206,0.06),rgba(22,163,74,0.04));
+                border:1px solid rgba(126,34,206,0.2);border-radius:8px;
+                padding:0.9rem 1rem;margin:0.8rem 0;">
+        <div style="display:flex;align-items:center;gap:0.6rem;justify-content:space-between;flex-wrap:wrap;margin-bottom:0.6rem;">
+            <h3 style="margin:0;font-size:1rem;color:var(--text);">
+                💰 Moje peníze tento měsíc
+            </h3>
+            <a href="<?= crm_h(crm_url('/caller/payout/print?year=' . (int) date('Y') . '&month=' . (int) date('n'))) ?>"
+               target="_blank" rel="noopener"
+               style="font-size:0.78rem;color:#16a34a;background:rgba(22,163,74,0.1);
+                      border:1px solid rgba(22,163,74,0.3);border-radius:5px;
+                      padding:0.25rem 0.6rem;text-decoration:none;font-weight:600;">
+                📄 PDF výplata
+            </a>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.6rem;">
+            <!-- Standard pay -->
+            <div style="background:#fff;border:1px solid rgba(0,0,0,0.06);border-radius:6px;padding:0.55rem 0.75rem;">
+                <div style="font-size:0.7rem;color:var(--muted,#6b7280);text-transform:uppercase;">
+                    📞 Standard
+                </div>
+                <div style="font-size:1.3rem;font-weight:700;color:#16a34a;">
+                    <?= number_format((float) $earnStandard, 0, ',', ' ') ?> Kč
+                </div>
+                <div style="font-size:0.72rem;color:var(--muted,#9ca3af);">
+                    <?= $earnWinsValid ?>× výhra × <?= number_format((float) $earnRewardPerWin, 0, ',', ' ') ?> Kč
+                </div>
+            </div>
+
+            <!-- Rescue: earned (čeká na vyplacení) -->
+            <?php if ($earnRescueEarned > 0 || $earnRescueAwaiting > 0) { ?>
+            <div style="background:#fff;border:1px solid rgba(126,34,206,0.25);border-radius:6px;padding:0.55rem 0.75rem;">
+                <div style="font-size:0.7rem;color:#7e22ce;text-transform:uppercase;">
+                    🆘 Záchrany (earned)
+                </div>
+                <div style="font-size:1.3rem;font-weight:700;color:#7e22ce;">
+                    <?= number_format((float) $earnRescueEarned, 0, ',', ' ') ?> Kč
+                </div>
+                <div style="font-size:0.72rem;color:var(--muted,#9ca3af);">
+                    <?php if ($earnRescueAwaiting > 0) { ?>
+                        + <?= $earnRescueAwaiting ?>× čeká na podpis
+                    <?php } else { ?>
+                        čeká na vyplacení OZ
+                    <?php } ?>
+                </div>
+            </div>
+            <?php } ?>
+
+            <!-- Rescue: paid (informativně) -->
+            <?php if ($earnRescuePaid > 0) { ?>
+            <div style="background:#fff;border:1px solid rgba(22,163,74,0.25);border-radius:6px;padding:0.55rem 0.75rem;">
+                <div style="font-size:0.7rem;color:#16a34a;text-transform:uppercase;">
+                    ✓ Vyplaceno (záchr.)
+                </div>
+                <div style="font-size:1.3rem;font-weight:700;color:#16a34a;">
+                    <?= number_format((float) $earnRescuePaid, 0, ',', ' ') ?> Kč
+                </div>
+                <div style="font-size:0.72rem;color:var(--muted,#9ca3af);">
+                    OZ už dorovnal
+                </div>
+            </div>
+            <?php } ?>
+
+            <!-- Total -->
+            <div style="background:linear-gradient(135deg,#16a34a,#0d8a3e);color:#fff;
+                        border-radius:6px;padding:0.55rem 0.75rem;">
+                <div style="font-size:0.7rem;opacity:0.85;text-transform:uppercase;">
+                    💼 Celkem (vč. záchran)
+                </div>
+                <div style="font-size:1.5rem;font-weight:700;">
+                    <?= number_format((float) $earnTotalEarned, 0, ',', ' ') ?> Kč
+                </div>
+                <?php if ($earnRescueAwaiting > 0) { ?>
+                    <div style="font-size:0.7rem;opacity:0.85;">
+                        + <?= $earnRescueAwaiting ?> čekajících záchran
+                    </div>
+                <?php } ?>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════
          WIDGET: Volné kvóty OZ × kraj  (read-only, sbalený default)
 
          Pomáhá navolávačce vidět "kde mám ještě navolávat" — kdo
@@ -521,6 +615,18 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
             ⚠ Chybné od OZ <span class="badge badge--chybne-oz"><?= (int) ($tabCounts['chybne_oz'] ?? 0) ?></span>
         </a>
         <?php } ?>
+        <?php
+        // 🆘 Záchrana — zobrazit pokud jsou aktivní rescue requests nebo je tab vybraný
+        $rescueCount = count($rescueItems ?? []);
+        if ($rescueCount > 0 || $tab === 'rescue') { ?>
+        <a href="<?= crm_h(crm_url('/caller?tab=rescue')) ?>"
+           class="tab tab--rescue <?= $tab === 'rescue' ? 'tab--active' : '' ?>"
+           style="color:#7e22ce;"
+           title="Záchrana leadů — OZ poslal zpět, do 14 dní zachraň">
+            🆘 Záchrana
+            <span class="badge" style="background:rgba(126,34,206,0.18);color:#7e22ce;"><?= $rescueCount ?></span>
+        </a>
+        <?php } ?>
         <a href="<?= crm_h(crm_url('/caller/search')) ?>" class="tab tab--search">🔍 Hledat</a>
         <a href="<?= crm_h(crm_url('/caller/stats')) ?>" class="tab tab--stats">📊 Výkon</a>
     </div>
@@ -556,7 +662,162 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
         </form>
     <?php } ?>
 
-    <?php if ($tab === 'chybne_oz') { ?>
+    <?php if ($tab === 'rescue') { ?>
+        <!-- ══ Tab: Záchrana ══ -->
+        <?php
+        $rescueItemsArr = $rescueItems ?? [];
+        if ($rescueItemsArr === []) { ?>
+            <div style="margin-top:1rem;background:var(--card);border:1px solid rgba(0,0,0,0.08);border-radius:8px;padding:2rem;text-align:center;color:var(--muted);">
+                <div style="font-size:2.5rem;margin-bottom:0.5rem;">🆘</div>
+                <h3 style="margin:0 0 0.5rem;">Žádné záchrany k řešení</h3>
+                <p style="margin:0;font-size:0.9rem;">
+                    Když OZ pošle nereagujícího zákazníka na záchranu, objeví se tady. Máš 14 dní zachránit ho a získat bonus = 1× hodnota smlouvy (vyplácí se až po podpisu a aktivaci služeb).
+                </p>
+            </div>
+        <?php } else { ?>
+            <div style="margin-top:0.75rem;display:flex;flex-direction:column;gap:0.6rem;">
+                <p style="font-size:0.82rem;color:var(--muted);margin:0;">
+                    💡 Záchrana = OZ ti vrátil lead protože zákazník nezvedá / nereaguje. Pokud zachráníš (úspěšný hovor),
+                    dostaneš bonus = 1× hodnota smlouvy AŽ když OZ smlouvu podepíše <strong>a služby budou aktivovány</strong>. Máš na to 14 dní.
+                </p>
+                <?php foreach ($rescueItemsArr as $rr) {
+                    $rId    = (int) $rr['rescue_id'];
+                    $cId    = (int) $rr['contact_id'];
+                    $hoursLeft = (int) $rr['hours_left'];
+                    $deadlineColor = $hoursLeft < 24 ? '#dc2626' : ($hoursLeft < 72 ? '#f59e0b' : '#6b7280');
+                ?>
+                    <div style="background:var(--card);border:1px solid rgba(126,34,206,0.25);
+                                border-left:4px solid #7e22ce;border-radius:0 8px 8px 0;
+                                padding:0.75rem 1rem;">
+                        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.4rem;">
+                            <div>
+                                <div style="font-size:1.05rem;font-weight:700;color:var(--text);">
+                                    <?= crm_h((string) ($rr['firma'] ?? '—')) ?>
+                                </div>
+                                <div style="font-size:0.85rem;color:var(--muted);margin-top:0.15rem;">
+                                    <?php if (!empty($rr['telefon'])) { ?>
+                                        <a href="tel:<?= crm_h((string) $rr['telefon']) ?>" style="color:#7e22ce;font-weight:600;">
+                                            📞 <?= crm_h((string) $rr['telefon']) ?>
+                                        </a>
+                                    <?php } ?>
+                                    <?php if (!empty($rr['region'])) { ?>
+                                        · <?= crm_h(crm_region_label((string) $rr['region'])) ?>
+                                    <?php } ?>
+                                </div>
+                            </div>
+                            <div style="text-align:right;font-size:0.78rem;color:<?= $deadlineColor ?>;font-weight:600;">
+                                ⏱ <?= $hoursLeft ?> h zbývá<br>
+                                <span style="font-weight:400;color:var(--muted);">do <?= date('d.m. H:i', strtotime((string) $rr['expires_at'])) ?></span>
+                            </div>
+                        </div>
+
+                        <div style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem;">
+                            <strong style="color:var(--text);">Od OZ:</strong> <?= crm_h((string) ($rr['original_sales_name'] ?? '?')) ?>
+                            <?php if (!empty($rr['target_sales_name']) && $rr['target_sales_id'] !== $rr['original_sales_id']) { ?>
+                                → po záchraně přidělit <strong style="color:var(--text);"><?= crm_h((string) $rr['target_sales_name']) ?></strong>
+                            <?php } elseif ((int) $rr['prefer_original'] === 1) { ?>
+                                → po záchraně <strong style="color:var(--text);">zpět <?= crm_h((string) ($rr['original_sales_name'] ?? '?')) ?></strong>
+                            <?php } ?>
+                        </div>
+
+                        <div style="background:rgba(126,34,206,0.05);padding:0.5rem 0.7rem;border-radius:5px;
+                                    font-size:0.85rem;font-style:italic;color:var(--text);margin-bottom:0.6rem;">
+                            📝 <?= crm_h((string) ($rr['reason'] ?? '')) ?>
+                        </div>
+
+                        <!-- Akce -->
+                        <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                            <?php
+                            // Komu lead defaultně půjde po úspěchu?
+                            $defaultTargetId   = (int) ($rr['target_sales_id'] ?? 0);
+                            $defaultTargetName = (string) ($rr['target_sales_name'] ?? '');
+                            if ($defaultTargetId === 0 && (int) ($rr['prefer_original'] ?? 0) === 1) {
+                                $defaultTargetId   = (int) ($rr['original_sales_id'] ?? 0);
+                                $defaultTargetName = (string) ($rr['original_sales_name'] ?? '');
+                            }
+                            ?>
+                            <!-- Úspěch — s poznámkou + možností přesměrovat na jiného OZ -->
+                            <form method="post" action="<?= crm_h(crm_url('/caller/rescue/status')) ?>"
+                                  style="margin:0;background:rgba(22,163,74,0.05);padding:0.5rem;
+                                         border-radius:6px;border:1px solid rgba(22,163,74,0.2);">
+                                <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+                                <input type="hidden" name="rescue_id" value="<?= $rId ?>">
+                                <input type="hidden" name="action" value="success">
+
+                                <!-- Řádek 1: poznámka -->
+                                <input type="text" name="note" maxlength="500"
+                                       placeholder="poznámka pro OZ (uvidí ji u kontaktu) — co zákazník říkal…"
+                                       style="width:100%;padding:0.4rem 0.6rem;
+                                              border:1px solid rgba(22,163,74,0.3);border-radius:5px;
+                                              font-size:0.82rem;margin-bottom:0.4rem;">
+
+                                <!-- Řádek 2: cílový OZ -->
+                                <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;font-size:0.82rem;margin-bottom:0.4rem;">
+                                    <span style="color:#374151;">→ Předat OZ:</span>
+                                    <?php if ($defaultTargetId > 0) { ?>
+                                        <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer;">
+                                            <input type="radio" name="override_mode_<?= $rId ?>" value="default" checked
+                                                   onchange="document.getElementById('rescue-override-<?= $rId ?>').style.display='none';
+                                                            document.getElementById('rescue-override-sel-<?= $rId ?>').name='';">
+                                            <span><strong style="color:#16a34a;"><?= crm_h($defaultTargetName) ?></strong> <em style="color:#6b7280;font-size:0.78rem;">(podle žádosti OZ)</em></span>
+                                        </label>
+                                    <?php } ?>
+                                    <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer;">
+                                        <input type="radio" name="override_mode_<?= $rId ?>" value="other"
+                                               <?= $defaultTargetId === 0 ? 'checked' : '' ?>
+                                               onchange="document.getElementById('rescue-override-<?= $rId ?>').style.display='inline-block';
+                                                        document.getElementById('rescue-override-sel-<?= $rId ?>').name='override_sales_id';
+                                                        document.getElementById('rescue-override-sel-<?= $rId ?>').focus();">
+                                        <span>↪ Jiný OZ</span>
+                                    </label>
+                                    <span id="rescue-override-<?= $rId ?>" style="display:<?= $defaultTargetId === 0 ? 'inline-block' : 'none' ?>;">
+                                        <select id="rescue-override-sel-<?= $rId ?>"
+                                                <?= $defaultTargetId === 0 ? 'name="override_sales_id"' : '' ?>
+                                                style="padding:0.3rem 0.5rem;border:1px solid rgba(0,0,0,0.15);border-radius:5px;font-size:0.8rem;">
+                                            <option value="">— vyber OZ —</option>
+                                            <?php foreach (($rescueOzList ?? []) as $_ozOpt) { ?>
+                                                <option value="<?= (int) $_ozOpt['id'] ?>"><?= crm_h((string) $_ozOpt['jmeno']) ?></option>
+                                            <?php } ?>
+                                        </select>
+                                    </span>
+                                </div>
+
+                                <!-- Řádek 3: tlačítko -->
+                                <button type="submit"
+                                        onclick="return confirm('Označit záchranu jako ÚSPĚŠNOU? Lead jde OZ. Bonus dostaneš po podpisu a aktivaci služeb.')"
+                                        style="background:#16a34a;color:#fff;border:none;padding:0.45rem 1rem;
+                                               border-radius:5px;cursor:pointer;font-size:0.85rem;font-weight:600;">
+                                    ✅ Zachráněno
+                                </button>
+                            </form>
+                            <!-- Neúspěch -->
+                            <form method="post" action="<?= crm_h(crm_url('/caller/rescue/status')) ?>"
+                                  style="margin:0;display:flex;gap:0.3rem;flex-wrap:wrap;align-items:center;">
+                                <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+                                <input type="hidden" name="rescue_id" value="<?= $rId ?>">
+                                <input type="text" name="note" placeholder="důvod nezdaru (povinný)..."
+                                       maxlength="500" required
+                                       style="flex:1;min-width:180px;padding:0.4rem 0.6rem;
+                                              border:1px solid rgba(220,38,38,0.3);border-radius:5px;
+                                              font-size:0.82rem;">
+                                <select name="action"
+                                        style="padding:0.4rem 0.5rem;border:1px solid rgba(0,0,0,0.15);border-radius:5px;font-size:0.82rem;">
+                                    <option value="nezajem">❌ Nezájem</option>
+                                    <option value="called_bad">⛔ Bad call</option>
+                                    <option value="izolace">🚫 Izolace</option>
+                                </select>
+                                <button type="submit"
+                                        style="background:#dc2626;color:#fff;border:none;padding:0.45rem 0.9rem;
+                                               border-radius:5px;cursor:pointer;font-size:0.85rem;font-weight:600;">
+                                    Uzavřít neúspěch
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                <?php } ?>
+            </div>
+        <?php } ?>
+    <?php } elseif ($tab === 'chybne_oz') { ?>
         <!-- ══ Tab: Chybné leady od OZ ══ -->
         <?php if ($contacts === []) { ?>
             <p class="muted" style="margin-top:1rem;">✅ Žádné chybné leady od OZ — skvělá práce!</p>
@@ -756,6 +1017,17 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
                                 <button type="button" class="btn-mismatch"
                                         onclick="crmFlagMismatch(<?= $cId ?>, this)"
                                         title="Operátor nesedí — nahlásit majiteli">⚡ nesedí</button>
+                            <?php } ?>
+                            <?php
+                            // Bet badge — kontakt patří do sázky/kampaně
+                            $betInfoBadge = $betContacts[$cId] ?? null;
+                            if ($betInfoBadge !== null) { ?>
+                                <span title="Kontakt ze sázky '<?= crm_h($betInfoBadge['campaign_name']) ?>' — OZ <?= crm_h($betInfoBadge['oz_name']) ?> je fixně přiřazen"
+                                      style="background:#fef3c7;color:#92400e;font-size:0.68rem;padding:0.1rem 0.4rem;
+                                             border-radius:3px;margin-left:0.4rem;font-weight:700;vertical-align:middle;
+                                             border:1px solid #fbbf24;">
+                                    🎯 SÁZKA #<?= (int) $betInfoBadge['position'] ?>
+                                </span>
                             <?php } ?>
                         </div>
 
@@ -991,7 +1263,29 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
 
                             <!-- Win panel: výběr OZ (povinný) -->
                             <div class="win-panel hidden">
-                                <?php if ($noSales) { ?>
+                                <?php
+                                // BET LOCK: pokud je kontakt v sázce, OZ je FIXNĚ určen kampaní —
+                                // ignorujeme dropdown a vykreslíme readonly badge + hidden input.
+                                $betInfo = $betContacts[$cId] ?? null;
+                                ?>
+                                <?php if ($betInfo !== null) { ?>
+                                    <span class="loss-menu-label">Předat výhru:</span>
+                                    <span style="background:#fef3c7;border:1px solid #fbbf24;
+                                                 padding:0.3rem 0.7rem;border-radius:14px;font-size:0.88rem;
+                                                 display:inline-flex;align-items:center;gap:0.3rem;">
+                                        🔒 <strong><?= crm_h($betInfo['oz_name']) ?></strong>
+                                        <span style="font-size:0.75rem;color:#92400e;">
+                                            (🎯 <?= crm_h($betInfo['campaign_name']) ?> · pozice <?= (int) $betInfo['position'] ?>)
+                                        </span>
+                                    </span>
+                                    <!-- Hidden sales_id — backend ho stejně ignoruje (lock), ale form ho posílá pro konzistenci -->
+                                    <input type="hidden" name="sales_id" value="<?= (int) $betInfo['oz_id'] ?>">
+                                    <button type="submit" name="new_status" value="CALLED_OK"
+                                            class="btn-win-confirm">✓ Potvrdit výhru</button>
+                                    <button type="button"
+                                            onclick="this.closest('.win-panel').classList.add('hidden')"
+                                            class="btn-loss-zpet">← Zpět</button>
+                                <?php } elseif ($noSales) { ?>
                                     <span class="loss-menu-label" style="color:#e74c3c;">
                                         ⚠ Žádní obchodáci v tomto kraji.
                                     </span>
@@ -1119,14 +1413,7 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
         <?php } ?>
     <?php } ?>
 
-    <div style="margin-top:1.5rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
-        <a href="<?= crm_h(crm_url('/caller/search')) ?>" class="btn btn-secondary">🔍 Hledat kontakt</a>
-        <a href="<?= crm_h(crm_url('/dashboard')) ?>" class="btn btn-secondary">Dashboard</a>
-        <form method="post" action="<?= crm_h(crm_url('/logout')) ?>" style="margin:0;">
-            <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
-            <button type="submit" class="btn btn-secondary">Odhlásit se</button>
-        </form>
-    </div>
+    <!-- Spodní akce odebrány — Dashboard / Hledat / Odhlásit jsou v top baru i sidebaru. -->
 </section>
 
 <script>

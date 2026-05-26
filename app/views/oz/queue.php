@@ -246,6 +246,19 @@ function ozqElapsed(?string $dt): string {
                             <?php } ?>
                         </div>
                         <div class="oz-card__header-meta">
+                            <?php
+                            // Bet badge — kontakt pochází ze sázky
+                            $betPI = $betPendingMap[$cId] ?? null;
+                            if ($betPI !== null) { ?>
+                                <a href="<?= crm_h(crm_url('/oz/campaigns?id=' . (int) $betPI['campaign_id'])) ?>"
+                                   style="background:#fef3c7;color:#92400e;font-size:0.78rem;
+                                          padding:0.3rem 0.7rem;border-radius:14px;font-weight:600;
+                                          border:1px solid #fbbf24;text-decoration:none;display:inline-block;margin-bottom:0.3rem;"
+                                   title="Lead ze sázky / kampaně — klikni pro detail">
+                                    🎯 <?= crm_h($betPI['campaign_name']) ?> · #<?= (int) $betPI['position'] ?>
+                                </a>
+                                <br>
+                            <?php } ?>
                             <?php if ($reg !== '') { ?>
                                 <!-- Region zvýrazněný = primární barva, větší než default badge -->
                                 <span class="oz-badge oz-badge--primary"

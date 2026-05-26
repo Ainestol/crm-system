@@ -429,6 +429,32 @@ final class OzController
             crm_db_log_error($e, __METHOD__);
         }
 
+        // ── Rescue map: pro každý kontakt, který tento OZ vidí, načti rescue history ──
+        // Použito v leads.php pro zobrazení info boxu "🆘 Byl zachráněn navolávačkou X"
+        // s textem co napsala při úspěchu.
+        $rescueMap = [];
+        try {
+            $rmStmt = $this->pdo->prepare(
+                "SELECT rr.contact_id, rr.outcome, rr.reason, rr.notes,
+                        rr.requested_at, rr.rescued_at, rr.expired_at, rr.expires_at,
+                        rr.original_sales_id, rr.final_sales_id,
+                        urc.jmeno AS rescued_by_caller_name,
+                        uo.jmeno  AS original_sales_name,
+                        uf.jmeno  AS final_sales_name
+                 FROM rescue_requests rr
+                 LEFT JOIN users urc ON urc.id = rr.rescued_by_caller_id
+                 LEFT JOIN users uo  ON uo.id  = rr.original_sales_id
+                 LEFT JOIN users uf  ON uf.id  = rr.final_sales_id
+                 WHERE rr.original_sales_id = :oz1 OR rr.final_sales_id = :oz2"
+            );
+            $rmStmt->execute(['oz1' => $ozId, 'oz2' => $ozId]);
+            foreach ($rmStmt->fetchAll(PDO::FETCH_ASSOC) as $rrRow) {
+                $rescueMap[(int) $rrRow['contact_id']] = $rrRow;
+            }
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+        }
+
         $title = 'Pracovní plocha';
         ob_start();
         require dirname(__DIR__) . '/views/oz/leads.php';
@@ -1497,6 +1523,26 @@ final class OzController
                      updated_at         = NOW(3)
                  WHERE contact_id = :cid AND oz_id = :oid"
             )->execute(['uid' => $ozId, 'cid' => $contactId, 'oid' => $ozId]);
+
+            // HOOK: pokud byl tento kontakt předtím zachráněn navolávačkou,
+            // teď je čas „lock-in" bonusu = bmsl (měsíční hodnota smlouvy).
+            // Helper sám odfiltruje case, kdy bonus už byl nastaven nebo záchrana neexistuje.
+            try {
+                $bmStmt = $this->pdo->prepare(
+                    "SELECT COALESCE(bmsl, 0) FROM oz_contact_workflow
+                     WHERE contact_id = :cid AND oz_id = :oid LIMIT 1"
+                );
+                $bmStmt->execute(['cid' => $contactId, 'oid' => $ozId]);
+                $bmsl = (float) ($bmStmt->fetchColumn() ?: 0);
+                if ($bmsl > 0 && function_exists('rescue_finalize_bonus')) {
+                    rescue_finalize_bonus($this->pdo, $contactId, $bmsl);
+                }
+            } catch (\Throwable $e) {
+                // Nesmí shodit potvrzení podpisu
+                if (function_exists('crm_db_log_error')) {
+                    crm_db_log_error($e, __METHOD__);
+                }
+            }
         } else {
             $this->pdo->prepare(
                 "UPDATE oz_contact_workflow
@@ -2165,6 +2211,47 @@ final class OzController
             crm_db_log_error($e, __METHOD__);
         }
 
+        // ── Dlužné za záchrany ──
+        // 3 fáze:
+        //   1) Záchrana úspěšná, bonus_amount NULL → čeká na můj podpis smlouvy
+        //   2) Bonus_amount nastaven, bonus_paid_at NULL → dlužím navolávačce
+        //   3) Bonus_paid_at → vyplaceno (informativně)
+        $rescueDebt = [];
+        $rescueDebtTotal   = 0.0;
+        $rescueDebtPaid    = 0.0;
+        $rescueAwaitingCnt = 0;
+        try {
+            $rdStmt = $this->pdo->prepare(
+                "SELECT rr.id, rr.contact_id, rr.outcome, rr.rescued_at,
+                        rr.bonus_amount, rr.bonus_locked_at, rr.bonus_paid_at,
+                        rr.original_sales_id, rr.final_sales_id,
+                        c.firma, c.region,
+                        urc.jmeno AS caller_name
+                 FROM rescue_requests rr
+                 LEFT JOIN contacts c   ON c.id = rr.contact_id
+                 LEFT JOIN users urc    ON urc.id = rr.rescued_by_caller_id
+                 WHERE (rr.original_sales_id = :oz1 OR rr.final_sales_id = :oz2)
+                   AND rr.outcome = 'success'
+                   AND YEAR(rr.rescued_at)  = :y
+                   AND MONTH(rr.rescued_at) = :m
+                 ORDER BY rr.rescued_at ASC"
+            );
+            $rdStmt->execute(['oz1' => $ozId, 'oz2' => $ozId, 'y' => $year, 'm' => $month]);
+            $rescueDebt = $rdStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($rescueDebt as $rd) {
+                $amt = (float) ($rd['bonus_amount'] ?? 0);
+                if ($amt <= 0) {
+                    $rescueAwaitingCnt++;
+                } elseif (empty($rd['bonus_paid_at'])) {
+                    $rescueDebtTotal += $amt;
+                } else {
+                    $rescueDebtPaid += $amt;
+                }
+            }
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+        }
+
         $title = 'Můj měsíc';
         ob_start();
         require dirname(__DIR__) . '/views/oz/index.php';
@@ -2743,6 +2830,36 @@ final class OzController
         // aktivní, $regionCounts (filtered) se v UI nepoužije, ale necháváme pro
         // možnou budoucí potřebu (např. zobrazení "X po filtru").
         $regionCounts = $regionCountsAll;
+
+        // ── 1e) Bet info: které pending kontakty patří do sázky/kampaně ──
+        // Map: contact_id => { campaign_name, campaign_id, position, delivery_type }
+        // Použito ve view pro badge "🎯 ze sázky XYZ".
+        $betPendingMap = [];
+        if ($pendingLeads !== []) {
+            $pIds = array_map(fn($p) => (int) $p['id'], $pendingLeads);
+            $ph   = implode(',', array_fill(0, count($pIds), '?'));
+            try {
+                $bpStmt = $this->pdo->prepare(
+                    "SELECT bcl.contact_id, bcl.position, bcr.delivery_type,
+                            bc.id AS campaign_id, bc.name AS campaign_name
+                     FROM bet_campaign_leads bcl
+                     JOIN bet_campaign_recipients bcr ON bcr.id = bcl.recipient_id
+                     JOIN bet_campaigns bc ON bc.id = bcl.campaign_id
+                     WHERE bcl.contact_id IN ($ph)"
+                );
+                $bpStmt->execute($pIds);
+                foreach ($bpStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                    $betPendingMap[(int) $r['contact_id']] = [
+                        'campaign_id'   => (int) $r['campaign_id'],
+                        'campaign_name' => (string) $r['campaign_name'],
+                        'position'      => (int) $r['position'],
+                        'delivery_type' => (string) $r['delivery_type'],
+                    ];
+                }
+            } catch (\PDOException $e) {
+                crm_db_log_error($e, __METHOD__);
+            }
+        }
 
         // ── 2) Renewal alerty (kontakty s blížícím se koncem smlouvy) ──
         // Stejný query jako v getLeads(), ale limit 20 (queue přehled).

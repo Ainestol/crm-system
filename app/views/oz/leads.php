@@ -673,6 +673,14 @@ $renewalsForOz = $renewalsForOz ?? [];
                     title="Lead byl špatně navolán — navolávačka dostane upozornění, lead se nepočítá jako placený">
                 ⚠ Chybný lead
             </button>
+            <button type="button"
+                    onclick="ozToggleRescuePanel(<?= $cId ?>)"
+                    title="Zákazník nereaguje — pošli na záchranu navolávačce (14 dní), získá bonus = 1× hodnota smlouvy (po podpisu a aktivaci služeb)"
+                    class="oz-btn oz-btn--chybny-lead"
+                    style="background:rgba(126,34,206,0.10);color:#7e22ce;border:1px solid rgba(126,34,206,0.3);
+                           margin-left:0.15rem;">
+                🆘 Záchrana
+            </button>
             <?php } ?>
             <div class="oz-contact__meta">
                 <?php if (!empty($c['region'])) { ?>
@@ -757,6 +765,85 @@ $renewalsForOz = $renewalsForOz ?? [];
                 </div>
             </form>
         </div>
+
+        <!-- ── Panel: Záchrana (RESCUE) — defaultně hidden ── -->
+        <div id="rescue-panel-<?= $cId ?>" class="oz-reklamace-panel"
+             style="display:none;border-left:4px solid #7e22ce;background:rgba(126,34,206,0.06);">
+            <div class="oz-reklamace-panel__title" style="color:#7e22ce;">🆘 Předat na záchranu</div>
+            <div class="oz-reklamace-panel__hint">
+                Zákazník nereaguje (např. nezvedá, neodpovídá). Lead jde navolávačce na <strong>14 dní</strong>.
+                Pokud zachrání = bonus pro ni 1× hodnota smlouvy (od tebe) — vyplácí se až po <strong>podpisu A aktivaci služeb</strong>.
+                Pokud expiruje = neplatíš ~200 Kč za původní navolávání.
+            </div>
+            <form method="post" action="<?= crm_h(crm_url('/oz/contact/rescue')) ?>"
+                  id="rescue-form-<?= $cId ?>"
+                  style="display:flex;flex-direction:column;gap:0.4rem;">
+                <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+                <input type="hidden" name="contact_id" value="<?= $cId ?>">
+                <input type="text" name="reason" required maxlength="500"
+                       placeholder="Důvod — např. 4× nezvedá, neodpovídá na e-mail"
+                       style="padding:0.4rem 0.6rem;border:1px solid rgba(126,34,206,0.3);border-radius:5px;
+                              font-size:0.82rem;font-family:inherit;">
+                <div style="display:flex;gap:0.8rem;flex-wrap:wrap;font-size:0.78rem;">
+                    <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer;">
+                        <input type="radio" name="target_mode" value="me" checked
+                               onchange="ozRescueToggleTarget_<?= $cId ?>()">
+                        <span>↩ Vrátit mně po záchraně</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer;">
+                        <input type="radio" name="target_mode" value="other"
+                               onchange="ozRescueToggleTarget_<?= $cId ?>()">
+                        <span>→ Předat jinému OZ</span>
+                    </label>
+                </div>
+                <div id="rescue-other-wrap-<?= $cId ?>" style="display:none;">
+                    <select name="target_sales_id"
+                            style="width:100%;padding:0.4rem 0.6rem;border:1px solid rgba(0,0,0,0.15);
+                                   border-radius:5px;font-size:0.82rem;font-family:inherit;">
+                        <option value="">— vyber OZ —</option>
+                        <?php
+                        // Načti OZ list jen jednou na začátku stránky — cache do statiky
+                        static $_rescueOzList = null;
+                        if ($_rescueOzList === null) {
+                            try {
+                                $_rescueOzList = $pdo->query(
+                                    "SELECT id, jmeno FROM users
+                                     WHERE aktivni = 1
+                                       AND (role = 'obchodak' OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"'))
+                                       AND id != " . (int) ($user['id'] ?? 0) . "
+                                     ORDER BY jmeno ASC"
+                                )->fetchAll(PDO::FETCH_ASSOC);
+                            } catch (\Throwable $_) { $_rescueOzList = []; }
+                        }
+                        foreach ($_rescueOzList as $_oz) {
+                            echo '<option value="' . (int) $_oz['id'] . '">' . crm_h((string) $_oz['jmeno']) . '</option>';
+                        }
+                        ?>
+                    </select>
+                </div>
+                <div style="display:flex;gap:0.4rem;align-items:center;">
+                    <button type="submit"
+                            style="background:#7e22ce;color:#fff;border:none;border-radius:5px;
+                                   padding:0.4rem 0.9rem;font-size:0.82rem;font-weight:600;cursor:pointer;">
+                        🆘 Předat na záchranu
+                    </button>
+                    <button type="button" class="oz-btn oz-btn--save"
+                            onclick="ozToggleRescuePanel(<?= $cId ?>)">Zrušit</button>
+                </div>
+            </form>
+        </div>
+        <script>
+            function ozRescueToggleTarget_<?= $cId ?>() {
+                var radios = document.getElementsByName('target_mode');
+                // Najdi ten náš formulář
+                var form = document.getElementById('rescue-form-<?= $cId ?>');
+                if (!form) return;
+                var checked = form.querySelector('input[name=target_mode]:checked');
+                var wrap = document.getElementById('rescue-other-wrap-<?= $cId ?>');
+                if (!wrap || !checked) return;
+                wrap.style.display = (checked.value === 'other') ? 'block' : 'none';
+            }
+        </script>
         <?php } ?>
 
         <!-- Schůzka čas (pokud nastavena) -->
@@ -765,6 +852,70 @@ $renewalsForOz = $renewalsForOz ?? [];
             <span class="oz-schuzka-info">
                 📅 Schůzka: <strong><?= crm_h(ozMeetingLabel($schuzkaAt)) ?></strong>
             </span>
+        </div>
+        <?php } ?>
+
+        <?php
+        // ── Rescue history info-box ──
+        // Pokud byl tento kontakt někdy v záchraně, ukaž OZ co se s ním stalo.
+        $rescueInfo = ($rescueMap ?? [])[$cId] ?? null;
+        if ($rescueInfo !== null) {
+            $rrOutcome = (string) $rescueInfo['outcome'];
+            $rrColor   = match ($rrOutcome) {
+                'pending' => '#7e22ce',
+                'success' => '#16a34a',
+                'failed'  => '#dc2626',
+                'expired' => '#9ca3af',
+                default   => '#6b7280',
+            };
+            $rrBg      = match ($rrOutcome) {
+                'pending' => 'rgba(126,34,206,0.07)',
+                'success' => 'rgba(22,163,74,0.07)',
+                'failed'  => 'rgba(220,38,38,0.07)',
+                'expired' => 'rgba(156,163,175,0.07)',
+                default   => 'rgba(107,114,128,0.07)',
+            };
+            $rrLabel   = match ($rrOutcome) {
+                'pending' => '🆘 V záchraně (čeká na navolávačku)',
+                'success' => '🆘 Tento lead byl zachráněn navolávačkou',
+                'failed'  => '🆘 Záchrana neúspěšná',
+                'expired' => '⌛ Záchrana expirovala (14 dní)',
+                default   => '🆘 Záchrana',
+            };
+        ?>
+        <div style="margin:0 0.9rem 0.4rem;padding:0.55rem 0.8rem;background:<?= $rrBg ?>;
+                    border-left:3px solid <?= $rrColor ?>;border-radius:0 6px 6px 0;font-size:0.82rem;">
+            <div style="font-weight:600;color:<?= $rrColor ?>;margin-bottom:0.25rem;">
+                <?= $rrLabel ?>
+            </div>
+            <?php if (!empty($rescueInfo['rescued_by_caller_name'])) { ?>
+                <div style="color:var(--oz-text-2,#374151);">
+                    👤 <strong><?= crm_h((string) $rescueInfo['rescued_by_caller_name']) ?></strong>
+                    <?php if (!empty($rescueInfo['rescued_at'])) { ?>
+                        · <?= crm_h(date('d.m.Y H:i', strtotime((string) $rescueInfo['rescued_at']))) ?>
+                    <?php } ?>
+                </div>
+            <?php } ?>
+            <?php if (!empty($rescueInfo['reason'])) { ?>
+                <div style="color:var(--oz-text-3,#6b7280);margin-top:0.2rem;font-style:italic;">
+                    📝 Tvůj důvod záchrany: „<?= crm_h((string) $rescueInfo['reason']) ?>"
+                </div>
+            <?php } ?>
+            <?php if (!empty($rescueInfo['notes'])) { ?>
+                <div style="color:var(--oz-text-2,#374151);margin-top:0.25rem;padding:0.4rem 0.55rem;
+                            background:rgba(255,255,255,0.55);border-radius:5px;border:1px dashed <?= $rrColor ?>;">
+                    💬 <strong>Vzkaz od navolávačky:</strong> <?= crm_h((string) $rescueInfo['notes']) ?>
+                </div>
+            <?php } ?>
+            <?php if ($rrOutcome === 'success') { ?>
+                <div style="color:#16a34a;margin-top:0.3rem;font-size:0.75rem;">
+                    💡 Po podpisu a aktivaci služeb dostane navolávačka bonus = 1× hodnota smlouvy.
+                </div>
+            <?php } elseif ($rrOutcome === 'expired') { ?>
+                <div style="color:#9ca3af;margin-top:0.3rem;font-size:0.75rem;">
+                    Caller nestihl(a) zachránit do 14 dní. Ty neplatíš ~200 Kč za původní navolávání.
+                </div>
+            <?php } ?>
         </div>
         <?php } ?>
 

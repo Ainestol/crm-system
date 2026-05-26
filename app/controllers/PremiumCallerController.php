@@ -119,18 +119,28 @@ final class PremiumCallerController
     // ════════════════════════════════════════════════════════════════
 
     /**
-     * Mapování tab → SQL WHERE pro contacts.stav.
+     * Mapování tab → SQL WHERE.
+     *
+     * VŽDY používáme primárně `premium_lead_pool.call_status` jako autoritativní zdroj
+     * (nezávisí na contacts.stav, který může být cokoliv kvůli standardnímu pipeline).
+     * Pro callback/nedovolano padáme na contacts.stav, protože pool nemá vlastní stavy
+     * pro tyto případy (call_status zůstává 'pending').
+     *
      * @return array{0:string, 1:array<string,mixed>}
      */
     private function tabFilter(string $tab): array
     {
         return match ($tab) {
-            'k_volani'   => ["c.stav = 'READY'", []],
+            // K volání = pool je pending (nikdy nevoláno) NEBO bylo voláno ale stav je READY/NEW
+            // (= ne callback ani nedovoláno ani konečný stav)
+            'k_volani'   => ["p.call_status = 'pending'
+                              AND (c.stav IS NULL OR c.stav NOT IN ('CALLBACK','NEDOVOLANO','CALLED_OK','FOR_SALES','NEZAJEM','CALLED_BAD'))", []],
             'callbacky'  => ["c.stav = 'CALLBACK'", []],
             'nedovolano' => ["c.stav = 'NEDOVOLANO' AND c.nedovolano_count < :max_nedo",
                              ['max_nedo' => self::MAX_NEDOVOLANO]],
-            'navolane'   => ["c.stav IN ('CALLED_OK', 'FOR_SALES')", []],
-            'prohra'     => ["c.stav IN ('NEZAJEM', 'CALLED_BAD')", []],
+            // Navolané/prohra — primárně call_status (autoritativní), contacts.stav jako fallback
+            'navolane'   => ["(p.call_status = 'success' OR c.stav IN ('CALLED_OK', 'FOR_SALES'))", []],
+            'prohra'     => ["(p.call_status = 'failed' OR c.stav IN ('NEZAJEM', 'CALLED_BAD'))", []],
             default      => ["1=0", []],
         };
     }
@@ -156,13 +166,20 @@ final class PremiumCallerController
     {
         [$accSql, $accParams] = $this->accessFilter($callerId, $isAdmin);
 
+        // K volání: pool call_status='pending' a contacts.stav nesignalizuje konečný stav
+        // Callbacky/nedovolano: dependuje na contacts.stav (premium pipeline je tam mírně přebírá)
+        // Navolané/prohra: autoritativně z call_status, contacts.stav jako fallback
         $sql = "SELECT
-                  SUM(CASE WHEN c.stav = 'READY' THEN 1 ELSE 0 END)                       AS k_volani,
+                  SUM(CASE WHEN p.call_status = 'pending'
+                            AND (c.stav IS NULL OR c.stav NOT IN ('CALLBACK','NEDOVOLANO','CALLED_OK','FOR_SALES','NEZAJEM','CALLED_BAD'))
+                            THEN 1 ELSE 0 END)                                             AS k_volani,
                   SUM(CASE WHEN c.stav = 'CALLBACK' THEN 1 ELSE 0 END)                    AS callbacky,
                   SUM(CASE WHEN c.stav = 'NEDOVOLANO' AND c.nedovolano_count < :max_nedo
                             THEN 1 ELSE 0 END)                                             AS nedovolano,
-                  SUM(CASE WHEN c.stav IN ('CALLED_OK', 'FOR_SALES') THEN 1 ELSE 0 END)   AS navolane,
-                  SUM(CASE WHEN c.stav IN ('NEZAJEM', 'CALLED_BAD') THEN 1 ELSE 0 END)    AS prohra
+                  SUM(CASE WHEN p.call_status = 'success' OR c.stav IN ('CALLED_OK', 'FOR_SALES')
+                            THEN 1 ELSE 0 END)                                             AS navolane,
+                  SUM(CASE WHEN p.call_status = 'failed' OR c.stav IN ('NEZAJEM', 'CALLED_BAD')
+                            THEN 1 ELSE 0 END)                                             AS prohra
                 FROM premium_lead_pool p
                 JOIN premium_orders po ON po.id = p.order_id
                 JOIN contacts c        ON c.id  = p.contact_id
@@ -174,7 +191,7 @@ final class PremiumCallerController
         $stmt->execute(array_merge(['max_nedo' => self::MAX_NEDOVOLANO], $accParams));
         $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
-        // Objednavky badge: počet objednávek s alespoň 1 callable lead
+        // Objednavky badge: počet objednávek s alespoň 1 callable lead (nezávisí na contacts.stav)
         $objStmt = $this->pdo->prepare(
             "SELECT COUNT(DISTINCT po.id)
              FROM premium_lead_pool p
@@ -182,8 +199,12 @@ final class PremiumCallerController
              JOIN contacts c        ON c.id  = p.contact_id
              WHERE p.cleaning_status = 'tradeable'
                AND po.status IN ('open', 'closed')
-               AND (c.stav = 'READY' OR c.stav = 'CALLBACK'
-                    OR (c.stav = 'NEDOVOLANO' AND c.nedovolano_count < :max_nedo3))
+               AND (
+                   (p.call_status = 'pending'
+                    AND (c.stav IS NULL OR c.stav NOT IN ('CALLED_OK','FOR_SALES','NEZAJEM','CALLED_BAD','IZOLACE','CHYBNY_KONTAKT')))
+                   OR c.stav = 'CALLBACK'
+                   OR (c.stav = 'NEDOVOLANO' AND c.nedovolano_count < :max_nedo3)
+               )
                $accSql"
         );
         $objStmt->execute(array_merge(['max_nedo3' => self::MAX_NEDOVOLANO], $accParams));
@@ -201,6 +222,16 @@ final class PremiumCallerController
         [$accSql, $accParams] = $this->accessFilter($callerId, $isAdmin);
         $maxN = self::MAX_NEDOVOLANO;
 
+        // Callable lead = cleaning_status=tradeable AND (call pending OR callback/nedovolano)
+        // Primárně call_status='pending' (= ještě nikdo nevolal), fallback na contacts.stav
+        // pro mid-states (callback, nedovolano).
+        $callableCondition = "p.cleaning_status = 'tradeable' AND (
+            (p.call_status = 'pending'
+             AND (c.stav IS NULL OR c.stav NOT IN ('CALLED_OK','FOR_SALES','NEZAJEM','CALLED_BAD','IZOLACE','CHYBNY_KONTAKT')))
+            OR c.stav = 'CALLBACK'
+            OR (c.stav = 'NEDOVOLANO' AND c.nedovolano_count < $maxN)
+        )";
+
         $sql = "SELECT po.id              AS order_id,
                        po.oz_id,
                        u_oz.jmeno         AS oz_name,
@@ -215,9 +246,7 @@ final class PremiumCallerController
                        po.status          AS order_status,
                        (SELECT COUNT(*) FROM premium_lead_pool p
                           JOIN contacts c ON c.id = p.contact_id
-                          WHERE p.order_id = po.id AND p.cleaning_status = 'tradeable'
-                            AND (c.stav = 'READY' OR c.stav = 'CALLBACK'
-                                 OR (c.stav = 'NEDOVOLANO' AND c.nedovolano_count < $maxN))
+                          WHERE p.order_id = po.id AND ($callableCondition)
                        ) AS callable_count,
                        (SELECT COUNT(*) FROM premium_lead_pool p
                           WHERE p.order_id = po.id AND p.cleaning_status = 'tradeable'
@@ -229,9 +258,7 @@ final class PremiumCallerController
                   AND EXISTS (
                       SELECT 1 FROM premium_lead_pool p
                       JOIN contacts c ON c.id = p.contact_id
-                      WHERE p.order_id = po.id AND p.cleaning_status = 'tradeable'
-                        AND (c.stav = 'READY' OR c.stav = 'CALLBACK'
-                             OR (c.stav = 'NEDOVOLANO' AND c.nedovolano_count < $maxN))
+                      WHERE p.order_id = po.id AND ($callableCondition)
                   )
                   $accSql
                 ORDER BY (po.preferred_caller_id = :cid_priority) DESC,
@@ -363,13 +390,19 @@ final class PremiumCallerController
      */
     private function computeOrderTabCounts(int $orderId): array
     {
+        // Stejná logika jako computeTabCounts: K-volání primárně přes call_status='pending',
+        // callbacky/nedovolano přes contacts.stav, navolané/prohra přes obojí.
         $sql = "SELECT
-                  SUM(CASE WHEN c.stav = 'READY' THEN 1 ELSE 0 END)                       AS k_volani,
+                  SUM(CASE WHEN p.call_status = 'pending'
+                            AND (c.stav IS NULL OR c.stav NOT IN ('CALLBACK','NEDOVOLANO','CALLED_OK','FOR_SALES','NEZAJEM','CALLED_BAD'))
+                            THEN 1 ELSE 0 END)                                             AS k_volani,
                   SUM(CASE WHEN c.stav = 'CALLBACK' THEN 1 ELSE 0 END)                    AS callbacky,
                   SUM(CASE WHEN c.stav = 'NEDOVOLANO' AND c.nedovolano_count < :max_nedo
                             THEN 1 ELSE 0 END)                                             AS nedovolano,
-                  SUM(CASE WHEN c.stav IN ('CALLED_OK', 'FOR_SALES') THEN 1 ELSE 0 END)   AS navolane,
-                  SUM(CASE WHEN c.stav IN ('NEZAJEM', 'CALLED_BAD') THEN 1 ELSE 0 END)    AS prohra
+                  SUM(CASE WHEN p.call_status = 'success' OR c.stav IN ('CALLED_OK', 'FOR_SALES')
+                            THEN 1 ELSE 0 END)                                             AS navolane,
+                  SUM(CASE WHEN p.call_status = 'failed' OR c.stav IN ('NEZAJEM', 'CALLED_BAD')
+                            THEN 1 ELSE 0 END)                                             AS prohra
                 FROM premium_lead_pool p
                 JOIN contacts c ON c.id = p.contact_id
                 WHERE p.order_id = :oid AND p.cleaning_status = 'tradeable'";

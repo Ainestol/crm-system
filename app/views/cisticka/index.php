@@ -484,18 +484,28 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
                             Zbývá: <?= max(0, $target - $done) ?> · <?= $pct ?> %
                         </span>
                     <?php } ?>
-                    <?php if ($myDone > 0 && $myDone < $done) { ?>
-                        <span style="color:#7e3ff2; font-size:0.7rem; font-weight:600; margin-left:6px;"
-                              title="Z celkového progresu jsi vyčistila ty <?= $myDone ?> kontaktů">
-                            (z toho ty: <?= $myDone ?>)
-                        </span>
-                    <?php } ?>
-                    <?php /* Badge "X NEW" pouze na záložce K-ověření — jinak by
-                              ukazovala historický count, což je zavádějící. */ ?>
-                    <?php if ($tab === 'overit' && $newCnt > 0 && !$done100) { ?>
+                    <?php
+                    // "(z toho ty: N)" — span renderujeme VŽDY s ID pro live JS update.
+                    // Skryjeme přes display:none, pokud myDone=0 nebo myDone=done (= celé jsem dělala já).
+                    $showMine    = ($myDone > 0 && $myDone < $done);
+                    $mineDisplay = $showMine ? 'inline' : 'none';
+                    ?>
+                    <span id="goal-mine-<?= crm_h($reg) ?>"
+                          data-mine="<?= $myDone ?>"
+                          data-total="<?= $done ?>"
+                          style="color:#7e3ff2; font-size:0.7rem; font-weight:600; margin-left:6px;display:<?= $mineDisplay ?>;"
+                          title="Z celkového progresu jsi vyčistila ty <?= $myDone ?> kontaktů">
+                        (z toho ty: <span class="goal-mine-num"><?= $myDone ?></span>)
+                    </span>
+                    <?php
+                    /* Badge "K dispozici v DB" — ZOBRAZÍME VŽDY (nezávisle na tabu),
+                       ať čistička vidí kolik NEW kontaktů je v DB k vyčištění v tom kraji.
+                       Skryjeme jen pokud je 0 (na completed regionech bývá 0). */
+                    $newDbCnt = (int) ($newInDbPerRegion[$reg] ?? 0);
+                    if ($newDbCnt > 0 && !$done100) { ?>
                         <span class="cist-goal__newcnt" id="goal-newcnt-<?= crm_h($reg) ?>"
-                              title="Kolik nečištěných NEW kontaktů je v tomto kraji k dispozici (z celkového poolu)">
-                            <?= $newCnt ?> NEW k dispozici
+                              title="Kolik NEW kontaktů je v tomto kraji v DB k vyčištění">
+                            <span class="goal-newcnt-num"><?= $newDbCnt ?></span> v DB
                         </span>
                     <?php } ?>
                 </div>
@@ -799,6 +809,12 @@ function cistVerify(contactId, action, btn) {
                 // Stats: pro 'chybny' předáme 'CHYBNY' (nemá vlastní badge, ale počítá se do total/ready)
                 cistUpdateStats(action === 'chybny' ? 'CHYBNY' : op, +1, contactId);
 
+                // NEW count v DB pro daný kraj — dekrement HNED (v DB to tak je: status už není NEW).
+                // Pozn: pokud uživatel udělá undo do 5s, status se vrátí na NEW — pak by se badge měl re-inkrementovat
+                // (řešíme v cistUndo níže).
+                var rowReg = row && row.dataset ? (row.dataset.region || '') : '';
+                if (rowReg) cistNewCountDecrement(rowReg);
+
                 // Live update sázky (pokud kontakt byl zařazen do bet_campaigns).
                 // Backend posílá data.bet = null | {campaign_id, recipient_id, position, closed, ...}
                 if (data.bet) {
@@ -848,6 +864,13 @@ function cistUndo(contactId, originalAction) {
                 else if (originalAction === 'tm')      wasOp = 'TM';
                 else                                   wasOp = 'O2';
                 cistUpdateStats(wasOp, -1, contactId);
+
+                // NEW count v DB pro daný kraj — re-inkrement (status se vrací zpět na NEW).
+                var undoReg = (function() {
+                    var r = document.getElementById('cist-row-' + contactId);
+                    return r && r.dataset ? (r.dataset.region || '') : '';
+                })();
+                if (undoReg) cistNewCountIncrement(undoReg);
             } else {
                 if (btn) btn.disabled = false;
                 alert(data.error || 'Undo se nezdařilo.');
@@ -879,6 +902,12 @@ function cistStartUndoCountdown(contactId) {
 }
 
 /* ── Odebrání řádku z DOM po schválení (fade-out) ─────────────────── */
+// Set contact_id, pro které už byl tab-badge-done inkrementován.
+// Stejný princip jako _cwAddedContactIds u widgetu — server-side query je
+// COUNT(DISTINCT contact_id), tj. opakovaný verify stejného kontaktu (po undo)
+// nesmí inkrementovat 2×.
+window._cistDoneBadgeIds = window._cistDoneBadgeIds || new Set();
+
 function cistRemoveRow(contactId) {
     var row = document.getElementById('cist-row-' + contactId);
     if (!row) return;
@@ -890,6 +919,15 @@ function cistRemoveRow(contactId) {
     // Tím se předejde duplicitnímu počítání při TM → Zpět → TM cyklu.
     if (region !== '') {
         cistGoalIncrement(region);
+    }
+
+    // Tab badge "Zkontrolováno" — inkrement TADY (synchronizovaně s tile counterem).
+    // Předtím se updatoval hned (0s), což vypadalo nesynchronně. Teď oba updaty
+    // proběhnou v jeden okamžik (po 5s expiraci undo okna).
+    if (contactId && !window._cistDoneBadgeIds.has(contactId)) {
+        window._cistDoneBadgeIds.add(contactId);
+        var elDoneTab = document.getElementById('tab-badge-done');
+        if (elDoneTab) elDoneTab.textContent = (parseInt(elDoneTab.textContent, 10) || 0) + 1;
     }
 
     if (region) {
@@ -1003,13 +1041,9 @@ function cistUpdateStats(op, delta, contactId) {
         }
         if (elQueue) elQueue.textContent = Math.max(0, (parseInt(elQueue.textContent, 10) || 1) - 1);
         if (elNew)   elNew.textContent   = Math.max(0, (parseInt(elNew.textContent, 10)   || 1) - 1);
-        // Zkontrolováno badge = all-time DISTINCT contact_id; verify nově ověřil,
-        // takže počet roste o 1. Ale POZOR: pokud byl kontakt už dříve verifikován
-        // a teď proběhne re-verify (po undo), server-side count se nemění (DISTINCT).
-        // Inkrementujeme jen poprvé per contactId.
-        if (contactId && !window._cwAddedContactIds.has(contactId)) {
-            if (elDone) elDone.textContent = (parseInt(elDone.textContent, 10) || 0) + 1;
-        }
+        // POZOR: badge "Zkontrolováno" (tab-badge-done) se TADY neaktualizuje.
+        // Přesunuto do cistRemoveRow (po 5s undo okně), aby synchronizovaně s tile
+        // counterem ("28/400"). Předtím to bylo nesynchronní (badge hned, tile po 5s).
 
         // Live update widgetu "Moje výplata" — pošleme contactId, ať Set
         // může deduplikovat opakované verify stejného kontaktu.
@@ -1271,6 +1305,29 @@ cistVerify = function(contactId, action, btn) {
     return result;
 };
 
+/** Dekrement "K dispozici v DB" badge pro daný kraj (hned po verify). */
+function cistNewCountDecrement(region) {
+    var badge = document.getElementById('goal-newcnt-' + region);
+    if (!badge) return;
+    var numEl = badge.querySelector('.goal-newcnt-num');
+    if (!numEl) return;
+    var cur = parseInt(numEl.textContent, 10) || 0;
+    var nxt = Math.max(0, cur - 1);
+    numEl.textContent = String(nxt);
+    if (nxt === 0) badge.style.display = 'none';
+}
+
+/** Inkrement "K dispozici v DB" badge pro daný kraj (po undo). */
+function cistNewCountIncrement(region) {
+    var badge = document.getElementById('goal-newcnt-' + region);
+    if (!badge) return;
+    var numEl = badge.querySelector('.goal-newcnt-num');
+    if (!numEl) return;
+    var cur = parseInt(numEl.textContent, 10) || 0;
+    numEl.textContent = String(cur + 1);
+    badge.style.display = ''; // zobraz pokud byl skrytý
+}
+
 /** Inkrementuje progress bar pro daný kraj (real-time bez reloadu). */
 function cistGoalIncrement(region) {
     // V past/future view tile zobrazují historický progress —
@@ -1292,6 +1349,20 @@ function cistGoalIncrement(region) {
 
     if (doneEl) doneEl.textContent = String(done);
     if (fillEl) fillEl.style.width = pct + '%';
+
+    // "(z toho ty: N)" — inkrement personal counter (server-rendered ID).
+    // Zobrazí span, pokud byl skrytý (myDone byl 0 a teď je 1).
+    var mineSpan = document.getElementById('goal-mine-' + region);
+    if (mineSpan) {
+        var mine = parseInt(mineSpan.dataset.mine || '0', 10) + 1;
+        mineSpan.dataset.mine  = String(mine);
+        mineSpan.dataset.total = String(done);
+        var mineNumEl = mineSpan.querySelector('.goal-mine-num');
+        if (mineNumEl) mineNumEl.textContent = String(mine);
+        // Zobraz, pokud myDone < done (= ostatní také pracovali). Pokud myDone == done,
+        // skryj (= já jsem dělala všechno → "z toho ty" nemá smysl ukazovat).
+        mineSpan.style.display = (mine > 0 && mine < done) ? 'inline' : 'none';
+    }
     if (statusEl) {
         if (done >= target) {
             statusEl.innerHTML = '<span style="color:var(--muted);">✓ Hotovo · čeká na nový cíl</span>';

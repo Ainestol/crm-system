@@ -64,6 +64,17 @@ final class AdminBetController
              ORDER BY jmeno ASC"
         )->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
+        // Načti navolávačky pro multi-select
+        $callerList = $this->pdo->query(
+            "SELECT id, jmeno, email
+             FROM users
+             WHERE aktivni = 1 AND (
+                 role = 'navolavacka'
+                 OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"')
+             )
+             ORDER BY jmeno ASC"
+        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
         $regionChoices = function_exists('crm_region_choices') ? crm_region_choices() : [];
 
         $flash = crm_flash_take();
@@ -165,6 +176,38 @@ final class AdminBetController
                     'sort' => $r['sort_order'],
                 ]);
             }
+
+            // INSERT navolávaček (pokud admin nějaké vybral)
+            $callerIdsRaw = (array) ($_POST['caller_ids'] ?? []);
+            $callerIds    = [];
+            foreach ($callerIdsRaw as $cid) {
+                $cidInt = (int) $cid;
+                if ($cidInt > 0) {
+                    $callerIds[$cidInt] = true; // dedupe
+                }
+            }
+            if ($callerIds !== []) {
+                // Validace: pouze aktivní uživatelé s role caller
+                $ph = implode(',', array_fill(0, count($callerIds), '?'));
+                $validStmt = $this->pdo->prepare(
+                    "SELECT id FROM users WHERE id IN ($ph) AND aktivni = 1 AND (
+                        role = 'navolavacka'
+                        OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"')
+                     )"
+                );
+                $validStmt->execute(array_keys($callerIds));
+                $validCallerIds = array_map('intval', $validStmt->fetchAll(PDO::FETCH_COLUMN) ?: []);
+
+                if ($validCallerIds !== []) {
+                    $caStmt = $this->pdo->prepare(
+                        "INSERT INTO bet_campaign_callers (campaign_id, caller_id) VALUES (:cid, :uid)"
+                    );
+                    foreach ($validCallerIds as $vCid) {
+                        $caStmt->execute(['cid' => $campaignId, 'uid' => $vCid]);
+                    }
+                }
+            }
+
             $this->pdo->commit();
 
             crm_flash_set("Sázka '$name' vytvořena (ID $campaignId).");
@@ -228,6 +271,28 @@ final class AdminBetController
         $lStmt->execute([$id]);
         $sampleLeads = $lStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
+        // Přiřazené navolávačky
+        $caStmt = $this->pdo->prepare(
+            "SELECT bcc.caller_id, u.jmeno, u.email
+             FROM bet_campaign_callers bcc
+             JOIN users u ON u.id = bcc.caller_id
+             WHERE bcc.campaign_id = ?
+             ORDER BY u.jmeno ASC"
+        );
+        $caStmt->execute([$id]);
+        $assignedCallers = $caStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        // Všechny dostupné navolávačky (pro „přidat" panel)
+        $allCallers = $this->pdo->query(
+            "SELECT id, jmeno, email
+             FROM users
+             WHERE aktivni = 1 AND (
+                 role = 'navolavacka'
+                 OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"')
+             )
+             ORDER BY jmeno ASC"
+        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
         $flash = crm_flash_take();
         $csrf  = crm_csrf_token();
         $title = 'Sázka: ' . (string) $campaign['name'];
@@ -261,6 +326,80 @@ final class AdminBetController
 
         crm_flash_set('Sázka uzavřena.');
         crm_redirect('/admin/bet/show?id=' . $id);
+    }
+
+    /** POST /admin/bet/add-caller — přidá navolávačku do existující sázky */
+    public function postAddCaller(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['majitel', 'superadmin']);
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            crm_flash_set('Neplatný CSRF token.');
+            crm_redirect('/admin/bet');
+        }
+
+        $campaignId = (int) ($_POST['campaign_id'] ?? 0);
+        $callerId   = (int) ($_POST['caller_id'] ?? 0);
+
+        if ($campaignId <= 0 || $callerId <= 0) {
+            crm_redirect('/admin/bet');
+        }
+
+        // Validace: caller existuje a má roli caller
+        $vStmt = $this->pdo->prepare(
+            "SELECT id FROM users WHERE id = ? AND aktivni = 1 AND (
+                role = 'navolavacka'
+                OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"')
+             )"
+        );
+        $vStmt->execute([$callerId]);
+        if ($vStmt->fetchColumn() === false) {
+            crm_flash_set('Vybraná navolávačka neexistuje nebo nemá roli navolavacka.');
+            crm_redirect('/admin/bet/show?id=' . $campaignId);
+        }
+
+        try {
+            $this->pdo->prepare(
+                "INSERT INTO bet_campaign_callers (campaign_id, caller_id) VALUES (?, ?)"
+            )->execute([$campaignId, $callerId]);
+            crm_flash_set('Navolávačka přidána.');
+        } catch (\PDOException $e) {
+            // UNIQUE constraint — už je tam
+            if ((int) $e->errorInfo[1] === 1062) {
+                crm_flash_set('Tato navolávačka už je v sázce přiřazena.');
+            } else {
+                crm_flash_set('Chyba: ' . $e->getMessage());
+            }
+        }
+
+        crm_redirect('/admin/bet/show?id=' . $campaignId);
+    }
+
+    /** POST /admin/bet/remove-caller — odebere navolávačku ze sázky */
+    public function postRemoveCaller(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['majitel', 'superadmin']);
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            crm_flash_set('Neplatný CSRF token.');
+            crm_redirect('/admin/bet');
+        }
+
+        $campaignId = (int) ($_POST['campaign_id'] ?? 0);
+        $callerId   = (int) ($_POST['caller_id'] ?? 0);
+
+        if ($campaignId <= 0 || $callerId <= 0) {
+            crm_redirect('/admin/bet');
+        }
+
+        $this->pdo->prepare(
+            "DELETE FROM bet_campaign_callers WHERE campaign_id = ? AND caller_id = ?"
+        )->execute([$campaignId, $callerId]);
+
+        crm_flash_set('Navolávačka odebrána.');
+        crm_redirect('/admin/bet/show?id=' . $campaignId);
     }
 
     /** POST /admin/bet/cancel — zruší sázku (status=cancelled) */

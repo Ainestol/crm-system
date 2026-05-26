@@ -227,6 +227,14 @@ $stavLabel = $stavLabels[$ozStav] ?? $ozStav;
                 ⚠ Chybný lead
             </button>
 
+            <!-- 7b) Záchrana (RESCUE) — zákazník nereaguje, dej caller šanci znovu navolat -->
+            <button type="button" class="oz-btn-secondary"
+                    onclick="ozWorkExpand('rescue')"
+                    style="color:#7e22ce;border-color:rgba(126,34,206,0.3);"
+                    title="Předat lead navolávačce na záchranu (zákazník nezvedá / nereaguje)">
+                🆘 Záchrana
+            </button>
+
             <!-- 8) Nezájem (NEZAJEM) — vpravo, separated -->
             <button type="button" class="oz-btn-negative"
                     onclick="ozWorkConfirmNezajem(this)">
@@ -317,6 +325,72 @@ $stavLabel = $stavLabels[$ozStav] ?? $ozStav;
                 </button>
                 <button type="button" class="oz-btn-ghost oz-btn-sm"
                         onclick="ozWorkCollapse('reklamace')">Zrušit</button>
+            </div>
+        </div>
+
+        <!-- Inline panel: Záchrana (RESCUE) — vyžaduje důvod + cíl -->
+        <div id="oz-panel-rescue" class="oz-inline-panel" hidden
+             style="border-color:rgba(126,34,206,0.4);background:rgba(126,34,206,0.06);">
+            <label style="display:block;font-size:var(--oz-text-sm);color:#7e22ce;
+                          margin-bottom:0.3rem;font-weight:600;">
+                🆘 Záchrana — proč zákazník nereaguje?
+            </label>
+            <div style="font-size:var(--oz-text-xs);color:var(--oz-text-3);margin-bottom:0.4rem;">
+                Lead jde navolávačce na <strong>14 dní</strong>. Pokud zachrání, dostane bonus = 1× hodnota smlouvy (od tebe) — <strong>vyplácí se až po podpisu a aktivaci služeb</strong>.
+                Pokud expiruje, nezaplatíš ~200 Kč za původní navolávání.
+            </div>
+            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                <input type="text" id="oz-rescue-reason" maxlength="500"
+                       placeholder="např. 4× nezvedá telefon, nereaguje na e-mail"
+                       style="padding:0.5rem 0.7rem;background:var(--oz-bg);
+                              color:var(--oz-text);border:1px solid var(--oz-border);
+                              border-radius:var(--oz-radius-md);font-family:inherit;
+                              font-size:var(--oz-text-base);">
+                <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;font-size:var(--oz-text-sm);">
+                    <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
+                        <input type="radio" name="oz-rescue-target-mode" value="me" checked
+                               onchange="ozRescueToggleTarget()">
+                        <span>↩ Vrátit mně po záchraně</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
+                        <input type="radio" name="oz-rescue-target-mode" value="other"
+                               onchange="ozRescueToggleTarget()">
+                        <span>→ Předat jinému OZ</span>
+                    </label>
+                </div>
+                <div id="oz-rescue-other-wrap" style="display:none;">
+                    <select id="oz-rescue-target-id"
+                            style="width:100%;padding:0.5rem 0.7rem;background:var(--oz-bg);
+                                   color:var(--oz-text);border:1px solid var(--oz-border);
+                                   border-radius:var(--oz-radius-md);font-family:inherit;
+                                   font-size:var(--oz-text-base);">
+                        <option value="">— vyber OZ —</option>
+                        <?php
+                        // Načti seznam OZ pro select
+                        try {
+                            $ozListStmt = $pdo->query(
+                                "SELECT id, jmeno FROM users
+                                 WHERE aktivni = 1
+                                   AND (role = 'obchodak' OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"'))
+                                   AND id != " . (int) ($user['id'] ?? 0) . "
+                                 ORDER BY jmeno ASC"
+                            );
+                            foreach ($ozListStmt->fetchAll(PDO::FETCH_ASSOC) as $_oz) {
+                                echo '<option value="' . (int) $_oz['id'] . '">' . crm_h((string) $_oz['jmeno']) . '</option>';
+                            }
+                        } catch (\Throwable $_) {}
+                        ?>
+                    </select>
+                </div>
+                <div style="display:flex;gap:0.5rem;align-items:center;">
+                    <button type="button" class="oz-btn-primary"
+                            style="background:#7e22ce;border-color:#7e22ce;"
+                            onclick="ozWorkSubmitRescue(this)">
+                        🆘 Předat na záchranu
+                    </button>
+                    <button type="button" class="oz-btn-ghost oz-btn-sm"
+                            onclick="ozWorkCollapse('rescue')">Zrušit</button>
+                </div>
             </div>
         </div>
 
@@ -586,6 +660,75 @@ $stavLabel = $stavLabels[$ozStav] ?? $ozStav;
             btn.style.borderColor = origBor;
             btn.style.color       = '';
         }, 5000);
+    };
+
+    // ── ZÁCHRANA — toggle target select + submit přes /oz/contact/rescue ──
+    window.ozRescueToggleTarget = function () {
+        var radios = document.getElementsByName('oz-rescue-target-mode');
+        var wrap   = document.getElementById('oz-rescue-other-wrap');
+        if (!wrap) return;
+        var mode = 'me';
+        for (var i = 0; i < radios.length; i++) {
+            if (radios[i].checked) { mode = radios[i].value; break; }
+        }
+        wrap.style.display = (mode === 'other') ? 'block' : 'none';
+    };
+
+    window.ozWorkSubmitRescue = function (btn) {
+        var reason = (document.getElementById('oz-rescue-reason').value || '').trim();
+        if (reason === '') {
+            alert('⚠ Vyplň důvod záchrany.');
+            document.getElementById('oz-rescue-reason').focus();
+            return;
+        }
+        var radios = document.getElementsByName('oz-rescue-target-mode');
+        var targetMode = 'me';
+        for (var j = 0; j < radios.length; j++) {
+            if (radios[j].checked) { targetMode = radios[j].value; break; }
+        }
+        var targetSalesId = 0;
+        if (targetMode === 'other') {
+            var sel = document.getElementById('oz-rescue-target-id');
+            targetSalesId = sel ? parseInt(sel.value || '0', 10) : 0;
+            if (targetSalesId <= 0) {
+                alert('⚠ Vyber konkrétního OZ, kterému se má lead předat.');
+                return;
+            }
+        }
+
+        // Form fields — contact_id z hlavního formu
+        var contactId = form.elements['contact_id']
+            ? form.elements['contact_id'].value
+            : (form.querySelector('input[name=contact_id]') || {}).value;
+        var csrf = (form.querySelector('input[name="' + (window.CRM_CSRF_FIELD || 'csrf_token') + '"]') || {}).value || '';
+
+        if (btn) btn.disabled = true;
+        var fd = new FormData();
+        fd.append('contact_id', contactId);
+        fd.append('reason', reason);
+        fd.append('target_mode', targetMode);
+        if (targetSalesId > 0) fd.append('target_sales_id', String(targetSalesId));
+        fd.append(window.CRM_CSRF_FIELD || 'csrf_token', csrf);
+
+        fetch((window.CRM_URL_BASE || '') + '/oz/contact/rescue', {
+            method: 'POST',
+            body: fd,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.ok) {
+                alert('🆘 Předáno na záchranu. Deadline: ' + (data.expires_at || '14 dní').substring(0, 16));
+                window.location.href = (window.CRM_URL_BASE || '') + '/oz/leads';
+            } else {
+                if (btn) btn.disabled = false;
+                alert('⚠ ' + (data.error || 'Chyba'));
+            }
+        })
+        .catch(function (e) {
+            if (btn) btn.disabled = false;
+            alert('⚠ Síťová chyba: ' + e);
+        });
     };
 
     // Klávesy: 1=Nabídka, 2=Schůzka, 3=Callback, 4=Šance, 5=Předat BO, 6=Save note, ESC=collapse

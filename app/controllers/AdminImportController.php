@@ -344,14 +344,41 @@ final class AdminImportController
         // Cleanup
         $this->cleanupImport($importDir);
 
+        // ── AUTO-MIX po importu ──
+        // Pokud admin v nastavení zapnul auto-mix (default: ZAPNUTÉ), nově importované
+        // NEW kontakty se automaticky namíchají v poměru z app_settings a připojí
+        // na konec existující fronty. Bez auto-mixu by admin musel manuálně klikat.
+        $autoMixMsg = '';
+        if ($stats['imported'] > 0
+            && function_exists('crm_setting_get_bool')
+            && crm_setting_get_bool('mix_auto_after_import', true)
+            && class_exists('AdminContactMixController')
+        ) {
+            try {
+                $mixResult = AdminContactMixController::runMix($this->pdo);
+                if ($mixResult['mixed'] > 0) {
+                    $autoMixMsg = sprintf(
+                        ' 🎲 Auto-mix: %d kontaktů (%d firma + %d OSVČ).',
+                        $mixResult['mixed'],
+                        $mixResult['firma'],
+                        $mixResult['osvc']
+                    );
+                }
+            } catch (\Throwable $e) {
+                crm_db_log_error($e, __METHOD__ . '_automix');
+                $autoMixMsg = ' ⚠ Auto-mix selhal — spusť ručně v /admin/contacts/mix.';
+            }
+        }
+
         crm_flash_set(sprintf(
-            '✓ Import dokončen: vloženo %d, aktualizováno %d, sloučeno %d, přeskočeno (DB-dup) %d, přeskočeno (DNC) %d, chyby %d.',
+            '✓ Import dokončen: vloženo %d, aktualizováno %d, sloučeno %d, přeskočeno (DB-dup) %d, přeskočeno (DNC) %d, chyby %d.%s',
             $stats['imported'],
             $stats['updated'],
             $stats['merged'] ?? 0,
             $dupAction === 'skip' ? $stats['db_dup'] : 0,
             $stats['skipped_dnc'],
-            $stats['errors']
+            $stats['errors'],
+            $autoMixMsg
         ));
         crm_redirect('/admin/import');
     }

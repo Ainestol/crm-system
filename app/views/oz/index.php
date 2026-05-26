@@ -600,6 +600,112 @@ $totalValid = $totalReceived - $totalFlagged;
 
     <?php } ?>
 
+    <!-- ── Dlužné za záchrany ── -->
+    <?php
+    $rescueDebt        = $rescueDebt ?? [];
+    $rescueDebtTotal   = $rescueDebtTotal ?? 0;
+    $rescueDebtPaid    = $rescueDebtPaid ?? 0;
+    $rescueAwaitingCnt = $rescueAwaitingCnt ?? 0;
+    if (!empty($rescueDebt)) {
+    ?>
+    <div style="margin-top:1.5rem;background:rgba(126,34,206,0.04);
+                border:1px solid rgba(126,34,206,0.3);border-radius:8px;padding:1rem;">
+        <h2 style="margin:0 0 0.4rem;font-size:1.05rem;color:#7e22ce;">
+            🆘 Záchrany — dlužné navolávačkám
+        </h2>
+        <p style="margin:0 0 0.8rem;font-size:0.82rem;color:var(--muted,#6b7280);">
+            Když jsi poslal lead na záchranu a navolávačka uspěla, dlužíš jí <strong>1× hodnota smlouvy</strong>.
+            Částka se vyčíslí <strong>až po potvrzení podpisu</strong> (zaškrtni „Podpis potvrzen"
+            v Back-office sekci), bonus se vyplatí <strong>po aktivaci služeb</strong>.
+        </p>
+
+        <div style="display:flex;gap:0.8rem;margin-bottom:0.8rem;flex-wrap:wrap;">
+            <?php if ($rescueAwaitingCnt > 0) { ?>
+            <div style="background:#fff;border:1px solid rgba(245,158,11,0.4);padding:0.6rem 0.9rem;
+                        border-radius:6px;flex:1;min-width:170px;">
+                <div style="font-size:0.72rem;color:#92400e;text-transform:uppercase;">⏳ Čeká na podpis</div>
+                <div style="font-size:1.4rem;font-weight:700;color:#92400e;">
+                    <?= $rescueAwaitingCnt ?>× lead
+                </div>
+                <div style="font-size:0.7rem;color:#9ca3af;">částka po potvrzení</div>
+            </div>
+            <?php } ?>
+            <div style="background:#fff;border:1px solid rgba(126,34,206,0.3);padding:0.6rem 0.9rem;
+                        border-radius:6px;flex:1;min-width:170px;">
+                <div style="font-size:0.72rem;color:#7e22ce;text-transform:uppercase;">💰 Dlužím</div>
+                <div style="font-size:1.4rem;font-weight:700;color:#7e22ce;">
+                    <?= number_format((float) $rescueDebtTotal, 0, ',', ' ') ?> Kč
+                </div>
+                <div style="font-size:0.7rem;color:#9ca3af;">earned, nevyplaceno</div>
+            </div>
+            <?php if ($rescueDebtPaid > 0) { ?>
+            <div style="background:#fff;border:1px solid rgba(22,163,74,0.3);padding:0.6rem 0.9rem;
+                        border-radius:6px;flex:1;min-width:170px;">
+                <div style="font-size:0.72rem;color:#16a34a;text-transform:uppercase;">✓ Vyplaceno</div>
+                <div style="font-size:1.4rem;font-weight:700;color:#16a34a;">
+                    <?= number_format((float) $rescueDebtPaid, 0, ',', ' ') ?> Kč
+                </div>
+            </div>
+            <?php } ?>
+        </div>
+
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;background:#fff;
+                      border-radius:6px;overflow:hidden;">
+            <thead style="background:rgba(126,34,206,0.08);">
+                <tr>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;">Firma</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;">Kraj</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;">Komu</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;">Zachráněno</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;">Stav</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:right;">Bonus</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($rescueDebt as $rd) {
+                    $hasBonus = !empty($rd['bonus_amount']);
+                    $isPaid   = $hasBonus && !empty($rd['bonus_paid_at']);
+                    if ($isPaid) {
+                        $stColor = '#16a34a';
+                        $stLabel = '✓ Vyplaceno ' . date('d.m.', strtotime((string) $rd['bonus_paid_at']));
+                    } elseif ($hasBonus) {
+                        $stColor = '#7e22ce';
+                        $stLabel = 'Dlužím (earned)';
+                    } else {
+                        $stColor = '#f59e0b';
+                        $stLabel = '⏳ Čeká na potvrzení podpisu';
+                    }
+                ?>
+                <tr style="border-top:1px solid rgba(0,0,0,0.05);">
+                    <td style="padding:0.35rem 0.6rem;font-weight:600;">
+                        <?= crm_h((string) ($rd['firma'] ?? '—')) ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;color:var(--muted,#6b7280);">
+                        <?= crm_h(crm_region_label((string) ($rd['region'] ?? ''))) ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;">
+                        <?= crm_h((string) ($rd['caller_name'] ?? '—')) ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;color:var(--muted,#6b7280);font-size:0.78rem;">
+                        <?= !empty($rd['rescued_at']) ? date('d.m. H:i', strtotime((string) $rd['rescued_at'])) : '—' ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;font-size:0.78rem;color:<?= $stColor ?>;">
+                        <?= crm_h($stLabel) ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;text-align:right;font-weight:700;color:<?= $stColor ?>;">
+                        <?php if ($hasBonus) { ?>
+                            <?= number_format((float) $rd['bonus_amount'], 0, ',', ' ') ?> Kč
+                        <?php } else { ?>
+                            <span style="font-weight:400;font-size:0.78rem;">— (po podpisu)</span>
+                        <?php } ?>
+                    </td>
+                </tr>
+                <?php } ?>
+            </tbody>
+        </table>
+    </div>
+    <?php } ?>
+
 </section>
 
 <script>

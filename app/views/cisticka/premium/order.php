@@ -148,17 +148,79 @@ $price = (float) $order['price_per_lead'];
     <div class="po-detail-header">
         <h1>💎 Objednávka #<?= (int) $order['id'] ?> — <?= crm_h((string) $order['oz_name']) ?></h1>
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-            <?php if (($order['status'] ?? '') === 'open') { ?>
+            <?php if (($order['status'] ?? '') === 'open') {
+                $tradeable_h    = (int) ($counts['tradeable'] ?? 0);
+                $nonTradeable_h = (int) ($counts['non_tradeable'] ?? 0);
+                $pending_h      = (int) ($counts['pending'] ?? 0);
+                $price_h        = (float) ($order['price_per_lead'] ?? 0);
+                $invoice_h      = ($tradeable_h + $nonTradeable_h) * $price_h;
+            ?>
                 <form method="post" action="<?= crm_h(crm_url('/cisticka/premium/close')) ?>"
-                      onsubmit="return confirm('🏁 Uzavřít objednávku #<?= (int)$order['id'] ?> jako dokončenou?\n\n• Pending leady se uvolní zpět do poolu (OZ je nezaplatí)\n• Vyčištěné leady zůstávají k fakturaci\n• OZ uvidí objednávku jako uzavřenou');"
+                      id="close-order-form"
+                      onsubmit="return false;"
                       style="margin:0;">
                     <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
                     <input type="hidden" name="order_id" value="<?= (int) $order['id'] ?>">
-                    <button type="submit"
+                    <button type="button"
+                            onclick="document.getElementById('po-close-modal').style.display='flex'"
                             style="background: #2e7d32; color:#fff; border:none; border-radius:5px; padding:0.5rem 1rem; font-weight:700; font-size:0.88rem; cursor:pointer;">
                         🏁 Uzavřít objednávku
                     </button>
                 </form>
+
+                <!-- Custom modal pro uzavření objednávky — UX-friendly, lidsky napsané -->
+                <div id="po-close-modal"
+                     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);
+                            z-index:9999;align-items:center;justify-content:center;padding:1rem;">
+                    <div style="background:#fff;border-radius:12px;max-width:520px;width:100%;
+                                padding:1.6rem 1.8rem;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+                        <div style="font-size:1.3rem;font-weight:700;color:#1f2937;margin-bottom:0.4rem;">
+                            🏁 Opravdu uzavřít objednávku?
+                        </div>
+                        <div style="color:#6b7280;font-size:0.92rem;margin-bottom:1rem;">
+                            Objednávka <strong>#<?= (int) $order['id'] ?></strong> pro
+                            <strong><?= crm_h((string) $order['oz_name']) ?></strong> bude označena jako
+                            dokončená a už se s ní nedá pracovat.
+                        </div>
+
+                        <div style="background:#f9fafb;border-radius:8px;padding:0.9rem 1rem;margin-bottom:1rem;">
+                            <div style="display:flex;justify-content:space-between;padding:0.25rem 0;font-size:0.9rem;">
+                                <span style="color:#374151;">✅ Vyčištěné leady (zaplatíš si je):</span>
+                                <strong style="color:#16a34a;"><?= $tradeable_h + $nonTradeable_h ?></strong>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;padding:0.25rem 0;font-size:0.9rem;">
+                                <span style="color:#374151;">⏳ Pending (uvolní se zpět do poolu):</span>
+                                <strong style="color:#dc2626;"><?= $pending_h ?></strong>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;padding:0.5rem 0 0;font-size:1rem;
+                                        border-top:1px solid #e5e7eb;margin-top:0.4rem;">
+                                <span style="color:#1f2937;font-weight:600;">💰 K vyplacení tobě:</span>
+                                <strong style="color:#7e3ff2;font-size:1.15rem;"><?= number_format($invoice_h, 2, ',', ' ') ?> Kč</strong>
+                            </div>
+                        </div>
+
+                        <div style="background:#fff8e1;border-left:3px solid #f59e0b;
+                                    padding:0.6rem 0.8rem;border-radius:4px;font-size:0.85rem;color:#92400e;margin-bottom:1.2rem;">
+                            💡 Po uzavření OZ uvidí objednávku jako dokončenou. Faktura se vystaví
+                            jen na <strong>vyčištěné</strong> leady — pending se mu nezačítá.
+                        </div>
+
+                        <div style="display:flex;gap:0.6rem;justify-content:flex-end;">
+                            <button type="button"
+                                    onclick="document.getElementById('po-close-modal').style.display='none'"
+                                    style="background:#f3f4f6;color:#374151;border:none;border-radius:6px;
+                                           padding:0.6rem 1.1rem;font-weight:600;cursor:pointer;">
+                                Ještě ne
+                            </button>
+                            <button type="button"
+                                    onclick="(function(){ var f=document.getElementById('close-order-form'); f.onsubmit=null; f.submit(); })();"
+                                    style="background:linear-gradient(135deg,#2e7d32,#16a34a);color:#fff;border:none;
+                                           border-radius:6px;padding:0.6rem 1.2rem;font-weight:700;cursor:pointer;">
+                                ✓ Ano, uzavřít
+                            </button>
+                        </div>
+                    </div>
+                </div>
             <?php } ?>
             <a href="<?= crm_h(crm_url('/cisticka/premium')) ?>" class="po-back">← Zpět na seznam</a>
         </div>

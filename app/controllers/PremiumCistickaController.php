@@ -315,6 +315,15 @@ final class PremiumCistickaController
         $pStmt->execute(['oid' => $orderId]);
         $leads = $pStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
+        // Aggregované počty podle cleaning_status (pro modal v hlavičce + summary)
+        $counts = ['pending' => 0, 'tradeable' => 0, 'non_tradeable' => 0];
+        foreach ($leads as $lRow) {
+            $cs = (string) ($lRow['cleaning_status'] ?? 'pending');
+            if (isset($counts[$cs])) {
+                $counts[$cs]++;
+            }
+        }
+
         $title = '💎 Premium objednávka #' . $orderId;
         $csrf  = crm_csrf_token();
         $flash = crm_flash_take();
@@ -403,7 +412,27 @@ final class PremiumCistickaController
                  WHERE id = :id"
             )->execute(['st' => $action, 'uid' => $cistickaId, 'id' => $poolId]);
 
-            // 2) Premium leady ZŮSTÁVAJÍ jen v `premium_lead_pool` — `contacts` neměníme.
+            // 2) Premium leady: kdyz tradeable → musíme contacts.stav nastavit na READY,
+            //    aby je navolávačka mohla volat ze /caller/premium (její filter vyžaduje
+            //    callable stav). Bez tohoto fixu kontakty s NEW stavem zůstanou neviditelné.
+            //    Operator pokud byl prázdný nastavíme na TM (= default premium presumption).
+            //    NOTE: jen UPDATE-up — pokud kontakt už má jiný stav (CALLBACK/CALLED_OK),
+            //    neměníme ho.
+            if ($action === 'tradeable') {
+                $this->pdo->prepare(
+                    "UPDATE contacts
+                     SET stav = 'READY',
+                         operator = CASE WHEN operator IS NULL OR operator = '' THEN 'TM' ELSE operator END,
+                         updated_at = NOW(3)
+                     WHERE id = :cid
+                       AND stav IN ('NEW', '')
+                       AND assigned_caller_id IS NULL"
+                )->execute(['cid' => $contactId]);
+            }
+            //    Pro non_tradeable: čistička vyhodnotila kontakt jako nepoužitelný v premium —
+            //    neměníme contacts.stav, ať se nepletl do standardního poolu (premium
+            //    má samostatnou tabulku s vlastním "ne").
+            //
             //    Navolávačka je vidí v separátní pracovní ploše /caller/premium
             //    (NE v standardní queue). Standardní queue se naopak musí naučit
             //    premium leady ignorovat (NOT EXISTS filter v CallerController).
@@ -608,9 +637,12 @@ final class PremiumCistickaController
                 JOIN premium_orders po ON po.id = p.order_id
                 JOIN users u_oz       ON u_oz.id = po.oz_id
                 JOIN contacts c       ON c.id = p.contact_id
-                WHERE p.cleaner_id = :uid
+                WHERE (
+                       p.cleaner_id = :uid
+                       OR (p.cleaner_id IS NULL AND po.accepted_by_cleaner_id = :uid_acc)
+                      )
                   AND p.cleaning_status IN ('tradeable','non_tradeable')";
-        $params = ['uid' => $cistickaId];
+        $params = ['uid' => $cistickaId, 'uid_acc' => $cistickaId];
         if ($singleOrder) {
             $sql .= " AND po.id = :oid";
             $params['oid'] = $orderId;

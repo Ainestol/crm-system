@@ -258,6 +258,102 @@ function bet_assign_lead(PDO $pdo, int $contactId, int $cleanerId, string $regio
 
 
 /**
+ * Reverze: odstranit kontakt ze sázky (undo / reclassify v čističce).
+ *
+ * Zavolá se vždy, když kontakt přestává být validní lead (vrácen do NEW,
+ * překlasifikován na VF_SKIP nebo CHYBNY_KONTAKT). Záznam v bet_campaign_leads
+ * se smaže, counts se decrementují, assigned_sales_id se uvolní.
+ *
+ * Idempotentní: pokud kontakt v sázce není, vrátí null a nic neudělá.
+ *
+ * Pozn.: NESNAŽÍ se "rolovat pozice" ostatních leadů. Pozice 47 se prostě
+ * vynechá — chronologie zůstává, jen jeden slot je prázdný. Příští verify
+ * dostane pozici cleaned_count + 1 (= ne 47, ale aktuální cleaned_count + 1).
+ *
+ * Pokud byla sázka auto-closed (cleaned_count = target_count), undo ji znovu
+ * otevře (pokud po decrementu cleaned_count < target_count).
+ *
+ * @return array{campaign_id:int,recipient_id:int,oz_id:int,position:int}|null
+ */
+function bet_unassign_lead(PDO $pdo, int $contactId): ?array
+{
+    $pdo->beginTransaction();
+    try {
+        // 1. Najdi lead záznam (s lockem)
+        $leadStmt = $pdo->prepare(
+            "SELECT id, campaign_id, recipient_id, position
+             FROM bet_campaign_leads
+             WHERE contact_id = ?
+             FOR UPDATE"
+        );
+        $leadStmt->execute([$contactId]);
+        $lead = $leadStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$lead) {
+            $pdo->rollBack();
+            return null; // kontakt v žádné sázce
+        }
+
+        $leadId      = (int) $lead['id'];
+        $campaignId  = (int) $lead['campaign_id'];
+        $recipientId = (int) $lead['recipient_id'];
+        $position    = (int) $lead['position'];
+
+        // 2. Najdi oz_id pro vrácený údaj (kvůli logu / fronendovi)
+        $rStmt = $pdo->prepare("SELECT oz_id FROM bet_campaign_recipients WHERE id = ?");
+        $rStmt->execute([$recipientId]);
+        $ozId = (int) ($rStmt->fetchColumn() ?: 0);
+
+        // 3. DELETE lead
+        $pdo->prepare("DELETE FROM bet_campaign_leads WHERE id = ?")->execute([$leadId]);
+
+        // 4. Decrement counts (s ochranou proti záporným hodnotám)
+        $pdo->prepare(
+            "UPDATE bet_campaigns
+             SET cleaned_count = GREATEST(cleaned_count - 1, 0)
+             WHERE id = ?"
+        )->execute([$campaignId]);
+
+        $pdo->prepare(
+            "UPDATE bet_campaign_recipients
+             SET received_count = GREATEST(received_count - 1, 0)
+             WHERE id = ?"
+        )->execute([$recipientId]);
+
+        // 5. Uvolnit assigned_sales_id na contacts (ať nezůstane dangling pointer)
+        $pdo->prepare(
+            "UPDATE contacts
+             SET assigned_sales_id = NULL, updated_at = NOW(3)
+             WHERE id = ?"
+        )->execute([$contactId]);
+
+        // 6. Reopen sázky, pokud byla auto-closed a teď je opět pod cílem
+        $pdo->prepare(
+            "UPDATE bet_campaigns
+             SET status = 'open', closed_at = NULL
+             WHERE id = ?
+               AND status = 'closed'
+               AND closed_at IS NOT NULL
+               AND cleaned_count < target_count"
+        )->execute([$campaignId]);
+
+        $pdo->commit();
+
+        return [
+            'campaign_id'  => $campaignId,
+            'recipient_id' => $recipientId,
+            'oz_id'        => $ozId,
+            'position'     => $position,
+        ];
+    } catch (\Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
+
+/**
  * Souhrn pro top kartu cističky — pro každou aktivní sázku v regionech čističky
  * vrátí progress data.
  *

@@ -218,6 +218,21 @@ final class Router
                 'handler' => [AdminUsersController::class, 'postResetPassword'],
             ],
             [
+                'method' => 'POST',
+                'path' => '/admin/users/impersonate',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminUsersController::class, 'postImpersonate'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/admin/users/impersonate-stop',
+                'auth' => true,
+                // Note: bez "roles" requirementu — impersonate-stop musí fungovat
+                // i když je admin přepnutý do non-admin role
+                'handler' => [AdminUsersController::class, 'getImpersonateStop'],
+            ],
+            [
                 'method' => 'GET',
                 'path' => '/admin/import',
                 'auth' => true,
@@ -385,6 +400,21 @@ final class Router
                 'auth' => true,
                 'roles' => ['navolavacka'],
                 'handler' => [CallerController::class, 'getIndex'],
+            ],
+            // ── Kampaně (sázky + budoucí objednávky) ──
+            [
+                'method' => 'GET',
+                'path' => '/caller/campaigns',
+                'auth' => true,
+                'roles' => ['navolavacka', 'majitel', 'superadmin'],
+                'handler' => [CallerCampaignsController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/caller/campaigns/lock',
+                'auth' => true,
+                'roles' => ['navolavacka', 'majitel', 'superadmin'],
+                'handler' => [CallerCampaignsController::class, 'postLock'],
             ],
             [
                 'method' => 'POST',
@@ -591,6 +621,20 @@ final class Router
                 'roles' => ['majitel', 'superadmin'],
                 'handler' => [AdminBetController::class, 'postCancel'],
             ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/bet/add-caller',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminBetController::class, 'postAddCaller'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/bet/remove-caller',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminBetController::class, 'postRemoveCaller'],
+            ],
             // ── OZ: Email leady ze sázek (delivery_type='email') ──
             [
                 'method' => 'GET',
@@ -605,6 +649,80 @@ final class Router
                 'auth' => true,
                 'roles' => ['obchodak', 'majitel', 'superadmin'],
                 'handler' => [OzEmailLeadsController::class, 'getExport'],
+            ],
+            // ── OZ: dashboard kampaní s progresem a úspěšností ──
+            [
+                'method' => 'GET',
+                'path' => '/oz/campaigns',
+                'auth' => true,
+                'roles' => ['obchodak', 'majitel', 'superadmin'],
+                'handler' => [OzCampaignsController::class, 'getIndex'],
+            ],
+            // ── Záchrana leadu ──
+            [
+                'method' => 'POST',
+                'path' => '/oz/contact/rescue',
+                'auth' => true,
+                'roles' => ['obchodak', 'majitel', 'superadmin'],
+                'handler' => [RescueController::class, 'postCreate'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/caller/rescue/status',
+                'auth' => true,
+                'roles' => ['navolavacka', 'majitel', 'superadmin'],
+                'handler' => [RescueController::class, 'postCallerStatus'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/admin/rescue',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [RescueController::class, 'getAdminIndex'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/rescue/mark-paid',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [RescueController::class, 'postMarkPaid'],
+            ],
+            // ── Recyklace kontaktů (vrátit VF/NEZAJEM do oběhu) ──
+            [
+                'method' => 'GET',
+                'path' => '/admin/contacts/recycle',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminContactRecycleController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/contacts/recycle',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminContactRecycleController::class, 'postExecute'],
+            ],
+            // ── Mix kontaktů (1:10 firma:OSVČ) ──
+            [
+                'method' => 'GET',
+                'path' => '/admin/contacts/mix',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminContactMixController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/contacts/mix/execute',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminContactMixController::class, 'postExecute'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/contacts/mix/settings',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminContactMixController::class, 'postSettings'],
             ],
             // ── OZ: podání reklamace ──
             [

@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 /** @var list<array<string,mixed>> $ozList */
+/** @var list<array<string,mixed>> $callerList */
 /** @var array<string,string>      $regionChoices */
 /** @var string|null                $flash */
 /** @var string                     $csrf */
@@ -130,6 +131,36 @@ declare(strict_types=1);
                        border-radius:5px;cursor:pointer;font-size:0.85rem;">
             ➕ Přidat dalšího příjemce
         </button>
+
+        <hr style="margin:1.5rem 0;border:none;border-top:1px solid #e5e7eb;">
+
+        <h3 style="margin-bottom:0.6rem;">Navolávačky (call-type leady)</h3>
+        <p style="font-size:0.85rem;color:#6b7280;margin-bottom:0.8rem;">
+            Vyber konkrétní navolávačky, které budou pracovat na call-type leadech této sázky.
+            <strong>Tyto navolávačky uvidí sázku ve své záložce „🎯 Kampaně"</strong> — ostatní ne.
+            Call-type leady jsou zároveň vyjmuty z anonymního poolu /caller (nikdo „náhodou" neukradne).
+        </p>
+        <?php if (empty($callerList)) { ?>
+            <p style="color:#dc2626;font-size:0.9rem;">⚠ Žádné aktivní navolávačky v systému.</p>
+        <?php } else { ?>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.4rem;
+                    background:#f9fafb;padding:0.8rem;border-radius:6px;">
+            <?php foreach ($callerList as $c) {
+                $cid = (int) $c['id'];
+            ?>
+                <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;
+                              padding:0.3rem 0.5rem;background:#fff;border:1px solid #e5e7eb;border-radius:5px;">
+                    <input type="checkbox" name="caller_ids[]" value="<?= $cid ?>"
+                           style="width:16px;height:16px;cursor:pointer;">
+                    <span style="font-size:0.9rem;"><?= crm_h((string) $c['jmeno']) ?></span>
+                </label>
+            <?php } ?>
+        </div>
+        <p style="font-size:0.8rem;color:#9ca3af;margin-top:0.5rem;">
+            Pokud nevyberete nikoho, sázka se založí, ale dokud nepřidáte navolávačku zpětně,
+            <strong>call-type leady se nikomu nezobrazí</strong> v záložce Kampaně (zůstanou v cleaned stavu, čekají).
+        </p>
+        <?php } ?>
 
         <hr style="margin:1.5rem 0;border:none;border-top:1px solid #e5e7eb;">
 

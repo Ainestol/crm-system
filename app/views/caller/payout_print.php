@@ -329,6 +329,101 @@ $docTitle = 'Výplata navolávačky — ' . $caller['jmeno'] . ' — ' . $monthN
     </table>
     <?php } ?>
 
+    <!-- ── Bonusy ze záchran ── -->
+    <?php if (!empty($rescueBonuses)) { ?>
+        <h2 style="margin-top:1.4rem;font-size:13pt;border-bottom:1px solid #ddd;padding-bottom:0.3rem;">
+            🆘 Bonusy ze záchran (<?= count($rescueBonuses) ?>)
+        </h2>
+        <p style="font-size:8.5pt;color:#666;margin:0.4rem 0;">
+            Záchrana = OZ ti vrátil nereagujícího zákazníka, tys ho znovu zachránil(a).
+            Bonus = 1× hodnota smlouvy (od OZ). Vyplácí se až <strong>po podpisu a aktivaci služeb</strong>.
+        </p>
+
+        <table style="width:100%;border-collapse:collapse;margin-top:0.5rem;font-size:9.5pt;">
+            <thead>
+                <tr style="background:#f3e8ff;">
+                    <th style="padding:0.4rem 0.6rem;text-align:left;border:1px solid #ddd;">Firma</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;border:1px solid #ddd;">Kraj</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;border:1px solid #ddd;">OZ co platí</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;border:1px solid #ddd;">Zachráněno</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;border:1px solid #ddd;">Stav</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:right;border:1px solid #ddd;">Bonus</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($rescueBonuses as $rb) {
+                    $hasBonus = !empty($rb['bonus_amount']);
+                    $isPaid   = $hasBonus && !empty($rb['bonus_paid_at']);
+                    $statusLabel = $hasBonus
+                        ? ($isPaid ? '✓ Vyplaceno' : 'Čeká na vyplacení (po aktivaci služeb)')
+                        : 'Čeká na podpis + aktivaci';
+                    $statusColor = $hasBonus ? ($isPaid ? '#16a34a' : '#7e22ce') : '#9ca3af';
+                    // Komu platit — final_sales (kdo to dostal po záchraně). Pokud null, original.
+                    $payerName = (string) ($rb['final_sales_name'] ?? $rb['original_sales_name'] ?? '—');
+                    // Maskování firmy pokud caller role
+                    $firma = $maskSensitive
+                        ? crm_mask_firma((string) ($rb['firma'] ?? '—'))
+                        : (string) ($rb['firma'] ?? '—');
+                ?>
+                <tr>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;font-weight:600;">
+                        <?= htmlspecialchars($firma, ENT_QUOTES, 'UTF-8') ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;">
+                        <?= htmlspecialchars(crm_region_label((string) ($rb['region'] ?? '')), ENT_QUOTES, 'UTF-8') ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;">
+                        <?= htmlspecialchars($payerName, ENT_QUOTES, 'UTF-8') ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;font-size:8.5pt;color:#666;">
+                        <?= !empty($rb['rescued_at']) ? date('d.m. H:i', strtotime((string) $rb['rescued_at'])) : '—' ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;color:<?= $statusColor ?>;font-size:8.5pt;">
+                        <?= htmlspecialchars($statusLabel, ENT_QUOTES, 'UTF-8') ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;text-align:right;font-weight:700;color:<?= $statusColor ?>;">
+                        <?php if ($hasBonus) { ?>
+                            <?= number_format((float) $rb['bonus_amount'], 0, ',', ' ') ?> Kč
+                        <?php } else { ?>
+                            <span style="color:#9ca3af;font-weight:400;">— (po aktivaci)</span>
+                        <?php } ?>
+                    </td>
+                </tr>
+                <?php } ?>
+            </tbody>
+            <tfoot>
+                <tr style="background:#faf5ff;font-weight:700;">
+                    <td colspan="5" style="padding:0.4rem 0.6rem;border:1px solid #ddd;text-align:right;">
+                        K vyplacení tobě ze záchran (po aktivaci):
+                    </td>
+                    <td style="padding:0.4rem 0.6rem;border:1px solid #ddd;text-align:right;color:#7e22ce;">
+                        <?= number_format($sumRescueEarnedUnpaid, 0, ',', ' ') ?> Kč
+                    </td>
+                </tr>
+                <?php if ($sumRescueEarnedPaid > 0) { ?>
+                <tr style="background:#f9fafb;font-size:9pt;">
+                    <td colspan="5" style="padding:0.35rem 0.6rem;border:1px solid #ddd;text-align:right;color:#16a34a;">
+                        ✓ Již vyplaceno (informativně):
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;text-align:right;color:#16a34a;">
+                        <?= number_format($sumRescueEarnedPaid, 0, ',', ' ') ?> Kč
+                    </td>
+                </tr>
+                <?php } ?>
+                <?php if ($countRescueAwaiting > 0) { ?>
+                <tr style="background:#f9fafb;font-size:9pt;">
+                    <td colspan="5" style="padding:0.35rem 0.6rem;border:1px solid #ddd;text-align:right;color:#9ca3af;">
+                        Čeká na podpis/aktivaci:
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;text-align:right;color:#9ca3af;">
+                        <?= $countRescueAwaiting ?>× kontakt
+                    </td>
+                </tr>
+                <?php } ?>
+            </tfoot>
+        </table>
+    <?php } ?>
+
     <!-- Zápatí -->
     <div class="doc-footer">
         <span>Clockwork Man CRM · 🐌 Šneci na tripu</span>

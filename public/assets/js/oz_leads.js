@@ -232,6 +232,22 @@ function ozToggleReklamacePanel(cId) {
     }
 }
 
+/** Toggle pro panel záchrany (RESCUE) — paralelní s reklamace panelem. */
+function ozToggleRescuePanel(cId) {
+    const panel = document.getElementById('rescue-panel-' + cId);
+    if (!panel) return;
+    // Inline display:none → flex/block (nemá class .visible jako reklamace,
+    // protože je to vlastní izolovaný styling).
+    const isHidden = (panel.style.display === 'none' || panel.style.display === '');
+    panel.style.display = isHidden ? 'block' : 'none';
+    if (isHidden) {
+        setTimeout(() => {
+            const input = panel.querySelector('input[name=reason]');
+            if (input) input.focus();
+        }, 50);
+    }
+}
+
 /**
  * 2-step inline potvrzení pro tlačítko "Odeslat navolávačce" (chybný lead).
  *

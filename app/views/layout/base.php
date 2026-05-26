@@ -52,11 +52,12 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
         //   1) standardní pool (claim, kraje, base reward od majitele)
         //   2) 💎 premium navolávky — objednávky od OZ s bonusem za úspěšný hovor
         $sections['Práce'] = [
-            ['label' => 'Pracovní plocha',           'href' => '/caller',          'icon' => '📞'],
-            ['label' => 'Premium navolávky',         'href' => '/caller/premium',  'icon' => '💎'],
-            ['label' => 'Kalendář',                  'href' => '/caller/calendar', 'icon' => '📅'],
-            ['label' => 'Vyhledávání',               'href' => '/caller/search',   'icon' => '🔍'],
-            ['label' => 'Statistiky',                'href' => '/caller/stats',    'icon' => '📊'],
+            ['label' => 'Pracovní plocha',           'href' => '/caller',           'icon' => '📞'],
+            ['label' => 'Kampaně',                   'href' => '/caller/campaigns', 'icon' => '🎯'],
+            ['label' => 'Premium navolávky',         'href' => '/caller/premium',   'icon' => '💎'],
+            ['label' => 'Kalendář',                  'href' => '/caller/calendar',  'icon' => '📅'],
+            ['label' => 'Vyhledávání',               'href' => '/caller/search',    'icon' => '🔍'],
+            ['label' => 'Statistiky',                'href' => '/caller/stats',     'icon' => '📊'],
         ];
     }
     if ($role === 'cisticka') {
@@ -80,8 +81,9 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
         $sections['Práce'] = [
             ['label' => 'Příchozí leady',     'href' => '/oz/queue',       'icon' => '📋'],
             ['label' => 'Pracovní plocha',    'href' => '/oz/leads',       'icon' => '💼'],
+            ['label' => 'Moje kampaně',       'href' => '/oz/campaigns',   'icon' => '🎯'],
             ['label' => 'Email leady',        'href' => '/oz/email-leads', 'icon' => '📧'],
-            ['label' => 'Můj měsíc',          'href' => '/oz',             'icon' => '🎯'],
+            ['label' => 'Můj měsíc',          'href' => '/oz',             'icon' => '📅'],
             ['label' => 'Výkon celého týmu',  'href' => '/oz/performance', 'icon' => '🏆'],
         ];
         // ── Premium pipeline (druhé čištění leadů na objednávku) ──
@@ -107,6 +109,15 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
         $sections['Sázky 🎯'] = [
             ['label' => 'Všechny sázky',       'href' => '/admin/bet',     'icon' => '🎯'],
             ['label' => 'Nová sázka',          'href' => '/admin/bet/new', 'icon' => '➕'],
+        ];
+        // ── Záchrany leadů (OZ → caller na druhou šanci) ──
+        $sections['Záchrany 🆘'] = [
+            ['label' => 'Přehled záchran',     'href' => '/admin/rescue',  'icon' => '🆘'],
+        ];
+        // ── Recyklace + Mix kontaktů ──
+        $sections['Kontakty ♻'] = [
+            ['label' => 'Recyklace kontaktů',     'href' => '/admin/contacts/recycle', 'icon' => '♻'],
+            ['label' => 'Mix 9× OSVČ + 1× firma', 'href' => '/admin/contacts/mix',     'icon' => '🎲'],
         ];
         // ── Sekce sgrupované per role, na kterou nastavení míří ──
         // Logika: když chci nastavit něco pro čističky, jdu do "Čističky".
@@ -208,6 +219,28 @@ if (!$_isAuthPage
                 $_logoutCsrf = crm_csrf_token();
             ?>
             <div class="crm-topbar-right">
+                <?php
+                // Impersonate indikátor — pokud je admin přepnut do cizího účtu,
+                // ukazujeme oranžový widget "← Zpět do admin" s jménem skutečného admina.
+                $_imp = isset($_SESSION['impersonator_id']) ? (int) $_SESSION['impersonator_id'] : 0;
+                if ($_imp > 0) {
+                    $_impName = (string) ($_SESSION['impersonator_name'] ?? 'Admin');
+                ?>
+                    <a href="<?= crm_h(crm_url('/admin/users/impersonate-stop')) ?>"
+                       style="background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#1f2937;
+                              padding:0.4rem 0.8rem;border-radius:6px;text-decoration:none;
+                              font-weight:700;font-size:0.85rem;display:inline-flex;align-items:center;gap:0.3rem;
+                              border:2px solid #f59e0b;animation:impPulse 2s infinite;"
+                       title="Jsi přepnut do účtu jiného uživatele — klikni pro návrat do admin">
+                        🎭 ← Zpět do admin (<?= crm_h($_impName) ?>)
+                    </a>
+                    <style>
+                        @keyframes impPulse {
+                            0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.5); }
+                            50%      { box-shadow: 0 0 0 6px rgba(245,158,11,0); }
+                        }
+                    </style>
+                <?php } ?>
                 <!-- User-info: jméno + role pohromadě s akcemi (Heslo / Odhlásit) -->
                 <div class="crm-topbar-user" title="<?= crm_h((string) ($user['email'] ?? '')) ?>">
                     <span class="crm-topbar-user__name"><?= crm_h((string) ($user['jmeno'] ?? '')) ?></span>

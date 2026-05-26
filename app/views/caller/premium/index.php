@@ -223,18 +223,40 @@ $_tabUrl = static fn(string $t): string => crm_url('/caller/premium' . ($t === '
         <p class="alert alert-info" style="margin-bottom:1rem;"><?= crm_h($flash) ?></p>
     <?php } ?>
 
+    <?php
+    $avgBonus = $monthBonusCount > 0 ? $monthBonus / $monthBonusCount : 0;
+    ?>
     <div class="pn-stats">
-        <div class="pn-stat">
-            <div class="label">Dnes úspěšně premium</div>
+        <div class="pn-stat"
+             title="Kolik premium leadů jsi dnes úspěšně navolala (CALLED_OK od OZ)">
+            <div class="label">📞 Dnes úspěšně premium</div>
             <div class="value"><?= (int) $todayWins ?></div>
+            <div class="sub" style="font-size:0.78rem;color:var(--color-text-muted,#9ca3af);margin-top:0.2rem;">
+                úspěšných hovorů
+            </div>
         </div>
-        <div class="pn-stat pn-stat--alt">
-            <div class="label">Tento měsíc úspěšně</div>
+        <div class="pn-stat pn-stat--alt"
+             title="Počet úspěšných premium hovorů za tento měsíc — to je základ pro tvůj bonus">
+            <div class="label">🏆 Tento měsíc úspěšně</div>
             <div class="value"><?= (int) $monthBonusCount ?></div>
+            <div class="sub" style="font-size:0.78rem;color:var(--color-text-muted,#9ca3af);margin-top:0.2rem;">
+                úspěšných premium hovorů
+            </div>
         </div>
-        <div class="pn-stat">
-            <div class="label">💰 Bonus tento měsíc</div>
+        <div class="pn-stat"
+             title="Bonus jen z premium = <?= $monthBonusCount ?> × průměr <?= number_format($avgBonus, 2, ',', ' ') ?> Kč/lead. Tato částka je NAVÍC k tvé standardní mzdě.">
+            <div class="label">💰 Bonus tento měsíc (jen premium)</div>
             <div class="value"><?= number_format($monthBonus, 2, ',', ' ') ?> Kč</div>
+            <div class="sub" style="font-size:0.78rem;color:var(--color-text-muted,#9ca3af);margin-top:0.2rem;">
+                <?php if ($monthBonusCount > 0) { ?>
+                    = <?= $monthBonusCount ?> hovorů × ⌀ <?= number_format($avgBonus, 2, ',', ' ') ?> Kč
+                <?php } else { ?>
+                    Bonusy začnou padat po prvním úspěšném premium hovoru
+                <?php } ?>
+            </div>
+            <div style="font-size:0.72rem;color:#fbbf24;margin-top:0.3rem;font-weight:600;">
+                💡 Navíc ke standardní mzdě
+            </div>
         </div>
     </div>
 

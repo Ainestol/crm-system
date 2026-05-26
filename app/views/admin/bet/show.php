@@ -3,6 +3,8 @@ declare(strict_types=1);
 /** @var array<string,mixed>       $campaign */
 /** @var list<array<string,mixed>> $recipients */
 /** @var list<array<string,mixed>> $sampleLeads */
+/** @var list<array<string,mixed>> $assignedCallers */
+/** @var list<array<string,mixed>> $allCallers */
 /** @var string|null               $flash */
 /** @var string                    $csrf */
 
@@ -152,6 +154,76 @@ $isOpen = $status === 'open';
             <?php } ?>
         </tbody>
     </table>
+
+    <!-- ── Navolávačky ── -->
+    <h2 style="margin:1.5rem 0 0.6rem;">Navolávačky (call-type leady)</h2>
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;">
+        <?php if ($assignedCallers === []) { ?>
+            <p style="color:#dc2626;font-size:0.9rem;margin:0 0 0.8rem;">
+                ⚠ <strong>Žádné navolávačky nejsou přiřazené.</strong>
+                Call-type leady se nezobrazí žádné navolávačce v záložce „🎯 Kampaně" — přidejte alespoň jednu.
+            </p>
+        <?php } else { ?>
+            <div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.8rem;">
+                <?php foreach ($assignedCallers as $ac) { ?>
+                    <span style="display:inline-flex;align-items:center;gap:0.4rem;background:#dbeafe;
+                                 padding:0.25rem 0.5rem 0.25rem 0.7rem;border-radius:14px;font-size:0.88rem;">
+                        <?= crm_h((string) $ac['jmeno']) ?>
+                        <?php if ($status !== 'cancelled') { ?>
+                        <form method="POST" action="<?= crm_url('/admin/bet/remove-caller') ?>"
+                              style="display:inline;margin:0;"
+                              onsubmit="return confirm('Odebrat <?= crm_h(addslashes((string) $ac['jmeno'])) ?> ze sázky?');">
+                            <input type="hidden" name="<?= crm_csrf_field_name() ?>" value="<?= crm_h($csrf) ?>">
+                            <input type="hidden" name="campaign_id" value="<?= $id ?>">
+                            <input type="hidden" name="caller_id" value="<?= (int) $ac['caller_id'] ?>">
+                            <button type="submit" title="Odebrat"
+                                    style="background:none;border:none;color:#1e40af;cursor:pointer;
+                                           padding:0 0.2rem;font-weight:700;line-height:1;">×</button>
+                        </form>
+                        <?php } ?>
+                    </span>
+                <?php } ?>
+            </div>
+        <?php } ?>
+
+        <?php
+        // Přidávat navolávačky lze KDYKOLIV (open/closed) — closed znamená jen "cleaning done",
+        // call-type leady ale můžou být pořád READY a čekat na navolání.
+        // Zrušená sázka (cancelled) → už nejde, ta je definitivně mrtvá.
+        if ($status !== 'cancelled' && $allCallers !== []) {
+            $assignedIds = array_map(fn($a) => (int) $a['caller_id'], $assignedCallers);
+            $availableCallers = array_filter($allCallers, fn($c) => !in_array((int) $c['id'], $assignedIds, true));
+        ?>
+            <?php if ($availableCallers !== []) { ?>
+            <form method="POST" action="<?= crm_url('/admin/bet/add-caller') ?>"
+                  style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+                <input type="hidden" name="<?= crm_csrf_field_name() ?>" value="<?= crm_h($csrf) ?>">
+                <input type="hidden" name="campaign_id" value="<?= $id ?>">
+                <select name="caller_id" required
+                        style="padding:0.4rem;border:1px solid #d1d5db;border-radius:5px;font-size:0.9rem;">
+                    <option value="">— vyber navolávačku —</option>
+                    <?php foreach ($availableCallers as $c) { ?>
+                        <option value="<?= (int) $c['id'] ?>"><?= crm_h((string) $c['jmeno']) ?></option>
+                    <?php } ?>
+                </select>
+                <button type="submit"
+                        style="background:#16a34a;color:#fff;border:none;padding:0.4rem 0.9rem;
+                               border-radius:5px;cursor:pointer;font-size:0.85rem;font-weight:600;">
+                    ➕ Přidat navolávačku
+                </button>
+                <?php if (!$isOpen) { ?>
+                    <span style="font-size:0.8rem;color:#6b7280;">
+                        💡 Sázka je uzavřená (cleaning hotov), ale ještě nejsou call-leady provolané — přidat lze.
+                    </span>
+                <?php } ?>
+            </form>
+            <?php } else { ?>
+                <p style="margin:0;color:#6b7280;font-size:0.85rem;">
+                    Všechny dostupné navolávačky jsou již přiřazené.
+                </p>
+            <?php } ?>
+        <?php } ?>
+    </div>
 
     <!-- ── Posledních 50 leadů ── -->
     <?php if ($sampleLeads !== []) { ?>

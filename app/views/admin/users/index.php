@@ -67,13 +67,50 @@ function renderUserCard(array $u, array $callers, array $salesmen, array $actor,
                 <a href="<?= crm_h(crm_url('/admin/users/edit?id=' . $uid)) ?>" class="btn btn-secondary btn-sm">Upravit</a>
             <?php } ?>
             <?php if ($aktivni && $canManage && !$isSelf) { ?>
+                <!-- Reset hesla — generuje náhodné -->
                 <form method="post" action="<?= crm_h(crm_url('/admin/users/reset-password')) ?>"
                       class="inline-form"
-                      onsubmit="return confirm('Odeslat nové heslo?');">
+                      onsubmit="return confirm('Vygenerovat nové náhodné heslo? Uživatel ho dostane při příštím přihlášení.');">
                     <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
                     <input type="hidden" name="id" value="<?= $uid ?>">
-                    <button type="submit" class="btn btn-secondary btn-sm">Reset hesla</button>
+                    <button type="submit" class="btn btn-secondary btn-sm">🔄 Reset hesla</button>
                 </form>
+                <!-- Vlastní heslo — admin nastaví konkrétní heslo (pro debug) -->
+                <button type="button" class="btn btn-secondary btn-sm"
+                        onclick="document.getElementById('custompw-<?= $uid ?>').style.display='block';this.style.display='none';">
+                    🔑 Vlastní heslo
+                </button>
+                <div id="custompw-<?= $uid ?>" style="display:none;width:100%;margin-top:0.4rem;">
+                    <form method="post" action="<?= crm_h(crm_url('/admin/users/reset-password')) ?>"
+                          style="display:flex;gap:0.3rem;align-items:center;">
+                        <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+                        <input type="hidden" name="id" value="<?= $uid ?>">
+                        <input type="text" name="custom_password" required minlength="6" maxlength="64"
+                               placeholder="nové heslo (min 6 znaků)"
+                               style="flex:1;padding:0.3rem 0.5rem;border:1px solid #d1d5db;border-radius:4px;font-size:0.82rem;font-family:monospace;">
+                        <button type="submit" class="btn btn-secondary btn-sm" style="background:#7e22ce;color:#fff;border-color:#7e22ce;">
+                            ✓ Uložit
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm"
+                                onclick="document.getElementById('custompw-<?= $uid ?>').style.display='none';this.parentElement.parentElement.previousElementSibling.style.display='inline-block';">
+                            ✕
+                        </button>
+                    </form>
+                </div>
+                <!-- Impersonate — přepnout do účtu uživatele -->
+                <?php if ((string) ($u['role'] ?? '') !== 'superadmin') { ?>
+                <form method="post" action="<?= crm_h(crm_url('/admin/users/impersonate')) ?>"
+                      class="inline-form"
+                      onsubmit="return confirm('🎭 Přepnout se do účtu „<?= crm_h(addslashes((string) ($u['jmeno'] ?? ''))) ?>"? Vrátíš se přes top bar nahoře vpravo.');">
+                    <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+                    <input type="hidden" name="id" value="<?= $uid ?>">
+                    <button type="submit" class="btn btn-secondary btn-sm"
+                            style="background:#fef3c7;color:#92400e;border-color:#fbbf24;"
+                            title="Přihlásit se jako tento uživatel (debug). Vrátíš se přes ← Zpět do admin nahoře.">
+                        🎭 Přepnout se
+                    </button>
+                </form>
+                <?php } ?>
             <?php } ?>
             <?php if ($isSuperadmin && !$isSelf) { ?>
                 <form method="post" action="<?= crm_h(crm_url('/admin/users/delete')) ?>"

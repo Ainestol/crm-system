@@ -67,10 +67,97 @@ final class CallerController
         $callerId = (int) $user['id'];
         $flash    = crm_flash_take();
         $csrf     = crm_csrf_token();
-        $validCallerTabs = ['aktivni', 'callback', 'nedovolano', 'navolane', 'prohra', 'izolace', 'chybny', 'chybne_oz', 'vykon'];
+        $validCallerTabs = ['aktivni', 'callback', 'nedovolano', 'navolane', 'prohra', 'izolace', 'chybny', 'chybne_oz', 'rescue', 'vykon'];
         $tab      = in_array((string) ($_GET['tab'] ?? 'aktivni'), $validCallerTabs, true)
                         ? (string) ($_GET['tab'] ?? 'aktivni') : 'aktivni';
         $page     = max(1, (int) ($_GET['page'] ?? 1));
+
+        // Lazy expirace rescue requests (pending starší než 14 dní → expired)
+        if (function_exists('rescue_expire_overdue')) {
+            rescue_expire_overdue($this->pdo);
+        }
+
+        // Pending záchrany — VŽDY načti seznam, aby tab badge ukázal count i mimo
+        // aktivní rescue tab. Funkce je levná (jedna indexovaná query) a vrací array,
+        // ze kterého view rendere jak badge tak detail.
+        $rescueItems = function_exists('rescue_list_pending_for_caller')
+            ? rescue_list_pending_for_caller($this->pdo)
+            : [];
+
+        // Seznam OZ — caller může při úspěchu přesměrovat lead na jiného OZ
+        // (např. OZ jí volal "pusť to do světa, nezvládám"). Načítáme jen pro rescue tab.
+        $rescueOzList = [];
+        if ($tab === 'rescue' && $rescueItems !== []) {
+            try {
+                $ozStmt = $this->pdo->query(
+                    "SELECT id, jmeno FROM users
+                     WHERE aktivni = 1
+                       AND (role = 'obchodak'
+                            OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"'))
+                     ORDER BY jmeno ASC"
+                );
+                $rescueOzList = $ozStmt ? ($ozStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+            } catch (\Throwable $_) {}
+        }
+
+        // ── Souhrn výdělků za aktuální měsíc (widget na vrchu pracovní plochy) ──
+        $earnYear  = (int) date('Y');
+        $earnMonth = (int) date('n');
+
+        // Standardní sazba per výhra (caller_rewards_config — aktuální platnost)
+        $rewRow = $this->pdo->query(
+            "SELECT amount_czk FROM caller_rewards_config
+             WHERE valid_from <= CURDATE() AND (valid_to IS NULL OR valid_to >= CURDATE())
+             ORDER BY valid_from DESC LIMIT 1"
+        );
+        $earnRewardPerWin = $rewRow ? (float) ($rewRow->fetchColumn() ?: 0) : 0.0;
+
+        // Počet CALLED_OK z tohoto měsíce, ne flagged (= platné)
+        $earnStmt = $this->pdo->prepare(
+            "SELECT
+                COUNT(*) AS total_wins,
+                SUM(CASE WHEN f.id IS NULL THEN 1 ELSE 0 END) AS valid_wins
+             FROM contacts c
+             LEFT JOIN contact_oz_flags f
+                    ON f.contact_id = c.id AND f.oz_id = c.assigned_sales_id
+             WHERE c.stav = 'CALLED_OK'
+               AND c.assigned_caller_id = :cid
+               AND YEAR(c.datum_volani)  = :y
+               AND MONTH(c.datum_volani) = :m"
+        );
+        $earnStmt->execute(['cid' => $callerId, 'y' => $earnYear, 'm' => $earnMonth]);
+        $earnRow = $earnStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $earnWinsTotal = (int) ($earnRow['total_wins'] ?? 0);
+        $earnWinsValid = (int) ($earnRow['valid_wins'] ?? 0);
+        $earnStandard  = $earnWinsValid * $earnRewardPerWin;
+
+        // Rescue bonusy z tohoto měsíce (rescued_at)
+        $earnRescueAwaiting = 0;
+        $earnRescueEarned   = 0.0;  // bonus_amount nastaven, nevyplacený
+        $earnRescuePaid     = 0.0;  // už vyplacený
+        try {
+            $rbStmt = $this->pdo->prepare(
+                "SELECT bonus_amount, bonus_paid_at
+                 FROM rescue_requests
+                 WHERE rescued_by_caller_id = :cid
+                   AND outcome = 'success'
+                   AND YEAR(rescued_at)  = :y
+                   AND MONTH(rescued_at) = :m"
+            );
+            $rbStmt->execute(['cid' => $callerId, 'y' => $earnYear, 'm' => $earnMonth]);
+            foreach ($rbStmt->fetchAll(PDO::FETCH_ASSOC) as $rbRow) {
+                $amt = (float) ($rbRow['bonus_amount'] ?? 0);
+                if ($amt <= 0) {
+                    $earnRescueAwaiting++;
+                } elseif (empty($rbRow['bonus_paid_at'])) {
+                    $earnRescueEarned += $amt;
+                } else {
+                    $earnRescuePaid += $amt;
+                }
+            }
+        } catch (\Throwable $_) {}
+
+        $earnTotalEarned = $earnStandard + $earnRescueEarned + $earnRescuePaid;
 
         // ── Schema sloupců contact_oz_flags je teď v migraci 018 ──────────────
         // (caller_comment, caller_confirmed, oz_comment, oz_confirmed)
@@ -337,14 +424,31 @@ final class CallerController
                                     SELECT 1 FROM premium_lead_pool plp
                                     WHERE plp.contact_id = contacts.id
                                       AND plp.cleaning_status IN ('pending', 'tradeable')
+                                )
+                                -- Excluze sázkových kontaktů: ty patří do /caller/campaigns,
+                                -- nesmí se objevit v anonymním poolu (lock by si je vzal kdokoliv)
+                                AND NOT EXISTS (
+                                    SELECT 1 FROM bet_campaign_leads bcl
+                                    WHERE bcl.contact_id = contacts.id
                                 )";
                 $claimParams = [$selectedRegion];
 
                 $this->pdo->beginTransaction();
                 try {
+                    // ORDER (priorita):
+                    //   1) queue_mix_seq ASC — zamíchané kontakty první (1:10 pattern firma:OSVČ)
+                    //   2) COALESCE(last_recycled_at, created_at) ASC — nezamíchané a recyklované
+                    //   3) id ASC — deterministická shoda
+                    // queue_mix_seq se propaguje z čističky (kde byl mix přidělen),
+                    // takže navolávačka VIDÍ stejný 1:10 rytmus ve své frontě.
                     $idStmt = $this->pdo->prepare(
                         "SELECT id FROM contacts WHERE {$claimWhere}
-                         ORDER BY created_at ASC LIMIT {$needed} FOR UPDATE"
+                         ORDER BY
+                             ISNULL(queue_mix_seq) ASC,
+                             queue_mix_seq ASC,
+                             COALESCE(last_recycled_at, created_at) ASC,
+                             id ASC
+                         LIMIT {$needed} FOR UPDATE"
                     );
                     $idStmt->execute($claimParams);
                     $ids = $idStmt->fetchAll(PDO::FETCH_COLUMN);
@@ -398,6 +502,36 @@ final class CallerController
         // (operátorka vidí "tento telefon používá X dalších firem" + poslední volání)
         if ($contacts !== []) {
             $contacts = $this->enrichSharedPhoneInfo($contacts);
+        }
+
+        // ── Bet info: kontakty, které patří do sázky (= OZ je fixně přiřazen) ────────
+        // Map: contact_id => { oz_id, oz_name, campaign_id, campaign_name, position }
+        // Použito ve view k zobrazení readonly OZ badge místo dropdownu.
+        $betContacts = [];
+        if ($contacts !== []) {
+            $cIds = array_map(fn($c) => (int) $c['id'], $contacts);
+            $ph   = implode(',', array_fill(0, count($cIds), '?'));
+            $betStmt = $this->pdo->prepare(
+                "SELECT bcl.contact_id, bcl.position,
+                        bcr.oz_id, u.jmeno AS oz_name,
+                        bc.id AS campaign_id, bc.name AS campaign_name
+                 FROM bet_campaign_leads bcl
+                 JOIN bet_campaign_recipients bcr ON bcr.id = bcl.recipient_id
+                 JOIN bet_campaigns bc ON bc.id = bcl.campaign_id
+                 LEFT JOIN users u ON u.id = bcr.oz_id
+                 WHERE bcl.contact_id IN ($ph)
+                   AND bcr.delivery_type = 'call'"
+            );
+            $betStmt->execute($cIds);
+            foreach ($betStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                $betContacts[(int) $r['contact_id']] = [
+                    'oz_id'         => (int) $r['oz_id'],
+                    'oz_name'       => (string) ($r['oz_name'] ?? '?'),
+                    'campaign_id'   => (int) $r['campaign_id'],
+                    'campaign_name' => (string) ($r['campaign_name'] ?? '?'),
+                    'position'      => (int) $r['position'],
+                ];
+            }
         }
 
         // ── Počty pro taby ────────────────────────────────────────────────────
@@ -695,21 +829,45 @@ final class CallerController
         }
 
         // Pro výhru musí být vybrán OZ
-        $salesUser = null;
+        $salesUser  = null;
+        $isBetLead  = false; // pro audit log
         if ($newStatus === 'CALLED_OK') {
-            $salesId = (int) ($_POST['sales_id'] ?? 0);
-            if ($salesId <= 0) {
-                crm_flash_set('Výhra: je nutné vybrat obchodního zástupce.');
-                crm_redirect('/caller');
-            }
-            $sc = $this->pdo->prepare(
-                'SELECT id, jmeno FROM users WHERE id = :id AND role = \'obchodak\' AND aktivni = 1 LIMIT 1'
+            // ── ENFORCEMENT: pokud je kontakt v sázce (bet_campaign_leads),
+            // OZ je FIXNĚ určen sázkou — ignoruj POST sales_id a vezmi z recipients.
+            // To brání tomu, aby navolávačka přepsala pre-assigned OZ ze sázky.
+            $betCheck = $this->pdo->prepare(
+                "SELECT bcr.oz_id, u.jmeno
+                 FROM bet_campaign_leads bcl
+                 JOIN bet_campaign_recipients bcr ON bcr.id = bcl.recipient_id
+                 LEFT JOIN users u ON u.id = bcr.oz_id
+                 WHERE bcl.contact_id = ? LIMIT 1"
             );
-            $sc->execute(['id' => $salesId]);
-            $salesUser = $sc->fetch(PDO::FETCH_ASSOC);
-            if (!$salesUser) {
-                crm_flash_set('Vybraný obchodní zástupce neexistuje nebo není aktivní.');
-                crm_redirect('/caller');
+            $betCheck->execute([$contactId]);
+            $betRow = $betCheck->fetch(PDO::FETCH_ASSOC);
+
+            if ($betRow && (int) ($betRow['oz_id'] ?? 0) > 0) {
+                // Sázkový kontakt — OZ je fixní
+                $salesUser = [
+                    'id'    => (int) $betRow['oz_id'],
+                    'jmeno' => (string) ($betRow['jmeno'] ?? '?'),
+                ];
+                $isBetLead = true;
+            } else {
+                // Běžný kontakt — vezmi sales_id z POSTu jako dosud
+                $salesId = (int) ($_POST['sales_id'] ?? 0);
+                if ($salesId <= 0) {
+                    crm_flash_set('Výhra: je nutné vybrat obchodního zástupce.');
+                    crm_redirect('/caller');
+                }
+                $sc = $this->pdo->prepare(
+                    'SELECT id, jmeno FROM users WHERE id = :id AND role = \'obchodak\' AND aktivni = 1 LIMIT 1'
+                );
+                $sc->execute(['id' => $salesId]);
+                $salesUser = $sc->fetch(PDO::FETCH_ASSOC);
+                if (!$salesUser) {
+                    crm_flash_set('Vybraný obchodní zástupce neexistuje nebo není aktivní.');
+                    crm_redirect('/caller');
+                }
             }
         }
 
@@ -1684,6 +1842,50 @@ final class CallerController
         // Maskování citlivých údajů — navolávačka vidí maskovaný telefon/firmu;
         // majitel/superadmin/atd. mají plný audit view.
         $maskSensitive = crm_should_mask_for_role((string) ($user['role'] ?? ''));
+
+        // ── Bonusy ze záchran ──
+        // Načti všechny záchrany, kde TATO navolávačka uspěla.
+        // Rozdělí na: earned (bonus_amount nastaven po podpisu) vs awaiting (úspěch ale ještě bez podpisu).
+        // V earned dále rozlišit paid vs unpaid.
+        // Filtrujeme podle rescued_at v daném měsíci (= kdy se to navolávací událost odehrála),
+        // ne podle bonus_locked_at — chceme aby caller viděl v měsíci své reálné výsledky.
+        $rescueBonuses = [];
+        $sumRescueEarnedUnpaid = 0.0;
+        $sumRescueEarnedPaid   = 0.0;
+        $countRescueAwaiting   = 0;
+        try {
+            $rbStmt = $this->pdo->prepare(
+                "SELECT rr.id, rr.contact_id, rr.outcome, rr.rescued_at,
+                        rr.bonus_amount, rr.bonus_locked_at, rr.bonus_paid_at,
+                        c.firma, c.region,
+                        uo.jmeno AS original_sales_name,
+                        uf.jmeno AS final_sales_name
+                 FROM rescue_requests rr
+                 LEFT JOIN contacts c ON c.id = rr.contact_id
+                 LEFT JOIN users uo   ON uo.id = rr.original_sales_id
+                 LEFT JOIN users uf   ON uf.id = rr.final_sales_id
+                 WHERE rr.rescued_by_caller_id = :cid
+                   AND rr.outcome = 'success'
+                   AND YEAR(rr.rescued_at)  = :y
+                   AND MONTH(rr.rescued_at) = :m
+                 ORDER BY rr.rescued_at ASC"
+            );
+            $rbStmt->execute(['cid' => $callerId, 'y' => $year, 'm' => $month]);
+            $rescueBonuses = $rbStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($rescueBonuses as $rb) {
+                if (!empty($rb['bonus_amount'])) {
+                    if (!empty($rb['bonus_paid_at'])) {
+                        $sumRescueEarnedPaid += (float) $rb['bonus_amount'];
+                    } else {
+                        $sumRescueEarnedUnpaid += (float) $rb['bonus_amount'];
+                    }
+                } else {
+                    $countRescueAwaiting++;
+                }
+            }
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+        }
 
         // Standalone tisková stránka — neprojde přes base layout
         header('Content-Type: text/html; charset=UTF-8');

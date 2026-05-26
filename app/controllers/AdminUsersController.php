@@ -744,19 +744,139 @@ final class AdminUsersController
             crm_redirect('/admin/users');
         }
 
-        $plain = crm_generate_temp_password();
+        // Custom password — pokud admin zadal vlastní, použij to. Jinak generuj.
+        // POZOR: pokud admin zadal vlastní, NESTAVÍME must_change_password=1,
+        // protože admin si může chtít přihlásit jako uživatel a debugovat.
+        $customPassword = (string) ($_POST['custom_password'] ?? '');
+        if ($customPassword !== '') {
+            if (strlen($customPassword) < 6) {
+                crm_flash_set('⚠ Vlastní heslo musí mít alespoň 6 znaků.');
+                crm_redirect('/admin/users');
+            }
+            $plain = $customPassword;
+            $mustChange = 0; // admin nastavil heslo schválně, nenutíme změnu
+            $action = 'user_password_set_custom';
+            $flashMsg = '✓ Heslo pro ' . (string) $target['jmeno'] . ' nastaveno na: ' . $plain
+                      . ' — uživatel se přihlásí tímto heslem (nebude vyzván ke změně).';
+        } else {
+            $plain = crm_generate_temp_password();
+            $mustChange = 1; // generic temp — uživatel si změní
+            $action = 'user_password_reset';
+            $flashMsg = 'Nové dočasné heslo pro ' . (string) $target['jmeno'] . ': ' . $plain
+                      . ' — sdělte ho uživateli osobně nebo přes zabezpečený kanál. Při příštím přihlášení bude vyzván ke změně.';
+        }
+
         $hash = crm_auth_password_hash_new($plain);
         $this->pdo->prepare(
-            'UPDATE users SET heslo_hash = :h, must_change_password = 1 WHERE id = :id'
-        )->execute(['h' => $hash, 'id' => $id]);
+            'UPDATE users SET heslo_hash = :h, must_change_password = :mc WHERE id = :id'
+        )->execute(['h' => $hash, 'mc' => $mustChange, 'id' => $id]);
 
-        crm_audit_log($this->pdo, (int) $actor['id'], 'user_password_reset', 'user', $id, []);
+        crm_audit_log($this->pdo, (int) $actor['id'], $action, 'user', $id, []);
 
-        // Nové heslo zobrazíme adminovi přímo — bez emailu
-        crm_flash_set(
-            'Nové dočasné heslo pro ' . (string) $target['jmeno'] . ': ' . $plain .
-            ' — sdělte ho uživateli osobně nebo přes zabezpečený kanál. Při příštím přihlášení bude vyzván ke změně.'
+        crm_flash_set($flashMsg);
+        crm_redirect('/admin/users');
+    }
+
+    /**
+     * POST /admin/users/impersonate — admin se "přepne" do účtu jiného uživatele.
+     * Skutečné ID admina zůstane v session pod klíčem 'impersonator_id',
+     * takže `crm_is_impersonating()` to detekuje a top bar nabízí "← Zpět".
+     *
+     * Pouze superadmin/majitel může impersonate. Sám sebe NE.
+     */
+    public function postImpersonate(): void
+    {
+        $actor = $this->actor();
+        crm_require_roles($actor, ['majitel', 'superadmin']);
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            crm_flash_set('Neplatný CSRF token.');
+            crm_redirect('/admin/users');
+        }
+
+        $id = (int) ($_POST['id'] ?? 0);
+        if ($id <= 0 || $id === (int) $actor['id']) {
+            crm_flash_set('Sám sebe impersonovat nemůžeš.');
+            crm_redirect('/admin/users');
+        }
+        // Kdyby uživatel byl už impersonovaný (= další úroveň), zablokovat
+        if (!empty($_SESSION['impersonator_id'])) {
+            crm_flash_set('Už jsi v cizím účtu — nejprve se vrať zpět.');
+            crm_redirect('/admin/users');
+        }
+
+        $stmt = $this->pdo->prepare('SELECT id, jmeno, aktivni, role FROM users WHERE id = :id LIMIT 1');
+        $stmt->execute(['id' => $id]);
+        $target = $stmt->fetch();
+        if (!is_array($target) || (int) ($target['aktivni'] ?? 0) !== 1) {
+            crm_flash_set('Uživatel není aktivní nebo neexistuje.');
+            crm_redirect('/admin/users');
+        }
+        if (!crm_users_actor_can_manage_target((string) $actor['role'], $target)) {
+            crm_flash_set('Tento účet nemůžeš impersonovat.');
+            crm_redirect('/admin/users');
+        }
+        // Bezpečnost: nikdy nelze impersonovat superadmina (i jiným superadminem ne)
+        if ((string) $target['role'] === 'superadmin') {
+            crm_flash_set('Superadmina nelze impersonovat.');
+            crm_redirect('/admin/users');
+        }
+
+        crm_audit_log(
+            $this->pdo,
+            (int) $actor['id'],
+            'user_impersonate_start',
+            'user',
+            $id,
+            ['target_name' => (string) $target['jmeno']]
         );
+
+        // Uložíme skutečné ID admina a přepneme session na target
+        crm_session_start();
+        $_SESSION['impersonator_id']     = (int) $actor['id'];
+        $_SESSION['impersonator_name']   = (string) ($actor['jmeno'] ?? '');
+        $_SESSION[CRM_SESSION_USER_ID]   = (int) $target['id'];
+        // Reset multi-role active role (případně použije primární)
+        if (defined('CRM_SESSION_ACTIVE_ROLE')) {
+            unset($_SESSION[CRM_SESSION_ACTIVE_ROLE]);
+        }
+        crm_session_regenerate_id();
+
+        crm_flash_set('🎭 Jsi přepnut do účtu „' . (string) $target['jmeno'] . '". Vrať se zpět vpravo nahoře.');
+        crm_redirect('/dashboard');
+    }
+
+    /**
+     * GET /admin/users/impersonate-stop — návrat zpět do admin účtu.
+     * Aktivace přes top-bar widget "← Zpět do admin".
+     */
+    public function getImpersonateStop(): void
+    {
+        crm_session_start();
+        if (empty($_SESSION['impersonator_id'])) {
+            crm_redirect('/dashboard');
+        }
+        $impersonatorId = (int) $_SESSION['impersonator_id'];
+        $impersonatedId = (int) ($_SESSION[CRM_SESSION_USER_ID] ?? 0);
+
+        crm_audit_log(
+            $this->pdo,
+            $impersonatorId,
+            'user_impersonate_stop',
+            'user',
+            $impersonatedId,
+            []
+        );
+
+        // Vrátit session na admina
+        $_SESSION[CRM_SESSION_USER_ID] = $impersonatorId;
+        unset($_SESSION['impersonator_id'], $_SESSION['impersonator_name']);
+        if (defined('CRM_SESSION_ACTIVE_ROLE')) {
+            unset($_SESSION[CRM_SESSION_ACTIVE_ROLE]);
+        }
+        crm_session_regenerate_id();
+
+        crm_flash_set('✓ Vráceno do admin účtu.');
         crm_redirect('/admin/users');
     }
 

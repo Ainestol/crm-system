@@ -206,6 +206,25 @@ final class CistickaController
             }
         }
 
+        // ── VŽDY: COUNT NEW per region (= "k dispozici v DB") ──────────────────
+        // Tato hodnota je nezávislá na tabu — uživatel ji potřebuje vědět vždy,
+        // aby viděl, kolik je v DB nahráno NEW kontaktů k vyčištění.
+        /** @var array<string,int> $newInDbPerRegion */
+        $newInDbPerRegion = [];
+        if ($availableRegions !== []) {
+            $ph3 = implode(',', array_fill(0, count($availableRegions), '?'));
+            $newStmt = $this->pdo->prepare(
+                "SELECT region, COUNT(*) AS cnt
+                 FROM contacts
+                 WHERE stav = 'NEW' AND region IN ($ph3)
+                 GROUP BY region"
+            );
+            $newStmt->execute($availableRegions);
+            foreach ($newStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $newInDbPerRegion[(string) $row['region']] = (int) $row['cnt'];
+            }
+        }
+
         // ── Helper: přidá AND region IN (?, ...) do WHERE ────────────────────
         // Použije effectiveRegions (goals > user_regions > nic).
         // Pokud je vybraný konkrétní region, ten má přednost (přepíše).
@@ -270,12 +289,23 @@ final class CistickaController
             $totalCount = (int) $cntStmt->fetchColumn();
         } else {
             // K ověření: stav = NEW + region filtr (effectiveRegions / selectedRegion)
+            //
+            // Řazení (priorita):
+            //   1) queue_mix_seq ASC — zamíchané kontakty první, v pořadí mixu (1 firma : 10 OSVČ)
+            //   2) COALESCE(last_recycled_at, created_at) ASC — pak ostatní (= nezamíchané + recyklované)
+            //   3) id ASC — fallback pro deterministickou shodu
+            //
+            // ISNULL trick: ISNULL(queue_mix_seq)=0 pro hodnotu, =1 pro NULL → ASC = NULL na konec
             $stmt = $this->pdo->prepare(
                 "SELECT id, firma, telefon, operator, region
                  FROM contacts
                  WHERE stav = 'NEW'
                    $regionInSql
-                 ORDER BY id ASC
+                 ORDER BY
+                     ISNULL(queue_mix_seq) ASC,
+                     queue_mix_seq ASC,
+                     COALESCE(last_recycled_at, created_at) ASC,
+                     id ASC
                  LIMIT ? OFFSET ?"
             );
             $stmt->execute(array_merge($regionParams, [self::PAGE_SIZE, $offset]));
@@ -517,6 +547,10 @@ final class CistickaController
         }
 
         $processed = 0;
+        // FETCH region a operator už při SELECT — potřeba pro hook bet_assign_lead
+        $regionStmt = $this->pdo->prepare(
+            "SELECT id, region, operator FROM contacts WHERE id = :id AND stav = 'NEW' LIMIT 1"
+        );
         $upd = $this->pdo->prepare(
             'UPDATE contacts SET stav = :stav, operator = :op, updated_at = NOW(3)
              WHERE id = :id AND stav = \'NEW\''
@@ -531,6 +565,14 @@ final class CistickaController
             if ($contactId <= 0 || !in_array($action, ['vf_skip', 'tm', 'o2', 'chybny'], true)) {
                 continue;
             }
+            // Fetch region PŘED update — po UPDATE už není stav=NEW a SELECT by nevrátil nic
+            $regionStmt->execute([':id' => $contactId]);
+            $contactRow = $regionStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$contactRow) {
+                continue; // už nezpracovatelný (race condition)
+            }
+            $region = (string) ($contactRow['region'] ?? '');
+
             [$newStatus, $operatorVal, $label] = match ($action) {
                 'vf_skip' => ['VF_SKIP',        'VF', 'Čistička: VF – přeskočeno'],
                 'tm'      => ['READY',          'TM', 'Čistička: TM – připraveno'],
@@ -541,6 +583,18 @@ final class CistickaController
             if ($upd->rowCount() > 0) {
                 $wf->execute([':cid' => $contactId, ':uid' => $cistickaId, ':new' => $newStatus, ':note' => $label]);
                 $processed++;
+
+                // HOOK: zařadit do aktivní sázky (jen pro TM/O2 = použitelný lead)
+                if (in_array($action, ['tm', 'o2'], true) && $region !== '') {
+                    try {
+                        bet_assign_lead($this->pdo, $contactId, $cistickaId, $region);
+                    } catch (\Throwable $e) {
+                        // Chyba sázky nesmí shodit celý bulk
+                        if (function_exists('crm_db_log_error')) {
+                            crm_db_log_error($e, __METHOD__);
+                        }
+                    }
+                }
             }
         }
 
@@ -597,7 +651,18 @@ final class CistickaController
              VALUES (?, ?, ?, 'NEW', 'Čistička: vráceno zpět (undo)', NOW(3))"
         )->execute([$contactId, $cistickaId, $oldStav]);
 
-        echo json_encode(['ok' => true]);
+        // HOOK: pokud byl kontakt přiřazen do sázky, odstranit ho a decrementovat counts
+        $betUndo = null;
+        try {
+            $betUndo = bet_unassign_lead($this->pdo, $contactId);
+        } catch (\Throwable $e) {
+            // Nesmí shodit undo — log a pokračovat
+            if (function_exists('crm_db_log_error')) {
+                crm_db_log_error($e, __METHOD__);
+            }
+        }
+
+        echo json_encode(['ok' => true, 'bet_undo' => $betUndo]);
         exit;
     }
 
@@ -643,6 +708,9 @@ final class CistickaController
             'o2'      => ['READY',   'O2', 'O2 – připraveno'],
         };
 
+        $oldOperator = (string) ($contact['operator'] ?? '');
+        $oldStav     = (string) ($contact['stav'] ?? '');
+
         $this->pdo->prepare(
             "UPDATE contacts SET stav = ?, operator = ?, updated_at = NOW(3) WHERE id = ?"
         )->execute([$newStatus, $operatorVal, $contactId]);
@@ -650,9 +718,33 @@ final class CistickaController
         $this->pdo->prepare(
             "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
              VALUES (?, ?, ?, ?, ?, NOW(3))"
-        )->execute([$contactId, $cistickaId, $contact['stav'], $newStatus, 'Čistička překlasifikace: ' . $label]);
+        )->execute([$contactId, $cistickaId, $oldStav, $newStatus, 'Čistička překlasifikace: ' . $label]);
 
-        echo json_encode(['ok' => true, 'operator' => $operatorVal, 'status' => $newStatus]);
+        // HOOK: cleanup ze sázky pokud přechod z použitelného TM/O2 na VF (= už není lead)
+        // Z READY/TM → VF_SKIP: kontakt přestává být lead → odebrat ze sázky
+        // Z TM ↔ O2: zůstává READY a operator, jen se mění → cleanup NETŘEBA
+        // Z VF_SKIP → TM/O2: kontakt teď je validní lead → mohlo by se chtít znovu zařadit,
+        //                    ale to neuděláme automaticky (čistička je nevolala přes verify hook).
+        //                    Manual reclassify do TM/O2 z VF NEPŘIDÁVÁ do sázky — by design.
+        $betUndo = null;
+        $wasValidLead = in_array($oldOperator, ['TM', 'O2'], true) && $oldStav === 'READY';
+        $isValidLead  = in_array($operatorVal, ['TM', 'O2'], true) && $newStatus === 'READY';
+        if ($wasValidLead && !$isValidLead) {
+            try {
+                $betUndo = bet_unassign_lead($this->pdo, $contactId);
+            } catch (\Throwable $e) {
+                if (function_exists('crm_db_log_error')) {
+                    crm_db_log_error($e, __METHOD__);
+                }
+            }
+        }
+
+        echo json_encode([
+            'ok'       => true,
+            'operator' => $operatorVal,
+            'status'   => $newStatus,
+            'bet_undo' => $betUndo,
+        ]);
         exit;
     }
 
