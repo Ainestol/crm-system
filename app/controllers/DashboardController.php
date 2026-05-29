@@ -65,6 +65,71 @@ final class DashboardController
             }
         }
 
+        // ── Widget „🎂 Narozeniny majitelů" — pro majitele / superadmin ──
+        // Zobrazí kontakty s blížícími se narozeninami (do 30 dní), s tel číslem,
+        // aby OZ / admin mohl popřát. Narozeniny jsou každoroční — počítá se
+        // "next birthday" (nejbližší výskyt měsíc/den od dneška).
+        $upcomingBirthdays = [];
+        $birthdayStats     = ['today' => 0, 'days_7' => 0, 'days_14' => 0, 'days_30' => 0];
+        if (in_array(($user['role'] ?? ''), ['majitel', 'superadmin'], true)) {
+            try {
+                // Načti všechny kontakty s vyplněnými narozeninami (typicky stovky řádků max)
+                $bStmt = $this->pdo->query(
+                    "SELECT c.id, c.firma, c.telefon, c.region,
+                            c.narozeniny_majitele,
+                            COALESCE(u_oz.jmeno, '—') AS oz_name
+                     FROM contacts c
+                     LEFT JOIN users u_oz ON u_oz.id = c.assigned_sales_id
+                     WHERE c.narozeniny_majitele IS NOT NULL
+                       AND c.narozeniny_majitele <> '0000-00-00'"
+                );
+                if ($bStmt) {
+                    $all = $bStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                    $today = new DateTime('today');
+                    foreach ($all as $r) {
+                        $nar = (string) ($r['narozeniny_majitele'] ?? '');
+                        if ($nar === '' || $nar === '0000-00-00') continue;
+                        try {
+                            $bd = new DateTime($nar);
+                        } catch (\Throwable $_) { continue; }
+                        // Next birthday: v letošním roce; pokud už byl, pak v příštím
+                        $nextBd = (new DateTime($today->format('Y') . '-' . $bd->format('m-d')));
+                        if ($nextBd < $today) {
+                            $nextBd->modify('+1 year');
+                        }
+                        $daysUntil = (int) $today->diff($nextBd)->days;
+                        if ($daysUntil > 30) continue;  // jen do 30 dní
+                        // Věk po narozeninách
+                        $age = (int) $nextBd->format('Y') - (int) $bd->format('Y');
+
+                        $upcomingBirthdays[] = [
+                            'id'         => (int) $r['id'],
+                            'firma'      => (string) ($r['firma']   ?? ''),
+                            'telefon'    => (string) ($r['telefon'] ?? ''),
+                            'region'     => (string) ($r['region']  ?? ''),
+                            'oz_name'    => (string) ($r['oz_name'] ?? '—'),
+                            'narozeniny' => $nar,                 // YYYY-MM-DD
+                            'next_bd'    => $nextBd->format('Y-m-d'),
+                            'days_until' => $daysUntil,
+                            'age'        => $age,
+                        ];
+
+                        // Stats
+                        if ($daysUntil === 0) $birthdayStats['today']++;
+                        if ($daysUntil <= 7)  $birthdayStats['days_7']++;
+                        if ($daysUntil <= 14) $birthdayStats['days_14']++;
+                        if ($daysUntil <= 30) $birthdayStats['days_30']++;
+                    }
+                    // Sort podle days_until ASC
+                    usort($upcomingBirthdays, static fn($a, $b) => $a['days_until'] <=> $b['days_until']);
+                    // Top 15 pro UI (statistiky obsahují všechny)
+                    $upcomingBirthdays = array_slice($upcomingBirthdays, 0, 15);
+                }
+            } catch (\PDOException $e) {
+                if (function_exists('crm_db_log_error')) crm_db_log_error($e, __METHOD__);
+            }
+        }
+
         $flash = crm_flash_take();
         $title = 'Dashboard';
         $csrf = crm_csrf_token();

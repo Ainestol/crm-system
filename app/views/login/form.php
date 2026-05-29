@@ -19,4 +19,10 @@ declare(strict_types=1);
 
         <button type="submit" class="btn">Přihlásit se</button>
     </form>
+    <p style="margin-top:1rem;text-align:center;font-size:0.85rem;">
+        <a href="<?= crm_h(crm_url('/password/forgot')) ?>"
+           style="color:var(--color-text-muted, #6b7280);text-decoration:none;">
+            🔐 Zapomenuté heslo?
+        </a>
+    </p>
 </section>

@@ -455,6 +455,78 @@ final class OzController
             crm_db_log_error($e, __METHOD__);
         }
 
+        // ── Mini-widget „🎂 Narozeniny" v hlavičce ───────────────────
+        // Top 5 nejbližších narozenin aktivních klientů (= s uzavřenou smlouvou)
+        // přiřazených tomuto OZ.
+        //
+        // Aktivní = SPLŇUJE ALESPOŇ JEDEN z:
+        //   - workflow.stav = 'UZAVRENO'
+        //   - workflow.cislo_smlouvy je vyplněno
+        //   - contacts.activation_date je vyplněno
+        //
+        // Filter na "aktivní" děláme v PHP (ne SQL), abychom byli odolní vůči
+        // různým MariaDB konfiguracím a sloupcům, které mohou nebo nemusí existovat.
+        $upcomingBirthdays = [];
+        try {
+            $bdStmt = $this->pdo->prepare(
+                "SELECT c.id, c.firma, c.telefon, c.narozeniny_majitele,
+                        c.activation_date,
+                        w.stav         AS wf_stav,
+                        w.cislo_smlouvy AS wf_cislo
+                 FROM contacts c
+                 LEFT JOIN oz_contact_workflow w
+                        ON w.contact_id = c.id AND w.oz_id = :ozid
+                 WHERE c.assigned_sales_id = :ozid2
+                   AND c.narozeniny_majitele IS NOT NULL"
+            );
+            $bdStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $all = $bdStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $today = new DateTime('today');
+            foreach ($all as $r) {
+                $nar = (string) ($r['narozeniny_majitele'] ?? '');
+                if ($nar === '' || $nar === '0000-00-00') continue;
+
+                // Filter na "aktivní" klienty
+                $wfStav   = (string) ($r['wf_stav']   ?? '');
+                $wfCislo  = (string) ($r['wf_cislo']  ?? '');
+                $actDate  = (string) ($r['activation_date'] ?? '');
+                $isActive = ($wfStav === 'UZAVRENO')
+                         || ($wfCislo !== '')
+                         || ($actDate !== '' && $actDate !== '0000-00-00');
+                if (!$isActive) continue;
+
+                try { $bd = new DateTime($nar); } catch (\Throwable $_) { continue; }
+                // Next birthday: tento rok; pokud už byl, pak příští
+                try {
+                    $nextBd = new DateTime($today->format('Y') . '-' . $bd->format('m-d'));
+                } catch (\Throwable $_) { continue; }
+                if ($nextBd < $today) {
+                    $nextBd->modify('+1 year');
+                }
+                $daysUntil = (int) $today->diff($nextBd)->days;
+                if ($daysUntil > 30) continue;
+                $age = (int) $nextBd->format('Y') - (int) $bd->format('Y');
+                $upcomingBirthdays[] = [
+                    'id'         => (int) $r['id'],
+                    'firma'      => (string) ($r['firma'] ?? ''),
+                    'telefon'    => (string) ($r['telefon'] ?? ''),
+                    'narozeniny' => $nar,
+                    'next_bd'    => $nextBd->format('Y-m-d'),
+                    'days_until' => $daysUntil,
+                    'age'        => $age,
+                ];
+            }
+            usort($upcomingBirthdays, static fn($a, $b) => $a['days_until'] <=> $b['days_until']);
+            $upcomingBirthdays = array_slice($upcomingBirthdays, 0, 5); // Top 5
+        } catch (\Throwable $e) {
+            // Diagnostika: pokud něco selže, zapíšeme do error logu pro pozdější analýzu
+            if (function_exists('crm_db_log_error')) {
+                crm_db_log_error($e, __METHOD__);
+            } else {
+                @error_log('[oz/leads birthdays] ' . $e->getMessage());
+            }
+        }
+
         $title = 'Pracovní plocha';
         ob_start();
         require dirname(__DIR__) . '/views/oz/leads.php';

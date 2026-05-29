@@ -424,6 +424,79 @@ $docTitle = 'Výplata navolávačky — ' . $caller['jmeno'] . ' — ' . $monthN
         </table>
     <?php } ?>
 
+    <!-- ── Odečty za expirované záchrany (clawback) ── -->
+    <?php if (!empty($rescueClawback)) { ?>
+        <h2 style="margin-top:1.4rem;font-size:13pt;border-bottom:1px solid #ddd;padding-bottom:0.3rem;color:#dc2626;">
+            ⚠ Odečty za záchrany (-<?= count($rescueClawback) ?>×)
+        </h2>
+        <p style="font-size:8.5pt;color:#666;margin:0.4rem 0;">
+            Tyto kontakty jsi původně navolala (předala OZ), ale OZ je následně poslal na záchranu — navolávačka je
+            nezachránila / expirovaly. OZ za ně nezaplatí, takže <strong>tvůj bonus za původní navolávání se odečítá</strong>.
+        </p>
+
+        <table style="width:100%;border-collapse:collapse;margin-top:0.5rem;font-size:9.5pt;">
+            <thead>
+                <tr style="background:#fee2e2;">
+                    <th style="padding:0.4rem 0.6rem;text-align:left;border:1px solid #ddd;">Firma</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;border:1px solid #ddd;">Kraj</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;border:1px solid #ddd;">OZ co poslal na záchranu</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:left;border:1px solid #ddd;">Důvod odečtu</th>
+                    <th style="padding:0.4rem 0.6rem;text-align:right;border:1px solid #ddd;">Odečet</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($rescueClawback as $cb) {
+                    $firma = $maskSensitive
+                        ? crm_mask_firma((string) ($cb['firma'] ?? '—'))
+                        : (string) ($cb['firma'] ?? '—');
+                    $reason = (string) $cb['outcome'] === 'expired'
+                        ? '⌛ Expirovalo (14 dní bez záchrany)'
+                        : '❌ Záchrana neúspěšná';
+                ?>
+                <tr>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;font-weight:600;">
+                        <?= htmlspecialchars($firma, ENT_QUOTES, 'UTF-8') ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;">
+                        <?= htmlspecialchars(crm_region_label((string) ($cb['region'] ?? '')), ENT_QUOTES, 'UTF-8') ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;">
+                        <?= htmlspecialchars((string) ($cb['original_sales_name'] ?? '—'), ENT_QUOTES, 'UTF-8') ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;color:#dc2626;">
+                        <?= htmlspecialchars($reason, ENT_QUOTES, 'UTF-8') ?>
+                    </td>
+                    <td style="padding:0.35rem 0.6rem;border:1px solid #ddd;text-align:right;font-weight:700;color:#dc2626;">
+                        −<?= number_format($rewardPerWin, 0, ',', ' ') ?> Kč
+                    </td>
+                </tr>
+                <?php } ?>
+            </tbody>
+            <tfoot>
+                <tr style="background:#fef2f2;font-weight:700;">
+                    <td colspan="4" style="padding:0.4rem 0.6rem;border:1px solid #ddd;text-align:right;">
+                        Celkem odečet:
+                    </td>
+                    <td style="padding:0.4rem 0.6rem;border:1px solid #ddd;text-align:right;color:#dc2626;">
+                        −<?= number_format($sumClawback, 0, ',', ' ') ?> Kč
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+
+        <div style="background:#fef3c7;border:1px solid #fbbf24;padding:0.6rem 0.9rem;border-radius:5px;
+                    margin-top:0.8rem;font-size:9pt;">
+            <strong>Souhrn výplaty:</strong><br>
+            Standard: <?= number_format($totalPayout, 0, ',', ' ') ?> Kč
+            −  Odečty: <?= number_format($sumClawback, 0, ',', ' ') ?> Kč
+            = <strong style="font-size:11pt;color:<?= $totalPayoutAfterClawback >= 0 ? '#16a34a' : '#dc2626' ?>;">
+                <?= number_format($totalPayoutAfterClawback, 0, ',', ' ') ?> Kč
+            </strong>
+            <br>
+            <em style="color:#92400e;font-size:8.5pt;">(záchrany se počítají do PŘÍJMU samostatně — viz sekce výše)</em>
+        </div>
+    <?php } ?>
+
     <!-- Zápatí -->
     <div class="doc-footer">
         <span>Clockwork Man CRM · 🐌 Šneci na tripu</span>

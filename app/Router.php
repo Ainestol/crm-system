@@ -53,6 +53,35 @@ final class Router
                 'roles' => [],
                 'handler' => [LoginController::class, 'postTwoFactor'],
             ],
+            // ── Forgot/reset hesla (bez přihlášení) ─────────────────────────
+            [
+                'method' => 'GET',
+                'path'   => '/password/forgot',
+                'auth'   => false,
+                'roles'  => [],
+                'handler'=> [LoginController::class, 'getForgotPassword'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/password/forgot',
+                'auth'   => false,
+                'roles'  => [],
+                'handler'=> [LoginController::class, 'postForgotPassword'],
+            ],
+            [
+                'method' => 'GET',
+                'path'   => '/password/reset',
+                'auth'   => false,
+                'roles'  => [],
+                'handler'=> [LoginController::class, 'getResetPassword'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/password/reset',
+                'auth'   => false,
+                'roles'  => [],
+                'handler'=> [LoginController::class, 'postResetPassword'],
+            ],
             // ── Multi-role: výběr role po loginu (jen pro multi-role users) ──
             [
                 'method' => 'GET',
@@ -311,6 +340,20 @@ final class Router
                 'auth' => true,
                 'roles' => ['majitel', 'superadmin'],
                 'handler' => [AdminDatagridController::class, 'getContactHistory'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/admin/datagrid/edit-options',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminDatagridController::class, 'getEditOptions'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/datagrid/update',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminDatagridController::class, 'postUpdate'],
             ],
             [
                 'method' => 'GET',

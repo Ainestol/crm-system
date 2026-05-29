@@ -42,18 +42,33 @@ final class AdminContactMixController
         $ratioFirma = $ratioFirma ?? $r['firma'];
         $ratioOsvc  = $ratioOsvc  ?? $r['osvc'];
 
-        // 1) Backfill subject_type
+        // 1) Backfill subject_type — BATCH 500 contactů per UPDATE
+        //    Při 5000+ kontaktech je per-row UPDATE pomalý. Použijeme CASE WHEN batch.
         $bfStmt = $pdo->prepare(
             "SELECT id, firma FROM contacts
              WHERE stav = 'NEW' AND queue_mix_seq IS NULL AND subject_type = 'unknown'"
         );
         $bfStmt->execute();
-        $upd = $pdo->prepare("UPDATE contacts SET subject_type = :t WHERE id = :id");
+        $allBackfill = $bfStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $backfilled = 0;
-        foreach ($bfStmt->fetchAll(PDO::FETCH_ASSOC) as $r2) {
-            $type = crm_detect_subject_type((string) ($r2['firma'] ?? ''));
-            $upd->execute(['t' => $type, 'id' => (int) $r2['id']]);
-            $backfilled++;
+        if ($allBackfill !== []) {
+            // Sgrupuj per type (firma vs osvc), pak UPDATE ... WHERE id IN (...)
+            $byType = ['firma' => [], 'osvc' => []];
+            foreach ($allBackfill as $r2) {
+                $type = crm_detect_subject_type((string) ($r2['firma'] ?? ''));
+                $byType[$type][] = (int) $r2['id'];
+            }
+            foreach ($byType as $type => $ids) {
+                if ($ids === []) continue;
+                foreach (array_chunk($ids, 500) as $chunk) {
+                    $ph = implode(',', array_fill(0, count($chunk), '?'));
+                    $stmt = $pdo->prepare(
+                        "UPDATE contacts SET subject_type = ? WHERE id IN ($ph)"
+                    );
+                    $stmt->execute(array_merge([$type], $chunk));
+                    $backfilled += $stmt->rowCount();
+                }
+            }
         }
 
         // 2) Načti unmixed
@@ -85,21 +100,47 @@ final class AdminContactMixController
             if ($iF >= count($firmaIds) && $iO >= count($osvcIds)) break;
         }
 
-        // 5) UPDATE seq
+        // 5) UPDATE seq — BATCH 500 řádků v jednom UPDATE přes CASE WHEN.
+        //    Místo 5000 individuálních UPDATE (= pomalé) máme 10 batch UPDATEs.
+        //    Každý batch je v jedné transakci, commit po každém batchi (= když selže
+        //    batch #5, batches 1-4 zůstanou uloženy = částečný úspěch).
         $assignedCount = 0;
         if ($mixed !== []) {
-            $pdo->beginTransaction();
-            try {
-                $seqUpd = $pdo->prepare("UPDATE contacts SET queue_mix_seq = :seq WHERE id = :id");
-                foreach ($mixed as $cid) {
-                    $seqUpd->execute(['seq' => $nextSeq, 'id' => $cid]);
-                    $nextSeq++;
-                    $assignedCount++;
+            // Připrav páry [contactId => seq]
+            $pairs = [];
+            foreach ($mixed as $cid) {
+                $pairs[$cid] = $nextSeq;
+                $nextSeq++;
+            }
+            // Batch po 500
+            $batches = array_chunk($pairs, 500, true);
+            foreach ($batches as $batch) {
+                $pdo->beginTransaction();
+                try {
+                    // SQL: UPDATE contacts SET queue_mix_seq = CASE id WHEN x THEN y ... END WHERE id IN (...)
+                    $cases  = [];
+                    $idList = [];
+                    $params = [];
+                    foreach ($batch as $cid => $seq) {
+                        $cases[]  = "WHEN ? THEN ?";
+                        $idList[] = $cid;
+                        $params[] = $cid;
+                        $params[] = $seq;
+                    }
+                    foreach ($batch as $cid => $_) {
+                        $params[] = $cid;
+                    }
+                    $ph = implode(',', array_fill(0, count($idList), '?'));
+                    $sql = "UPDATE contacts SET queue_mix_seq = CASE id " . implode(' ', $cases)
+                         . " END WHERE id IN ($ph)";
+                    $stmt = $pdo->prepare($sql);
+                    $stmt->execute($params);
+                    $assignedCount += count($batch);
+                    $pdo->commit();
+                } catch (\Throwable $e) {
+                    if ($pdo->inTransaction()) $pdo->rollBack();
+                    throw $e;
                 }
-                $pdo->commit();
-            } catch (\Throwable $e) {
-                if ($pdo->inTransaction()) $pdo->rollBack();
-                throw $e;
             }
         }
 

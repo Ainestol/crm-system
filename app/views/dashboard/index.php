@@ -8,9 +8,13 @@ declare(strict_types=1);
 /** @var string|null $activeRegion */
 /** @var list<array<string,mixed>> $upcomingAnniversaries */
 /** @var array{days_30:int,days_60:int,days_90:int,days_180:int} $anniversaryStats */
+/** @var list<array<string,mixed>> $upcomingBirthdays */
+/** @var array{today:int,days_7:int,days_14:int,days_30:int} $birthdayStats */
 $role = (string) ($user['role'] ?? '');
 $upcomingAnniversaries = $upcomingAnniversaries ?? [];
 $anniversaryStats      = $anniversaryStats ?? ['days_30' => 0, 'days_60' => 0, 'days_90' => 0, 'days_180' => 0];
+$upcomingBirthdays     = $upcomingBirthdays ?? [];
+$birthdayStats         = $birthdayStats ?? ['today' => 0, 'days_7' => 0, 'days_14' => 0, 'days_30' => 0];
 ?>
 <section class="card">
     <h1>Dashboard</h1>
@@ -85,6 +89,88 @@ $anniversaryStats      = $anniversaryStats ?? ['days_30' => 0, 'days_60' => 0, '
                                         <span class="anniv-days-pill <?= $days <= 30 ? 'anniv-days-pill--urgent' : ($days <= 60 ? 'anniv-days-pill--soon' : '') ?>">
                                             <?= $days ?> d
                                         </span>
+                                    </td>
+                                </tr>
+                            <?php } ?>
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        </div>
+    <?php } ?>
+
+    <!-- ══════════════════════════════════════════════════════════
+         WIDGET: Narozeniny majitelů (jen majitel/superadmin)
+         Top 15 nejbližších narozenin do 30 dnů + tel pro popřání
+    ══════════════════════════════════════════════════════════ -->
+    <?php if (in_array($role, ['majitel', 'superadmin'], true) && $birthdayStats['days_30'] > 0) { ?>
+        <div class="anniv-widget" style="border-color:rgba(236,72,153,0.35);background:linear-gradient(180deg,rgba(252,231,243,0.35),transparent);">
+            <details <?= ($birthdayStats['today'] > 0 || $birthdayStats['days_7'] > 0) ? 'open' : '' ?>>
+                <summary class="anniv-widget__summary">
+                    🎂 <strong>Narozeniny majitelů</strong>
+                    <span class="anniv-widget__pills">
+                        <?php if ($birthdayStats['today'] > 0) { ?>
+                            <span class="anniv-pill anniv-pill--urgent" style="background:#ec4899;">🎉 <?= $birthdayStats['today'] ?> dnes</span>
+                        <?php } ?>
+                        <?php if ($birthdayStats['days_7'] > $birthdayStats['today']) { ?>
+                            <span class="anniv-pill anniv-pill--urgent"><?= $birthdayStats['days_7'] ?> do 7 dní</span>
+                        <?php } ?>
+                        <?php if ($birthdayStats['days_14'] > $birthdayStats['days_7']) { ?>
+                            <span class="anniv-pill anniv-pill--soon"><?= $birthdayStats['days_14'] ?> do 14 dní</span>
+                        <?php } ?>
+                        <?php if ($birthdayStats['days_30'] > $birthdayStats['days_14']) { ?>
+                            <span class="anniv-pill"><?= $birthdayStats['days_30'] ?> do 30 dní</span>
+                        <?php } ?>
+                    </span>
+                </summary>
+                <div class="anniv-widget__body">
+                    <p class="anniv-widget__hint">
+                        Klienti, kterým se blíží narozeniny — popřát osobně (telefon) je nejlepší dotek vztahu.
+                    </p>
+                    <table class="anniv-table">
+                        <thead>
+                            <tr>
+                                <th>Firma</th>
+                                <th>📞 Telefon</th>
+                                <th>Kraj</th>
+                                <th>OZ</th>
+                                <th>Datum narození</th>
+                                <th>Letos</th>
+                                <th>Za</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($upcomingBirthdays as $b) {
+                                $days = (int) ($b['days_until'] ?? 0);
+                                $cls  = $days === 0 ? 'anniv-row--urgent' : ($days <= 7 ? 'anniv-row--urgent' : ($days <= 14 ? 'anniv-row--soon' : ''));
+                                $narFmt   = $b['narozeniny'] !== '' ? date('j. n. Y', strtotime((string)$b['narozeniny'])) : '—';
+                                $nextFmt  = $b['next_bd']    !== '' ? date('j. n.',   strtotime((string)$b['next_bd']))    : '—';
+                                $age      = (int) ($b['age'] ?? 0);
+                                $tel      = trim((string) ($b['telefon'] ?? ''));
+                                $telDigits = preg_replace('/\D/', '', $tel);
+                            ?>
+                                <tr class="<?= $cls ?>">
+                                    <td><strong><?= crm_h((string)($b['firma'] ?? '')) ?></strong></td>
+                                    <td>
+                                        <?php if ($tel !== '') { ?>
+                                            <a href="tel:<?= crm_h($telDigits) ?>" style="font-family:monospace;font-weight:600;color:#be185d;text-decoration:none;"
+                                               title="Zavolat"><?= crm_h($tel) ?></a>
+                                        <?php } else { ?>
+                                            <span style="color:#9ca3af;">—</span>
+                                        <?php } ?>
+                                    </td>
+                                    <td><?= crm_h((string)($b['region'] ?? '')) ?></td>
+                                    <td><?= crm_h((string)($b['oz_name'] ?? '—')) ?></td>
+                                    <td><?= crm_h($narFmt) ?> <small style="color:#6b7280;">(<?= $age ?> let)</small></td>
+                                    <td><strong><?= crm_h($nextFmt) ?></strong></td>
+                                    <td>
+                                        <?php if ($days === 0) { ?>
+                                            <span class="anniv-days-pill anniv-days-pill--urgent" style="background:#ec4899;">🎉 DNES</span>
+                                        <?php } else { ?>
+                                            <span class="anniv-days-pill <?= $days <= 7 ? 'anniv-days-pill--urgent' : ($days <= 14 ? 'anniv-days-pill--soon' : '') ?>">
+                                                <?= $days ?> d
+                                            </span>
+                                        <?php } ?>
                                     </td>
                                 </tr>
                             <?php } ?>

@@ -188,3 +188,27 @@ function crm_mail_password_reset(string $toEmail, string $jmeno, string $plainPa
         'body' => $body,
     ]);
 }
+
+/**
+ * Email s odkazem pro self-service reset hesla (forgot password flow).
+ * Odkaz vede na /password/reset?token=XXX a platí 1 hodinu (jednorázový).
+ */
+function crm_mail_password_reset_link(string $toEmail, string $jmeno, string $plainToken): bool
+{
+    $resetUrl = CRM_APP_URL . crm_url('/password/reset') . '?token=' . urlencode($plainToken);
+    $body = "Dobrý den, {$jmeno},\n\n"
+        . "obdrželi jsme žádost o reset vašeho hesla v CRM Clockwork Man.\n\n"
+        . "Pro nastavení nového hesla klikněte na následující odkaz:\n"
+        . "{$resetUrl}\n\n"
+        . "⏰ Odkaz funguje 1 hodinu a lze ho použít pouze jednou.\n\n"
+        . "Pokud jste o reset nežádali, tento email ignorujte — vaše heslo\n"
+        . "zůstane beze změny. Pokud žádosti chodí opakovaně, kontaktujte\n"
+        . "administrátora.\n\n"
+        . "S pozdravem,\nCRM Clockwork Man";
+
+    return crm_mail_send([
+        'to'      => $toEmail,
+        'subject' => '🔐 Reset hesla — CRM Clockwork Man',
+        'body'    => $body,
+    ]);
+}

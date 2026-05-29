@@ -65,6 +65,11 @@ final class AdminDatagridController
                     c.operator,
                     c.prilez,
                     c.poznamka,
+                    -- Poslední poznámka z contact_notes (= timeline, kam admin přes datagrid přidává)
+                    -- Použije se v gridu místo legacy c.poznamka, takže admin uvidí svou poznámku hned.
+                    (SELECT cn.note FROM contact_notes cn
+                       WHERE cn.contact_id = c.id ORDER BY cn.created_at DESC LIMIT 1) AS latest_note,
+                    (SELECT COUNT(*) FROM contact_notes cn WHERE cn.contact_id = c.id) AS notes_count,
                     c.stav AS contact_stav,
                     c.rejection_reason,
                     c.nedovolano_count,
@@ -138,6 +143,8 @@ final class AdminDatagridController
                 'operator'            => (string) ($r['operator']         ?? ''),
                 'prilez'              => (string) ($r['prilez']           ?? ''),
                 'poznamka'            => (string) ($r['poznamka']         ?? ''),
+                'latest_note'         => (string) ($r['latest_note']      ?? ''),
+                'notes_count'         => (int)    ($r['notes_count']      ?? 0),
                 'contact_stav'        => (string) ($r['contact_stav']     ?? ''),
                 'rejection_reason'    => (string) ($r['rejection_reason'] ?? ''),
                 'nedovolano_count'    => (int)    ($r['nedovolano_count'] ?? 0),
@@ -177,6 +184,795 @@ final class AdminDatagridController
             'truncated'  => $total > self::MAX_ROWS,
             'fetched_at' => date('c'),
         ], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Vrátí seznam přípustných hodnot pro dropdown editaci v gridu.
+     * GET /admin/datagrid/edit-options
+     *
+     * Pro stav vrací enum všech známých stavů.
+     * Pro OZ vrací aktivní obchodáky (i s multi-role).
+     * Pro caller / region / operator také.
+     */
+    public function getEditOptions(): void
+    {
+        $actor = crm_require_user($this->pdo);
+        crm_require_roles($actor, ['majitel', 'superadmin']);
+
+        header('Content-Type: application/json; charset=UTF-8');
+        header('Cache-Control: no-store');
+
+        // Stav hodnoty (contacts.stav VARCHAR)
+        $stavOptions = [
+            'NEW'             => 'NEW (čerstvý, k pročištění)',
+            'READY'           => 'READY (vyčištěno, čeká na navolávačku)',
+            'VF_SKIP'         => 'VF_SKIP (Vodafone — přeskočeno)',
+            'CHYBNY_KONTAKT'  => 'CHYBNY_KONTAKT',
+            'EMAIL_READY'     => 'EMAIL_READY (sázka, email kampaň)',
+            'ASSIGNED'        => 'ASSIGNED (navolávačka claimnula)',
+            'CALLBACK'        => 'CALLBACK (domluveno zpět)',
+            'NEDOVOLANO'      => 'NEDOVOLANO (čekání)',
+            'CALLED_OK'       => 'CALLED_OK (výhra, předáno OZ)',
+            'CALLED_BAD'      => 'CALLED_BAD (bad call)',
+            'NEZAJEM'         => 'NEZAJEM (odmítl)',
+            'IZOLACE'         => 'IZOLACE (DNC — pozor, GDPR)',
+            'FOR_SALES'       => 'FOR_SALES (u OZ, rozjednaný)',
+            'RESCUE_REQUESTED' => 'RESCUE_REQUESTED (na záchraně)',
+            'DONE'            => 'DONE (uzavřená smlouva)',
+        ];
+
+        // OZ list — jen aktivní obchodáci (primární role nebo v roles_extra)
+        $ozList = [];
+        try {
+            $ozStmt = $this->pdo->query(
+                "SELECT id, jmeno, email FROM users
+                 WHERE aktivni = 1
+                   AND (role = 'obchodak'
+                        OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"'))
+                 ORDER BY jmeno ASC"
+            );
+            $ozList = $ozStmt ? ($ozStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        } catch (\Throwable $_) {}
+
+        // Caller list — jen aktivní navolávačky
+        $callerList = [];
+        try {
+            $clStmt = $this->pdo->query(
+                "SELECT id, jmeno, email FROM users
+                 WHERE aktivni = 1
+                   AND (role = 'navolavacka'
+                        OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"'))
+                 ORDER BY jmeno ASC"
+            );
+            $callerList = $clStmt ? ($clStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        } catch (\Throwable $_) {}
+
+        // Operator (TM/O2/VF + prázdný)
+        $operatorOptions = ['' => '— prázdný —', 'TM' => '🌸 TM', 'O2' => '🔵 O2', 'VF' => '🔴 VF'];
+
+        // Region
+        $regionOptions = [];
+        if (function_exists('crm_region_choices')) {
+            foreach (crm_region_choices() as $regionCode) {
+                $regionOptions[(string) $regionCode] = function_exists('crm_region_label')
+                    ? crm_region_label((string) $regionCode)
+                    : (string) $regionCode;
+            }
+        }
+
+        echo json_encode([
+            'ok'        => true,
+            'stav'      => $stavOptions,
+            'oz'        => $ozList,
+            'caller'    => $callerList,
+            'operator'  => $operatorOptions,
+            'region'    => $regionOptions,
+        ], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * POST /admin/datagrid/update — inline edit jedné buňky.
+     *
+     * Vstup: contact_id, field, value
+     * Editovatelné fieldy: stav, assigned_sales_id, assigned_caller_id,
+     *                      operator, region, firma, telefon, email, ico, adresa,
+     *                      mesto, poznamka, prilez
+     *
+     * Po editaci:
+     *   - workflow_log entry (audit kdo, kdy, co)
+     *   - Při změně assigned_sales_id: přesun / vytvoření oz_contact_workflow řádku
+     *   - Při změně stav: pokud stav přechází mimo FOR_SALES, ponecháme workflow,
+     *     uživatel ho může uklidit ručně. Pokud stav → FOR_SALES, vytvoříme workflow.
+     */
+    public function postUpdate(): void
+    {
+        $actor = crm_require_user($this->pdo);
+        crm_require_roles($actor, ['majitel', 'superadmin']);
+
+        // Output buffer guard: pokud PHP vypíše warning/notice (Laragon má display_errors=1),
+        // zachytíme to do bufferu místo aby to korumpoval JSON odpověď. Před `echo` ho vyčistíme.
+        ob_start();
+
+        header('Content-Type: application/json; charset=UTF-8');
+        header('Cache-Control: no-store');
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(403);
+            echo json_encode(['ok' => false, 'error' => 'Neplatný CSRF token.']);
+            exit;
+        }
+
+        $contactId = (int) ($_POST['contact_id'] ?? 0);
+        $field     = (string) ($_POST['field'] ?? '');
+        $value     = (string) ($_POST['value'] ?? '');
+
+        if ($contactId <= 0 || $field === '') {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Chybí contact_id nebo field.']);
+            exit;
+        }
+
+        // Whitelist editovatelných fieldů (contacts + speciální)
+        $allowed = ['stav', 'assigned_sales_id', 'assigned_caller_id',
+                    'operator', 'region', 'firma', 'telefon', 'email',
+                    'ico', 'adresa', 'mesto', 'poznamka', 'prilez',
+                    // Datum fieldy v contacts
+                    'callback_at', 'datum_volani', 'datum_predani',
+                    'activation_date', 'cancellation_date', 'narozeniny_majitele',
+                    'vyrocni_smlouvy',
+                    // Ostatní contacts fieldy
+                    'sale_price', 'dnc_flag', 'nedovolano_count', 'rejection_reason',
+                    // Speciální (jiné tabulky / append)
+                    'workflow_stav', 'workflow_cislo_smlouvy', 'workflow_datum_uzavreni',
+                    'workflow_schuzka_at', 'workflow_bmsl',
+                    'workflow_smlouva_trvani_roky',
+                    'add_note'];
+        if (!in_array($field, $allowed, true)) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => "Field '$field' není editovatelný."]);
+            exit;
+        }
+
+        // Načti aktuální stav kontaktu (PŘED jakýmkoliv speciálním handlerem,
+        // protože handler workflow_stav potřebuje $before['assigned_sales_id']).
+        $cur = $this->pdo->prepare(
+            "SELECT id, stav, assigned_sales_id, assigned_caller_id, operator, region
+             FROM contacts WHERE id = ? LIMIT 1"
+        );
+        $cur->execute([$contactId]);
+        $before = $cur->fetch(PDO::FETCH_ASSOC);
+        if (!$before) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(404);
+            echo json_encode(['ok' => false, 'error' => 'Kontakt nenalezen.']);
+            exit;
+        }
+
+        // ── Speciální handling pro workflow_stav (jiná tabulka) ──
+        if ($field === 'workflow_stav') {
+            $this->handleWorkflowStavEdit($contactId, $value, (int) $actor['id'], $before);
+            return;
+        }
+
+        // ── Speciální handling pro add_note (INSERT do contact_notes) ──
+        if ($field === 'add_note') {
+            $this->handleAddNote($contactId, $value, $actor);
+            return;
+        }
+
+        // Validace hodnot per field
+        $newValue = $value;
+        $sqlValue = null; // pro DB
+
+        try {
+            if ($field === 'stav') {
+                $validStavs = ['NEW', 'READY', 'VF_SKIP', 'CHYBNY_KONTAKT', 'EMAIL_READY',
+                               'ASSIGNED', 'CALLBACK', 'NEDOVOLANO', 'CALLED_OK', 'CALLED_BAD',
+                               'NEZAJEM', 'IZOLACE', 'FOR_SALES', 'RESCUE_REQUESTED', 'DONE'];
+                if (!in_array($value, $validStavs, true)) {
+                    throw new \RuntimeException("Neplatný stav '$value'.");
+                }
+                $sqlValue = $value;
+            }
+            elseif ($field === 'assigned_sales_id') {
+                // value = 0 nebo "" → NULL (zrušení vlastnictví)
+                if ($value === '' || $value === '0') {
+                    $sqlValue = null;
+                } else {
+                    $sid = (int) $value;
+                    $vStmt = $this->pdo->prepare(
+                        "SELECT id, jmeno FROM users WHERE id = ? AND aktivni = 1
+                         AND (role = 'obchodak'
+                              OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"'))"
+                    );
+                    $vStmt->execute([$sid]);
+                    $ozRow = $vStmt->fetch(PDO::FETCH_ASSOC);
+                    if (!$ozRow) {
+                        throw new \RuntimeException("Vybraný uživatel není aktivní OZ.");
+                    }
+                    $sqlValue = $sid;
+                    $newValue = (string) $ozRow['jmeno']; // pro odpověď
+                }
+            }
+            elseif ($field === 'assigned_caller_id') {
+                if ($value === '' || $value === '0') {
+                    $sqlValue = null;
+                } else {
+                    $cid = (int) $value;
+                    $vStmt = $this->pdo->prepare(
+                        "SELECT id, jmeno FROM users WHERE id = ? AND aktivni = 1
+                         AND (role = 'navolavacka'
+                              OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"'))"
+                    );
+                    $vStmt->execute([$cid]);
+                    $clRow = $vStmt->fetch(PDO::FETCH_ASSOC);
+                    if (!$clRow) {
+                        throw new \RuntimeException("Vybraný uživatel není aktivní navolávačka.");
+                    }
+                    $sqlValue = $cid;
+                    $newValue = (string) $clRow['jmeno'];
+                }
+            }
+            elseif ($field === 'operator') {
+                if (!in_array($value, ['', 'TM', 'O2', 'VF'], true)) {
+                    throw new \RuntimeException("Neplatný operator '$value'.");
+                }
+                $sqlValue = $value;
+            }
+            elseif ($field === 'region') {
+                $allowedRegions = function_exists('crm_region_choices') ? array_map('strval', crm_region_choices()) : [];
+                if ($value !== '' && !in_array($value, $allowedRegions, true)) {
+                    throw new \RuntimeException("Neplatný region '$value'.");
+                }
+                $sqlValue = $value;
+            }
+            // ── Datumy: callback_at, datum_volani, datum_predani, activation_date, cancellation_date, narozeniny_majitele, vyrocni_smlouvy ──
+            elseif (in_array($field, ['callback_at', 'datum_volani', 'datum_predani',
+                                       'activation_date', 'cancellation_date',
+                                       'narozeniny_majitele', 'vyrocni_smlouvy'], true)) {
+                $trimmed = trim($value);
+                if ($trimmed === '' || $trimmed === '0000-00-00') {
+                    $sqlValue = null;
+                } else {
+                    // Akceptuj YYYY-MM-DD nebo YYYY-MM-DD HH:MM[:SS]
+                    $ts = strtotime($trimmed);
+                    if ($ts === false) {
+                        throw new \RuntimeException("Neplatný formát data '$value'. Použij YYYY-MM-DD nebo YYYY-MM-DD HH:MM.");
+                    }
+                    // Pro datetime fieldy (callback_at, datum_volani, datum_predani) ulož s časem
+                    $datetimeFields = ['callback_at', 'datum_volani', 'datum_predani'];
+                    $sqlValue = in_array($field, $datetimeFields, true)
+                        ? date('Y-m-d H:i:s', $ts)
+                        : date('Y-m-d', $ts);
+                }
+            }
+            // ── Numerické: sale_price, dnc_flag, nedovolano_count ──
+            elseif (in_array($field, ['sale_price', 'dnc_flag', 'nedovolano_count'], true)) {
+                if ($value === '') {
+                    $sqlValue = null;
+                } else {
+                    // sale_price = decimal
+                    if ($field === 'sale_price') {
+                        $clean = str_replace([' ', ','], ['', '.'], $value);
+                        if (!is_numeric($clean)) {
+                            throw new \RuntimeException("Cena musí být číslo (např. 2500 nebo 2500.50).");
+                        }
+                        $sqlValue = (float) $clean;
+                    } else {
+                        // dnc_flag, nedovolano_count = int
+                        if (!ctype_digit(ltrim($value, '-'))) {
+                            throw new \RuntimeException("'$field' musí být celé číslo.");
+                        }
+                        $sqlValue = (int) $value;
+                    }
+                }
+            }
+            // ── Workflow fieldy (jiná tabulka — speciální handling) ──
+            elseif (in_array($field, ['workflow_cislo_smlouvy', 'workflow_datum_uzavreni',
+                                       'workflow_schuzka_at', 'workflow_bmsl'], true)) {
+                // Validace + delegace do speciálního handleru
+                $ozId = (int) ($before['assigned_sales_id'] ?? 0);
+                if ($ozId <= 0) {
+                    throw new \RuntimeException('Kontakt nemá přiřazeného OZ — workflow fieldy nelze editovat. Nejdřív přiřaď OZ.');
+                }
+                // Smysluplnost validace
+                if ($field === 'workflow_datum_uzavreni' || $field === 'workflow_schuzka_at') {
+                    if ($value === '') {
+                        $wfValue = null;
+                    } else {
+                        $ts = strtotime($value);
+                        if ($ts === false) throw new \RuntimeException("Neplatný formát data.");
+                        $wfValue = $field === 'workflow_schuzka_at'
+                            ? date('Y-m-d H:i:s', $ts)
+                            : date('Y-m-d', $ts);
+                    }
+                } elseif ($field === 'workflow_bmsl') {
+                    if ($value === '') {
+                        $wfValue = null;
+                    } else {
+                        $clean = str_replace([' ', ','], ['', '.'], $value);
+                        if (!is_numeric($clean)) throw new \RuntimeException("BMSL musí být číslo.");
+                        $wfValue = (float) $clean;
+                    }
+                } else {
+                    // workflow_cislo_smlouvy = text
+                    $wfValue = trim($value);
+                    if (mb_strlen($wfValue) > 100) throw new \RuntimeException("Číslo smlouvy max 100 znaků.");
+                }
+                $this->handleWorkflowFieldEdit($contactId, $field, $wfValue, $ozId, (int) $actor['id'], $before);
+                return;
+            }
+            else {
+                // Text fieldy: firma, telefon, email, ico, adresa, mesto, poznamka, prilez, rejection_reason
+                $trimmed = trim($value);
+                if (mb_strlen($trimmed) > 500) {
+                    throw new \RuntimeException("Hodnota příliš dlouhá (max 500 znaků).");
+                }
+                $sqlValue = $trimmed;
+            }
+        } catch (\RuntimeException $e) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+            exit;
+        }
+
+        // Spustit UPDATE v transakci (kvůli workflow_log + workflow row přesunu)
+        $this->pdo->beginTransaction();
+        try {
+            // 1) UPDATE contacts
+            $upd = $this->pdo->prepare(
+                "UPDATE contacts SET `$field` = :v, updated_at = NOW(3) WHERE id = :id"
+            );
+            $upd->execute(['v' => $sqlValue, 'id' => $contactId]);
+
+            // 2) workflow_log entry (audit) — pro stav nebo owner změny
+            if (in_array($field, ['stav', 'assigned_sales_id', 'assigned_caller_id'], true)) {
+                $oldVal = $field === 'stav' ? (string) $before['stav']
+                    : (string) ($before[$field] ?? '');
+                $newValStr = $field === 'stav' ? (string) $sqlValue
+                    : (string) ($sqlValue ?? '');
+
+                $note = "ADMIN EDIT (datagrid): $field změněno";
+                $this->pdo->prepare(
+                    "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
+                     VALUES (:cid, :uid, :old, :new, :note, NOW(3))"
+                )->execute([
+                    'cid'  => $contactId,
+                    'uid'  => (int) $actor['id'],
+                    'old'  => $field === 'stav' ? $oldVal : (string) $before['stav'],
+                    'new'  => $field === 'stav' ? $newValStr : (string) $before['stav'],
+                    'note' => $note . ' (' . $oldVal . ' → ' . $newValStr . ')',
+                ]);
+            }
+
+            // 3) Při změně assigned_sales_id — kompletní auto-handling
+            if ($field === 'assigned_sales_id') {
+                $oldOzId = (int) ($before['assigned_sales_id'] ?? 0);
+                $newOzId = (int) ($sqlValue ?? 0);
+                $oldStav = (string) ($before['stav'] ?? 'NEW');
+
+                // 3a) Pokud byl OZ → jiný OZ: přesun workflow row
+                if ($oldOzId > 0 && $newOzId > 0 && $oldOzId !== $newOzId) {
+                    $checkStmt = $this->pdo->prepare(
+                        "SELECT id FROM oz_contact_workflow WHERE contact_id = ? AND oz_id = ?"
+                    );
+                    $checkStmt->execute([$contactId, $newOzId]);
+                    if ($checkStmt->fetchColumn() !== false) {
+                        $this->pdo->prepare(
+                            "DELETE FROM oz_contact_workflow WHERE contact_id = ? AND oz_id = ?"
+                        )->execute([$contactId, $oldOzId]);
+                    } else {
+                        $this->pdo->prepare(
+                            "UPDATE oz_contact_workflow SET oz_id = ?, updated_at = NOW(3)
+                             WHERE contact_id = ? AND oz_id = ?"
+                        )->execute([$newOzId, $contactId, $oldOzId]);
+                    }
+                }
+
+                // 3b) AUTO-PROMOTE — když admin přiřadí OZ a kontakt je v "raw" stavu
+                //    (NEW / READY / VF_SKIP atd.), kontakt MUSÍ skočit do OZ queue.
+                //    Bez toho ho OZ vůbec neuvidí.
+                //
+                //    Logika: pokud old=0 (žádný OZ) a new>0, nebo pokud se měnil mezi OZ,
+                //    nastavíme contacts.stav = CALLED_OK (= „připraveno k převzetí OZ")
+                //    a vytvoříme workflow row pro nového OZ (pokud neexistuje).
+                if ($newOzId > 0) {
+                    // Raw / mezistavy, ze kterých BUMPNEME na CALLED_OK aby OZ viděl kontakt
+                    // ve své pracovní ploše (OZ filter: c.stav = 'CALLED_OK').
+                    // FOR_SALES je legacy stav z importu — OZ ho taky bez bumpu nevidí.
+                    $rawStavs = ['NEW', 'READY', 'VF_SKIP', 'ASSIGNED', 'NEDOVOLANO',
+                                 'EMAIL_READY', 'CHYBNY_KONTAKT', 'CALLED_BAD', 'NEZAJEM',
+                                 'FOR_SALES'];
+
+                    // Pokud contacts.stav byl raw, povýšit na CALLED_OK
+                    if (in_array($oldStav, $rawStavs, true)) {
+                        $this->pdo->prepare(
+                            "UPDATE contacts SET stav = 'CALLED_OK', datum_predani = NOW(3), updated_at = NOW(3)
+                             WHERE id = ?"
+                        )->execute([$contactId]);
+
+                        // Workflow log: stav promote
+                        $this->pdo->prepare(
+                            "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
+                             VALUES (?, ?, ?, 'CALLED_OK', 'ADMIN EDIT: auto-promote stav po přiřazení OZ', NOW(3))"
+                        )->execute([$contactId, (int) $actor['id'], $oldStav]);
+                    }
+
+                    // Vytvoř workflow řádek pro nového OZ (pokud neexistuje)
+                    $wfCheck = $this->pdo->prepare(
+                        "SELECT id FROM oz_contact_workflow WHERE contact_id = ? AND oz_id = ?"
+                    );
+                    $wfCheck->execute([$contactId, $newOzId]);
+                    if ($wfCheck->fetchColumn() === false) {
+                        try {
+                            $this->pdo->prepare(
+                                "INSERT INTO oz_contact_workflow
+                                 (contact_id, oz_id, stav, started_at, stav_changed_at, updated_at)
+                                 VALUES (?, ?, 'NOVE', NOW(3), NOW(3), NOW(3))"
+                            )->execute([$contactId, $newOzId]);
+                        } catch (\Throwable $_) {}
+                    }
+                }
+            }
+
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            if (ob_get_length()) ob_clean();
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => 'DB chyba: ' . $e->getMessage()]);
+            exit;
+        }
+
+        // Audit log do audit_log tabulky (pokud existuje crm_audit_log helper)
+        if (function_exists('crm_audit_log')) {
+            try {
+                // $before SELECT načítá jen id/stav/assigned_*/operator/region,
+                // takže pro ostatní fieldy v $before chybí klíč → použít '' jako fallback
+                $oldForLog = array_key_exists($field, $before) ? (string) $before[$field] : '';
+                crm_audit_log($this->pdo, (int) $actor['id'], 'datagrid_edit', 'contact', $contactId, [
+                    'field' => $field,
+                    'old'   => $oldForLog,
+                    'new'   => (string) ($sqlValue ?? ''),
+                ]);
+            } catch (\Throwable $_) {}
+        }
+
+        // Vyčisti případný PHP error output co se mohl nahrnout do bufferu
+        if (ob_get_length()) ob_clean();
+
+        echo json_encode([
+            'ok'         => true,
+            'contact_id' => $contactId,
+            'field'      => $field,
+            'value'      => $newValue,
+            'sql_value'  => $sqlValue,
+        ], JSON_UNESCAPED_UNICODE);
+        exit; // hard stop — žádný downstream kód
+    }
+
+    /**
+     * Speciální handling pro editaci workflow_stav (oz_contact_workflow.stav).
+     *
+     * Update řádek pro contact_id + oz_id = assigned_sales_id. Pokud řádek neexistuje
+     * (kontakt nikdy nebyl u OZ), vytvoří se nový.
+     *
+     * @param array<string,mixed> $before  Hodnoty z contacts před změnou
+     */
+    private function handleWorkflowStavEdit(int $contactId, string $newStav, int $adminId, array $before): void
+    {
+        $validStavs = ['NOVE', 'ZPRACOVAVA', 'NABIDKA', 'SCHUZKA', 'SANCE', 'CALLBACK',
+                       'BO_PREDANO', 'BO_VPRACI', 'BO_VRACENO', 'SMLOUVA', 'UZAVRENO',
+                       'REKLAMACE', 'FOR_SALES'];
+        if (!in_array($newStav, $validStavs, true)) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => "Neplatný workflow stav '$newStav'."]);
+            return;
+        }
+
+        $ozId = (int) ($before['assigned_sales_id'] ?? 0);
+        if ($ozId <= 0) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Kontakt nemá přiřazeného OZ — nejdřív přiřaď OZ ve sloupci „OZ", potom nastav workflow stav.']);
+            return;
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            // Pokus o UPDATE existujícího řádku
+            $upd = $this->pdo->prepare(
+                "UPDATE oz_contact_workflow
+                 SET stav = :stav, stav_changed_at = NOW(3), updated_at = NOW(3)
+                 WHERE contact_id = :cid AND oz_id = :oid"
+            );
+            $upd->execute(['stav' => $newStav, 'cid' => $contactId, 'oid' => $ozId]);
+            $rowsAffected = $upd->rowCount();
+
+            // Pokud nic nedotčeno (= workflow řádek neexistuje), vytvoříme nový
+            if ($rowsAffected === 0) {
+                $this->pdo->prepare(
+                    "INSERT INTO oz_contact_workflow
+                     (contact_id, oz_id, stav, started_at, stav_changed_at, updated_at)
+                     VALUES (?, ?, ?, NOW(3), NOW(3), NOW(3))"
+                )->execute([$contactId, $ozId, $newStav]);
+            }
+
+            // AUTO-PROMOTE: pokud contacts.stav je v "raw" stavu (NEW/READY/atd.),
+            // bumpneme ho na CALLED_OK (= připraveno pro OZ workflow). Bez toho by
+            // OZ kontakt neviděl ve své pracovní ploše (filter vyžaduje CALLED_OK).
+            $oldContactStav = (string) ($before['stav'] ?? 'NEW');
+            // FOR_SALES je v seznamu — legacy stav z importu, OZ ho jinak nevidí.
+            $rawStavs = ['NEW', 'READY', 'VF_SKIP', 'ASSIGNED', 'NEDOVOLANO',
+                         'EMAIL_READY', 'CHYBNY_KONTAKT', 'CALLED_BAD', 'NEZAJEM',
+                         'FOR_SALES'];
+            $contactStav = $oldContactStav;
+            if (in_array($oldContactStav, $rawStavs, true)) {
+                $this->pdo->prepare(
+                    "UPDATE contacts SET stav = 'CALLED_OK', datum_predani = COALESCE(datum_predani, NOW(3)), updated_at = NOW(3)
+                     WHERE id = ?"
+                )->execute([$contactId]);
+                $contactStav = 'CALLED_OK';
+            }
+
+            // Workflow log — old = původní stav, new = stav PO případném auto-promote.
+            // Pokud došlo k promote, log zachycuje přechod NEW → CALLED_OK (i když
+            // hlavní akce byla nastavení workflow_stav).
+            $logNote = 'ADMIN EDIT (datagrid): workflow_stav → ' . $newStav;
+            if ($oldContactStav !== $contactStav) {
+                $logNote .= ' (auto-promote contacts.stav ' . $oldContactStav . ' → ' . $contactStav . ')';
+            }
+            $this->pdo->prepare(
+                "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
+                 VALUES (:cid, :uid, :old, :new, :note, NOW(3))"
+            )->execute([
+                'cid'  => $contactId,
+                'uid'  => $adminId,
+                'old'  => $oldContactStav,
+                'new'  => $contactStav,
+                'note' => $logNote,
+            ]);
+
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            if (ob_get_length()) ob_clean();
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => 'DB chyba: ' . $e->getMessage()]);
+            return;
+        }
+
+        if (function_exists('crm_audit_log')) {
+            try {
+                crm_audit_log($this->pdo, $adminId, 'datagrid_edit', 'contact', $contactId, [
+                    'field' => 'workflow_stav',
+                    'new'   => $newStav,
+                ]);
+            } catch (\Throwable $_) {}
+        }
+
+        if (ob_get_length()) ob_clean();
+        echo json_encode([
+            'ok'         => true,
+            'contact_id' => $contactId,
+            'field'      => 'workflow_stav',
+            'value'      => $newStav,
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    /**
+     * Editace workflow_* fieldů (cislo_smlouvy, datum_uzavreni, schuzka_at, bmsl).
+     * Aktualizuje oz_contact_workflow pro contact_id + assigned_sales_id.
+     */
+    private function handleWorkflowFieldEdit(int $contactId, string $field, $value, int $ozId, int $adminId, array $before): void
+    {
+        // Mapování field → DB column
+        $columnMap = [
+            'workflow_cislo_smlouvy'        => 'cislo_smlouvy',
+            'workflow_datum_uzavreni'       => 'datum_uzavreni',
+            'workflow_schuzka_at'           => 'schuzka_at',
+            'workflow_bmsl'                 => 'bmsl',
+            'workflow_smlouva_trvani_roky'  => 'smlouva_trvani_roky',
+        ];
+        $dbColumn = $columnMap[$field] ?? null;
+        if ($dbColumn === null) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => "Field '$field' není mapovaný."]);
+            exit;
+        }
+
+        // Pro trvani_roky: validace 1-10, cast na int
+        if ($field === 'workflow_smlouva_trvani_roky') {
+            $intVal = (int) $value;
+            if ($intVal < 1 || $intVal > 10) {
+                if (ob_get_length()) ob_clean();
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'Trvání smlouvy musí být 1-10 let.']);
+                exit;
+            }
+            $value = $intVal;
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            // UPDATE existing workflow row
+            $upd = $this->pdo->prepare(
+                "UPDATE oz_contact_workflow SET `$dbColumn` = :v, updated_at = NOW(3)
+                 WHERE contact_id = :cid AND oz_id = :oid"
+            );
+            $upd->execute(['v' => $value, 'cid' => $contactId, 'oid' => $ozId]);
+
+            // Pokud workflow řádek neexistuje, vytvoříme ho s default stavem NOVE
+            if ($upd->rowCount() === 0) {
+                $this->pdo->prepare(
+                    "INSERT INTO oz_contact_workflow
+                     (contact_id, oz_id, stav, `$dbColumn`, started_at, stav_changed_at, updated_at)
+                     VALUES (?, ?, 'NOVE', ?, NOW(3), NOW(3), NOW(3))"
+                )->execute([$contactId, $ozId, $value]);
+            }
+
+            // ── AUTO-VÝPOČET vyrocni_smlouvy ──
+            // Pokud admin změnil datum_uzavreni nebo trvani_roky (nebo cislo_smlouvy
+            // — používáme jako trigger, kdy je smlouva "uložená"), přepočítat výročí.
+            // Logika: vyrocni_smlouvy = datum_uzavreni + smlouva_trvani_roky let
+            // To samé dělá BackofficeController při uzavření smlouvy.
+            $vyrocniNew = null;
+            if (in_array($field, ['workflow_datum_uzavreni', 'workflow_cislo_smlouvy', 'workflow_smlouva_trvani_roky'], true)) {
+                $wfStmt = $this->pdo->prepare(
+                    "SELECT datum_uzavreni, COALESCE(smlouva_trvani_roky, 3) AS trvani
+                     FROM oz_contact_workflow WHERE contact_id = ? AND oz_id = ? LIMIT 1"
+                );
+                $wfStmt->execute([$contactId, $ozId]);
+                $wf = $wfStmt->fetch(PDO::FETCH_ASSOC);
+                $du = (string) ($wf['datum_uzavreni'] ?? '');
+                $tr = (int) ($wf['trvani'] ?? 3);
+                if ($du !== '' && $du !== '0000-00-00' && strtotime($du) !== false && $tr >= 1 && $tr <= 10) {
+                    $this->pdo->prepare(
+                        "UPDATE contacts
+                         SET vyrocni_smlouvy = DATE_ADD(:du, INTERVAL :tr YEAR),
+                             updated_at      = NOW(3)
+                         WHERE id = :cid"
+                    )->execute(['du' => $du, 'tr' => $tr, 'cid' => $contactId]);
+                    $vyrocniNew = date('Y-m-d', strtotime("+{$tr} years", strtotime($du)));
+                }
+            }
+
+            // Workflow log
+            $contactStav = (string) ($before['stav'] ?? 'NEW');
+            $logNote = "ADMIN EDIT (datagrid): {$dbColumn} = " . (is_null($value) ? '(prázdné)' : (string) $value);
+            if ($vyrocniNew !== null) {
+                $logNote .= " · vyrocni_smlouvy → {$vyrocniNew}";
+            }
+            $this->pdo->prepare(
+                "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
+                 VALUES (?, ?, ?, ?, ?, NOW(3))"
+            )->execute([
+                $contactId, $adminId, $contactStav, $contactStav, $logNote,
+            ]);
+
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            if (ob_get_length()) ob_clean();
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => 'DB chyba: ' . $e->getMessage()]);
+            exit;
+        }
+
+        if (function_exists('crm_audit_log')) {
+            try {
+                crm_audit_log($this->pdo, $adminId, 'datagrid_edit', 'contact', $contactId, [
+                    'field' => $field,
+                    'value' => $value,
+                ]);
+            } catch (\Throwable $_) {}
+        }
+
+        if (ob_get_length()) ob_clean();
+        $resp = [
+            'ok'         => true,
+            'contact_id' => $contactId,
+            'field'      => $field,
+            'value'      => $value,
+        ];
+        if ($vyrocniNew !== null) {
+            $resp['vyrocni_smlouvy'] = $vyrocniNew; // pro live update sloupce "Výročí"
+        }
+        echo json_encode($resp, JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    /**
+     * Speciální handling pro přidání poznámky (INSERT do contact_notes).
+     *
+     * Místo přepsání contacts.poznamka přidáme NOVÝ řádek do contact_notes
+     * s prefixem [ADMIN: jméno]. Tento přístup zachovává historii a admin
+     * poznámky se objeví v timeline u kontaktu vedle navolávačky / BO.
+     *
+     * @param array<string,mixed> $actor User array
+     */
+    private function handleAddNote(int $contactId, string $noteText, array $actor): void
+    {
+        $noteText = trim($noteText);
+        if ($noteText === '') {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Poznámka nemůže být prázdná.']);
+            return;
+        }
+        if (mb_strlen($noteText) > 2000) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Poznámka příliš dlouhá (max 2000 znaků).']);
+            return;
+        }
+
+        $adminName = (string) ($actor['jmeno'] ?? 'admin');
+        $adminId   = (int) $actor['id'];
+        // Prefix pro snadnou identifikaci v UI ostatních rolí
+        $fullNote = '[ADMIN: ' . $adminName . '] ' . $noteText;
+
+        // Zjisti, kdo má přiřazeného OZ — pokud má, poznámka půjde i do oz_contact_notes,
+        // aby ji OZ viděl v leads view (OZ čte z oz_contact_notes, ne z contact_notes).
+        $ozId = 0;
+        try {
+            $ozStmt = $this->pdo->prepare("SELECT assigned_sales_id FROM contacts WHERE id = ?");
+            $ozStmt->execute([$contactId]);
+            $ozId = (int) ($ozStmt->fetchColumn() ?: 0);
+        } catch (\Throwable $_) {}
+
+        try {
+            // 1) Globální timeline (contact_notes) — vidí admin/historie
+            $this->pdo->prepare(
+                "INSERT INTO contact_notes (contact_id, user_id, note, created_at)
+                 VALUES (?, ?, ?, NOW(3))"
+            )->execute([$contactId, $adminId, $fullNote]);
+
+            // 2) OZ-specifická timeline (oz_contact_notes) — vidí OZ ve své pracovní ploše.
+            //    Bez tohohle by admin poznámka pro OZ nebyla viditelná (#44).
+            if ($ozId > 0) {
+                try {
+                    $this->pdo->prepare(
+                        "INSERT INTO oz_contact_notes (contact_id, oz_id, note, created_at)
+                         VALUES (?, ?, ?, NOW(3))"
+                    )->execute([$contactId, $ozId, $fullNote]);
+                } catch (\Throwable $_) {
+                    // tabulka nemusí existovat ve starší DB — selhání ignorovat (hlavní zápis prošel)
+                }
+            }
+        } catch (\Throwable $e) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => 'DB chyba: ' . $e->getMessage()]);
+            return;
+        }
+
+        if (function_exists('crm_audit_log')) {
+            try {
+                crm_audit_log($this->pdo, $adminId, 'datagrid_add_note', 'contact', $contactId, [
+                    'note_preview' => mb_substr($noteText, 0, 100),
+                ]);
+            } catch (\Throwable $_) {}
+        }
+
+        if (ob_get_length()) ob_clean();
+        echo json_encode([
+            'ok'         => true,
+            'contact_id' => $contactId,
+            'field'      => 'add_note',
+            'value'      => $fullNote,
+            'message'    => $ozId > 0
+                ? 'Poznámka přidána do timeline + zobrazí se i OZ.'
+                : 'Poznámka přidána do timeline kontaktu (kontakt ještě nemá OZ).',
+        ], JSON_UNESCAPED_UNICODE);
+        exit; // hard stop — nedovolíme žádnému downstream kódu pokračovat
     }
 
     /**

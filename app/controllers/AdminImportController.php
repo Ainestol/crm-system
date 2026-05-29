@@ -1270,9 +1270,13 @@ final class AdminImportController
         // Přímá shoda na DB enum (uppercase, např. "FOR_SALES")
         $upper = strtoupper($rawTrim);
         static $validInternal = [
+            // contacts.stav
             'NEW', 'NEZAJEM', 'NEDOVOLANO', 'CALLED_OK', 'CALLED_BAD',
             'CALLBACK', 'CHYBNY_KONTAKT', 'FOR_SALES', 'VF_SKIP',
             'READY', 'DONE', 'UZAVRENO', 'IZOLACE',
+            // oz_contact_workflow.stav — když importuješ rozjednané leady
+            'NOVE', 'ZPRACOVAVA', 'NABIDKA', 'SCHUZKA', 'SANCE',
+            'BO_PREDANO', 'BO_VPRACI', 'BO_VRACENO', 'SMLOUVA', 'REKLAMACE',
         ];
         if (in_array($upper, $validInternal, true)) return $upper;
 
@@ -1318,6 +1322,23 @@ final class AdminImportController
             'vf_skip' => 'VF_SKIP', 'vf'   => 'VF_SKIP',
             // → DONE / UZAVRENO
             'uzavreno' => 'DONE', 'done' => 'DONE',
+            // → workflow stavy (oz_contact_workflow.stav) — rozjednané leady u OZ
+            'nove'       => 'NOVE',
+            'zpracovava' => 'ZPRACOVAVA',
+            'zpracovavá' => 'ZPRACOVAVA',
+            'nabidka'    => 'NABIDKA',
+            'nabidka odeslana' => 'NABIDKA',
+            'schuzka'    => 'SCHUZKA',
+            'sance'      => 'SANCE',
+            'bo predano' => 'BO_PREDANO',
+            'bo_predano' => 'BO_PREDANO',
+            'predano bo' => 'BO_PREDANO',
+            'bo vpraci'  => 'BO_VPRACI',
+            'bo_vpraci'  => 'BO_VPRACI',
+            'bo vraceno' => 'BO_VRACENO',
+            'bo_vraceno' => 'BO_VRACENO',
+            'smlouva'    => 'SMLOUVA',
+            'reklamace'  => 'REKLAMACE',
         ];
 
         if (isset($map[$s])) return $map[$s];
@@ -1331,13 +1352,23 @@ final class AdminImportController
      *
      * @return array<string,int>  ['lowercase@email' => user_id]
      */
+    /**
+     * Vrátí mapu email → user_id JEN pro uživatele s rolí obchodak
+     * (primární `role='obchodak'` NEBO `obchodak` v `roles_extra`).
+     *
+     * Vč. neaktivních (= legacy import smluv od bývalých OZ).
+     * Filtrace na obchodak zabraňuje omylem přiřadit lead navolávačce jako OZ.
+     */
     private function loadUsersByEmail(): array
     {
         $map = [];
         try {
-            // Včetně neaktivních — admin může chtít naimportovat smlouvy uzavřené
-            // OZ-em který už ve firmě nepracuje (historická data).
-            $st = $this->pdo->query('SELECT id, email FROM users WHERE email IS NOT NULL AND email <> ""');
+            $st = $this->pdo->query(
+                "SELECT id, email FROM users
+                 WHERE email IS NOT NULL AND email <> ''
+                   AND (role = 'obchodak'
+                        OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"'))"
+            );
             if ($st) {
                 while ($r = $st->fetch(PDO::FETCH_ASSOC)) {
                     $em = strtolower(trim((string) $r['email']));
@@ -1364,9 +1395,32 @@ final class AdminImportController
         foreach ($batch as $i => $r) {
             $p = $i * 17; // 17 placeholderů per row (přibyl rejection_reason + datum_volani)
 
-            // Stav: priorita: datum_uzavreni → DONE; jinak stav_mapped; jinak NEW
-            $stav = (string) ($r['stav_mapped'] ?? 'NEW');
-            if (!empty($r['datum_uzavreni'])) $stav = 'DONE';
+            // Stav: priorita:
+            //   1) datum_uzavreni → DONE (= uzavřená smlouva)
+            //   2) workflow stage / CALLBACK / FOR_SALES + má OZ → CALLED_OK
+            //      (= "OZ ho má vidět v pracovní ploše" — filter vyžaduje CALLED_OK)
+            //   3) workflow stage bez OZ → FOR_SALES (legacy fallback)
+            //   4) NEW (default), nebo specific contact-level stav (NEZAJEM, atd.)
+            $stavRaw = (string) ($r['stav_mapped'] ?? 'NEW');
+            $workflowStages = ['NOVE','ZPRACOVAVA','NABIDKA','SCHUZKA','SANCE',
+                               'BO_PREDANO','BO_VPRACI','BO_VRACENO','SMLOUVA','REKLAMACE'];
+            // Pro účely "kontakt je rozjednaný" počítáme i CALLBACK a FOR_SALES
+            $activeStates = array_merge($workflowStages, ['CALLBACK', 'FOR_SALES']);
+            $hasOz = !empty($r['oz_user_id']);
+
+            if (!empty($r['datum_uzavreni'])) {
+                $stav = 'DONE';
+            } elseif (in_array($stavRaw, $activeStates, true) && $hasOz) {
+                // Rozjednaný kontakt s přiřazeným OZ — kontakt MUSÍ mít CALLED_OK
+                // aby ho OZ viděl ve své pracovní ploše. Toto je stejný auto-promote
+                // pattern jako v datagrid editaci (Fix #43).
+                $stav = 'CALLED_OK';
+            } elseif (in_array($stavRaw, $workflowStages, true)) {
+                // Workflow stage ale bez OZ → fallback FOR_SALES (legacy)
+                $stav = 'FOR_SALES';
+            } else {
+                $stav = $stavRaw;
+            }
 
             $vyroci = $r['vyroci'];
             if (!empty($r['datum_uzavreni']) && $vyroci === null) {
@@ -1377,7 +1431,7 @@ final class AdminImportController
             // rejection_reason: 'nezajem' pro NEZAJEM stav (jinak NULL)
             $rejReason = ($stav === 'NEZAJEM') ? 'nezajem' : null;
 
-            $placeholders[] = "(:ico{$p},:firma{$p},:adr{$p},:tel{$p},:em{$p},:op{$p},:prilez{$p},:reg{$p},:stav{$p},:poz{$p},:rej{$p},:naroz{$p},:vyroci{$p},:asid{$p},:sp{$p},:actd{$p},:dvol{$p},0,NOW(3),NOW(3))";
+            $placeholders[] = "(:ico{$p},:firma{$p},:adr{$p},:tel{$p},:em{$p},:op{$p},:prilez{$p},:reg{$p},:stav{$p},:poz{$p},:rej{$p},:naroz{$p},:vyroci{$p},:asid{$p},:sp{$p},:actd{$p},:dvol{$p},:st{$p},0,NOW(3),NOW(3))";
             $values["ico{$p}"]    = $r['ico'];
             $values["firma{$p}"]  = $r['firma'];
             $values["adr{$p}"]    = $r['adr'];
@@ -1398,8 +1452,15 @@ final class AdminImportController
             $values["dvol{$p}"]   = !empty($r['datum_volani'])
                 ? ((string) $r['datum_volani']) . ' 00:00:00'
                 : null;
+            // subject_type — auto-detekce z názvu (firma vs OSVČ).
+            // Mix backfilluje 'unknown' kdykoli, ale když to nastavíme rovnou tady,
+            // máme správný typ od první vteřiny po importu (žádné 'unknown' mezi
+            // importem a mixem).
+            $values["st{$p}"]     = function_exists('crm_detect_subject_type')
+                ? crm_detect_subject_type((string) $r['firma'])
+                : 'unknown';
         }
-        $sql = 'INSERT INTO contacts (ico, firma, adresa, telefon, email, operator, prilez, region, stav, poznamka, rejection_reason, narozeniny_majitele, vyrocni_smlouvy, assigned_sales_id, sale_price, activation_date, datum_volani, dnc_flag, created_at, updated_at) VALUES '
+        $sql = 'INSERT INTO contacts (ico, firma, adresa, telefon, email, operator, prilez, region, stav, poznamka, rejection_reason, narozeniny_majitele, vyrocni_smlouvy, assigned_sales_id, sale_price, activation_date, datum_volani, subject_type, dnc_flag, created_at, updated_at) VALUES '
             . implode(',', $placeholders);
         try {
             $stmt = $this->pdo->prepare($sql);
@@ -1411,8 +1472,12 @@ final class AdminImportController
         }
 
         if ($inserted > 0) {
-            $lastId  = (int) $this->pdo->lastInsertId();
-            $firstId = $lastId - $inserted + 1;
+            // POZOR: PDO::lastInsertId() po multi-row INSERTu vrací ID PRVNÍHO
+            // vloženého řádku (MariaDB/MySQL specifikace), ne posledního.
+            // Předchozí kód předpokládal opak → workflow_log + oz_contact_workflow
+            // se zakládaly pro neexistující contact_id (BUG: Ester pak nic neviděla).
+            $firstId = (int) $this->pdo->lastInsertId();
+            $lastId  = $firstId + $inserted - 1;
             $wfPlaceholders = [];
             for ($id = $firstId; $id <= $lastId; $id++) {
                 $wfPlaceholders[] = "({$id},{$adminId},NULL,'NEW',:wfnote,NOW(3))";
@@ -1429,10 +1494,15 @@ final class AdminImportController
 
             // ── BONUS: Pro řádky s datum_uzavreni vytvořit i řádek v oz_contact_workflow ──
             // Tím se kontakt rovnou objeví v BO/UZAVRENO tabu a v dashboardu výročí.
-            // oz_user_id přebíráme přímo z $r — to je skutečný OZ co smlouvu uzavřel
-            // (z oz_email sloupce v importu). Pokud chybí, fallback na admina.
+            //
+            // Také: pokud stav je workflow stage (ZPRACOVAVA, SCHUZKA, NABIDKA, SANCE,
+            // BO_PREDANO, SMLOUVA atd.), vytvoříme workflow řádek s tímto stavem
+            // + contacts.stav se nastaví na FOR_SALES.
             $closedRows = [];
-            $activeRows = []; // FOR_SALES — rozpracované leady, OZ s nimi pracuje
+            $activeRows = [];
+            // Workflow stavy = stage v oz_contact_workflow (= rozjednané kontakty)
+            $workflowStages = ['NOVE','ZPRACOVAVA','NABIDKA','SCHUZKA','SANCE',
+                               'CALLBACK','BO_PREDANO','BO_VPRACI','BO_VRACENO','SMLOUVA','FOR_SALES'];
             foreach ($batch as $i => $r) {
                 $stavMapped = (string) ($r['stav_mapped'] ?? 'NEW');
                 if (!empty($r['datum_uzavreni'])) {
@@ -1441,12 +1511,12 @@ final class AdminImportController
                         'datum_uzavreni' => (string) $r['datum_uzavreni'],
                         'oz_user_id'     => (int) ($r['oz_user_id'] ?? $adminId),
                     ];
-                } elseif ($stavMapped === 'FOR_SALES' && !empty($r['oz_user_id'])) {
+                } elseif (in_array($stavMapped, $workflowStages, true) && !empty($r['oz_user_id'])) {
+                    // Rozjednaný kontakt — vytvoříme workflow s konkrétním stavem
                     $activeRows[] = [
                         'id'           => $firstId + $i,
                         'oz_user_id'   => (int) $r['oz_user_id'],
-                        // Použijeme datum_volani z Excelu (historický kdy proběhl hovor),
-                        // jinak NULL (workflow neudává čas hovoru)
+                        'wf_stav'      => $stavMapped, // bulkInsertActiveWorkflow ho použije
                         'started_at'   => !empty($r['datum_volani']) ? ((string) $r['datum_volani']) . ' 00:00:00' : null,
                     ];
                 }
@@ -1470,20 +1540,28 @@ final class AdminImportController
      */
     private function bulkInsertActiveWorkflow(array $rows, int $adminId): void
     {
-        // Schema `oz_contact_workflow.stav_changed_at` je v migraci 017
-        // (žádný runtime ALTER).
+        // Schema `oz_contact_workflow.stav_changed_at` je v migraci 017.
+        // Workflow stav přebíráme PER ROW z importu — pokud admin specifikoval
+        // konkrétní stav (ZPRACOVAVA, SCHUZKA, NABIDKA, ...), použijeme ten.
+        // Default FOR_SALES (legacy CHCE).
 
         $placeholders = []; $values = [];
         foreach ($rows as $i => $r) {
             $p = $i;
-            // started_at = kdy proběhl hovor (z `Dne` v Excelu) nebo NOW pokud neuvedeno
             $startedSql = $r['started_at'] !== null ? ":sa{$p}" : 'NOW(3)';
             $changedSql = $r['started_at'] !== null ? ":sb{$p}" : 'NOW(3)';
             $updatedSql = $r['started_at'] !== null ? ":sc{$p}" : 'NOW(3)';
 
-            $placeholders[] = "(:cid{$p},:uid{$p},'FOR_SALES',{$startedSql},{$changedSql},{$updatedSql})";
-            $values["cid{$p}"] = $r['id'];
-            $values["uid{$p}"] = $r['oz_user_id'];
+            $placeholders[] = "(:cid{$p},:uid{$p},:stav{$p},{$startedSql},{$changedSql},{$updatedSql})";
+            $values["cid{$p}"]  = $r['id'];
+            $values["uid{$p}"]  = $r['oz_user_id'];
+            // Pokud admin specifikoval workflow stav (NOVE/ZPRACOVAVA/...), použij ho
+            // Jinak default FOR_SALES
+            $wfStav = (string) ($r['wf_stav'] ?? 'FOR_SALES');
+            $validWf = ['NOVE','ZPRACOVAVA','NABIDKA','SCHUZKA','SANCE','CALLBACK',
+                        'BO_PREDANO','BO_VPRACI','BO_VRACENO','SMLOUVA','FOR_SALES'];
+            if (!in_array($wfStav, $validWf, true)) $wfStav = 'FOR_SALES';
+            $values["stav{$p}"] = $wfStav;
             if ($r['started_at'] !== null) {
                 $values["sa{$p}"] = $r['started_at'];
                 $values["sb{$p}"] = $r['started_at'];

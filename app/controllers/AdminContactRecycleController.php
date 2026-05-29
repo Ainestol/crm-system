@@ -214,6 +214,9 @@ final class AdminContactRecycleController
 
             $this->pdo->beginTransaction();
             try {
+                // Reset queue_mix_seq: kontakt projde novým mixem a dostane pozici
+                // na konci aktuální fronty. Bez tohohle by zůstal "viset" v původní
+                // pozici (= ne v navolávačské frontě, protože jeho stav byl mimo NEW).
                 $updSql = "UPDATE contacts
                            SET stav = :stav,
                                recycle_count = recycle_count + 1,
@@ -225,6 +228,7 @@ final class AdminContactRecycleController
                                assigned_sales_id = NULL,
                                nedovolano_count = 0,
                                rejection_reason = NULL,
+                               queue_mix_seq = NULL,
                                updated_at = NOW(3)";
                 if ($resetOperator) {
                     $updSql .= ", operator = ''";

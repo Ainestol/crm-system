@@ -1887,6 +1887,42 @@ final class CallerController
             crm_db_log_error($e, __METHOD__);
         }
 
+        // ── Clawback: odečet ~200 Kč za expirované záchrany ──
+        // Když OZ poslal lead na záchranu a navolávačka NEZACHRÁNILA (nebo expiroval),
+        // OZ za původní navolávací nezaplatí. To znamená že navolávačka která lead původně
+        // dodala přijde o standardní bonus za tento lead.
+        //
+        // Filtr: rescue_requests.original_caller_id = caller + outcome IN (expired, failed)
+        // + datum expirace/uzavření v daném měsíci
+        $rescueClawback = [];
+        $sumClawback    = 0.0;
+        try {
+            $cbStmt = $this->pdo->prepare(
+                "SELECT rr.id, rr.contact_id, rr.outcome, rr.expired_at, rr.rescued_at,
+                        c.firma, c.region,
+                        uo.jmeno AS original_sales_name
+                 FROM rescue_requests rr
+                 LEFT JOIN contacts c ON c.id = rr.contact_id
+                 LEFT JOIN users uo   ON uo.id = rr.original_sales_id
+                 WHERE rr.original_caller_id = :cid
+                   AND rr.outcome IN ('expired', 'failed')
+                   AND (
+                       (rr.outcome = 'expired' AND YEAR(rr.expired_at) = :y1 AND MONTH(rr.expired_at) = :m1)
+                       OR
+                       (rr.outcome = 'failed'  AND YEAR(rr.rescued_at) = :y2 AND MONTH(rr.rescued_at) = :m2)
+                   )"
+            );
+            $cbStmt->execute(['cid' => $callerId, 'y1' => $year, 'm1' => $month, 'y2' => $year, 'm2' => $month]);
+            $rescueClawback = $cbStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            // Standardní sazba (rewardPerWin) — to je co OZ NEzaplatí navolávačce
+            $sumClawback = count($rescueClawback) * $rewardPerWin;
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+        }
+
+        // Aktualizovat totalPayout — odečíst clawback
+        $totalPayoutAfterClawback = max(0, $totalPayout - $sumClawback);
+
         // Standalone tisková stránka — neprojde přes base layout
         header('Content-Type: text/html; charset=UTF-8');
         require dirname(__DIR__) . '/views/caller/payout_print.php';

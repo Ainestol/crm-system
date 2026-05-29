@@ -60,8 +60,10 @@ if (!defined('CRM_STORAGE_PATH')) {
 }
 
 // Produkční URL aplikace (odkazy v e-mailu, absolutní cesty)
+// Pro lokální vývoj nastav ENV var CRM_APP_URL=http://localhost:8080,
+// jinak se použije produkční doména.
 if (!defined('CRM_APP_URL')) {
-    define('CRM_APP_URL', rtrim((string) (getenv('CRM_APP_URL') ?: 'https://crm.example.local'), '/'));
+    define('CRM_APP_URL', rtrim((string) (getenv('CRM_APP_URL') ?: 'https://www.snecinatripu.eu'), '/'));
 }
 
 if (!defined('CRM_APP_ENV')) {

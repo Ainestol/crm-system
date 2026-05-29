@@ -61,60 +61,8 @@ foreach (($pendingByCaller ?? []) as $pg) {
     $pendingTotal += count((array) ($pg['contacts'] ?? []));
 }
 ?>
-<!-- ══════════════════════════════════════════════════════════════════
-     MIGRATION BANNER — subtle inline tip na novou pracovní plochu.
-     Pokud existují pending leady, zobrazí jejich počet jako CTA.
-     Schovatelný na 7 dní (LocalStorage).
-══════════════════════════════════════════════════════════════════ -->
-<div id="oz-newui-banner" style="display:none;
-        background: <?= $pendingTotal > 0 ? 'rgba(46,204,113,0.10)' : 'rgba(46,204,113,0.06)' ?>;
-        border: 1px solid rgba(46,204,113,0.25);
-        border-left: 3px solid #2ecc71;
-        border-radius: 6px;
-        padding: 0.5rem 0.85rem;
-        margin-bottom: 0.8rem;
-        display: flex;
-        align-items: center;
-        gap: 0.6rem;
-        flex-wrap: wrap;
-        font-size: 0.82rem;">
-    <span style="font-size:1.05rem;"><?= $pendingTotal > 0 ? '🔔' : '✨' ?></span>
-    <span style="color:rgba(0,0,0,0.85);flex:1;min-width:160px;">
-        <?php if ($pendingTotal > 0) { ?>
-            <strong style="color:#2ecc71;">Máš <?= $pendingTotal ?> čekající<?= $pendingTotal === 1 ? ' lead' : ($pendingTotal < 5 ? ' leady' : 'ch leadů') ?></strong>
-            v nové pracovní ploše — přijmi je a začni řešit.
-        <?php } else { ?>
-            <strong style="color:#2ecc71;">Nová pracovní plocha</strong> — zaměřené řešení leadů (žádné čekající).
-        <?php } ?>
-    </span>
-    <a href="<?= crm_h(crm_url('/oz/queue')) ?>"
-       style="color:#fff;font-weight:600;text-decoration:none;font-size:0.85rem;
-              padding:0.3rem 0.85rem;background:#2ecc71;
-              border-radius:5px;white-space:nowrap;">
-        <?= $pendingTotal > 0 ? 'Otevřít queue (' . $pendingTotal . ')' : 'Otevřít →' ?>
-    </a>
-    <button type="button" onclick="ozHideNewUiBanner()"
-            style="background:transparent;border:none;
-                   color:rgba(0,0,0,0.4);padding:0.1rem 0.35rem;
-                   cursor:pointer;font-size:1rem;line-height:1;"
-            title="Skrýt na 7 dní">
-        ×
-    </button>
-</div>
-<script>
-(function () {
-    var KEY = 'oz_newui_banner_hidden_until';
-    var until = parseInt(localStorage.getItem(KEY) || '0', 10);
-    if (Date.now() > until) {
-        document.getElementById('oz-newui-banner').style.display = 'flex';
-    }
-    window.ozHideNewUiBanner = function () {
-        // skrýt na 7 dní
-        localStorage.setItem(KEY, String(Date.now() + 7 * 24 * 60 * 60 * 1000));
-        document.getElementById('oz-newui-banner').style.display = 'none';
-    };
-})();
-</script>
+<?php /* MIGRATION BANNER (Nová pracovní plocha) — ODSTRANĚNO,
+        funkce už se ujala, banner už není potřeba. */ ?>
 
 <section class="card">
 <div class="oz-layout">
@@ -210,6 +158,104 @@ $renewalsForOz = $renewalsForOz ?? [];
         .oz-race-collapse > summary:hover { background:rgba(0,0,0,0.06) !important; color:var(--text); }
         .oz-race-collapse[open] > summary span:last-child { display:none; }
     </style>
+
+    <!-- ══════════════════════════════════════════════════════════
+         MINI-WIDGET: 🎂 Narozeniny aktivních klientů (do 30 dní)
+         Jen klienti přiřazení tomuto OZ s uzavřenou smlouvou.
+         Default sbalené, otevírá se klikem nebo automaticky, pokud má dnes/zítra.
+    ══════════════════════════════════════════════════════════ -->
+    <?php
+    /** @var list<array<string,mixed>> $upcomingBirthdays */
+    $upcomingBirthdays = $upcomingBirthdays ?? [];
+    $hasToday = false;
+    $hasSoon  = false;
+    foreach ($upcomingBirthdays as $b) {
+        if ((int)($b['days_until'] ?? 999) === 0) $hasToday = true;
+        if ((int)($b['days_until'] ?? 999) <= 7)  $hasSoon  = true;
+    }
+    if ($upcomingBirthdays !== []) { ?>
+    <details class="oz-bd-widget" <?= ($hasToday || $hasSoon) ? 'open' : '' ?>
+             style="margin-bottom:0.85rem;border:1px solid rgba(236,72,153,0.35);
+                    background:linear-gradient(180deg,rgba(252,231,243,0.4),transparent);
+                    border-radius:8px;">
+        <summary style="list-style:none;cursor:pointer;user-select:none;
+                        padding:0.55rem 0.85rem;font-size:0.85rem;
+                        display:flex;justify-content:space-between;align-items:center;
+                        color:#be185d;font-weight:600;">
+            <span>
+                🎂 Narozeniny mých klientů (do 30 dní)
+                <span style="background:#ec4899;color:#fff;border-radius:10px;
+                             padding:0.1rem 0.5rem;margin-left:0.4rem;font-size:0.72rem;">
+                    <?= count($upcomingBirthdays) ?>
+                </span>
+                <?php if ($hasToday) { ?>
+                    <span style="background:#fbbf24;color:#78350f;border-radius:10px;
+                                 padding:0.1rem 0.5rem;margin-left:0.3rem;font-size:0.72rem;font-weight:700;">
+                        🎉 DNES
+                    </span>
+                <?php } ?>
+            </span>
+            <span style="font-size:0.72rem;color:#be185d;opacity:0.65;">▾ rozbalit / sbalit</span>
+        </summary>
+        <div style="padding:0.5rem 0.85rem 0.7rem;">
+            <p style="font-size:0.78rem;color:var(--muted);margin:0 0 0.5rem 0;">
+                Aktivní klienti (s uzavřenou smlouvou) s blížícími se narozeninami — popřát tel je nejlepší dotek vztahu.
+            </p>
+            <div style="display:flex;flex-direction:column;gap:0.35rem;">
+                <?php foreach ($upcomingBirthdays as $b) {
+                    $days = (int) ($b['days_until'] ?? 0);
+                    $nar  = (string) ($b['narozeniny'] ?? '');
+                    $nextFmt = $b['next_bd'] !== '' ? date('j. n.', strtotime((string)$b['next_bd'])) : '—';
+                    $age  = (int) ($b['age'] ?? 0);
+                    $tel  = trim((string) ($b['telefon'] ?? ''));
+                    $telDigits = preg_replace('/\D/', '', $tel);
+                    $rowBg = $days === 0 ? 'background:#fce7f3;'
+                           : ($days <= 7 ? 'background:rgba(252,231,243,0.5);' : '');
+                    $cid = (int) ($b['id'] ?? 0);
+                ?>
+                    <div style="display:flex;align-items:center;gap:0.6rem;
+                                padding:0.4rem 0.55rem;border-radius:6px;<?= $rowBg ?>
+                                font-size:0.82rem;flex-wrap:wrap;">
+                        <a href="#c-<?= $cid ?>" style="font-weight:700;color:#1f2937;text-decoration:none;
+                                                       min-width:180px;flex:1 1 180px;"
+                           title="Skočit na kartu">
+                            <?= crm_h((string)($b['firma'] ?? '')) ?>
+                        </a>
+                        <?php if ($tel !== '') { ?>
+                            <a href="tel:<?= crm_h($telDigits) ?>"
+                               style="font-family:monospace;font-weight:600;color:#be185d;text-decoration:none;
+                                      background:#fff;padding:0.15rem 0.5rem;border-radius:4px;
+                                      border:1px solid rgba(236,72,153,0.3);"
+                               title="Zavolat"><?= crm_h($tel) ?></a>
+                        <?php } ?>
+                        <span style="color:#6b7280;">
+                            <?= crm_h($nextFmt) ?> · <?= $age ?> let
+                        </span>
+                        <?php if ($days === 0) { ?>
+                            <span style="background:#ec4899;color:#fff;border-radius:10px;
+                                         padding:0.1rem 0.6rem;font-size:0.7rem;font-weight:700;
+                                         margin-left:auto;">
+                                🎉 DNES
+                            </span>
+                        <?php } else { ?>
+                            <span style="background:<?= $days <= 7 ? '#fef3c7' : '#f3f4f6' ?>;
+                                         color:<?= $days <= 7 ? '#92400e' : '#374151' ?>;
+                                         border-radius:10px;padding:0.1rem 0.6rem;font-size:0.7rem;
+                                         font-weight:600;margin-left:auto;">
+                                za <?= $days ?> d
+                            </span>
+                        <?php } ?>
+                    </div>
+                <?php } ?>
+            </div>
+        </div>
+    </details>
+    <style>
+        .oz-bd-widget > summary::-webkit-details-marker { display:none; }
+        .oz-bd-widget > summary:hover { background:rgba(236,72,153,0.08); }
+        .oz-bd-widget[open] > summary span:last-child { display:none; }
+    </style>
+    <?php } ?>
 
     <!-- ── Topbar — JEN tab counts (Krok 5b refactor)
          Měsíční smluv/BMSL byly přesunuty na /oz dashboard (Výkon & milníky).

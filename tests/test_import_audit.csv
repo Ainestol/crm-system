@@ -1,0 +1,9 @@
+firma;ico;telefon;email;mesto;kraj;operator;stav;oz_email;datum_uzavreni;sale_price
+ALFA Telekom s.r.o.;12345001;777111001;alfa@test.cz;Praha;PRG;O2;NEW;;;
+BETA s.r.o.;12345002;777111002;beta@test.cz;Brno;JM;TM;ZPRACOVAVA;;;
+GAMA s.r.o.;12345003;777111003;gama@test.cz;Liberec;LIB;VF;SCHUZKA;ester@example.com;;
+DELTA s.r.o.;12345004;777111004;delta@test.cz;Plzeň;PLZ;O2;bo_predano;ester@example.com;;
+EPSILON s.r.o.;12345005;777111005;epsilon@test.cz;Ostrava;MS;TM;bo předáno;ester@example.com;;
+ZETA s.r.o.;12345006;777111006;zeta@test.cz;Hradec;HK;O2;blabla_neplatne;;;
+ETA s.r.o.;12345007;777111007;eta@test.cz;Pardubice;PA;TM;CHCE;;;
+THETA s.r.o.;12345008;777111008;theta@test.cz;Olomouc;OL;VF;CHCE;navolavacka@example.com;;
