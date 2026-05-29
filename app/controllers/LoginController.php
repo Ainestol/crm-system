@@ -433,13 +433,18 @@ final class LoginController
 
         $userId = (int) $row['user_id'];
         $prId   = (int) $row['pr_id'];
-        $hash   = password_hash($pw1, PASSWORD_DEFAULT);
+        // Použijeme stejný hashing helper jako AccountController (= konzistence
+        // s Argon2id/PASSWORD_DEFAULT podle konfigurace)
+        $hash = function_exists('crm_auth_password_hash_new')
+            ? crm_auth_password_hash_new($pw1)
+            : password_hash($pw1, PASSWORD_DEFAULT);
 
         $this->pdo->beginTransaction();
         try {
             // 1) Aktualizuj heslo + zrušíme must_change_password (= user si ho právě nastavil)
+            //    Sloupec se jmenuje `heslo_hash` (české), users nemá `updated_at`.
             $this->pdo->prepare(
-                "UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = NOW(3) WHERE id = ?"
+                "UPDATE users SET heslo_hash = ?, must_change_password = 0 WHERE id = ?"
             )->execute([$hash, $userId]);
 
             // 2) Označ token jako použitý
