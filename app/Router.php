@@ -745,6 +745,35 @@ final class Router
                 'roles' => ['majitel', 'superadmin'],
                 'handler' => [AdminContactRecycleController::class, 'postExecute'],
             ],
+            // ── Bezpečné mazání kontaktů (s filtry + CSV backup) ──
+            [
+                'method' => 'GET',
+                'path' => '/admin/contacts/delete',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminContactsDeleteController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/contacts/delete/preview',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminContactsDeleteController::class, 'postPreview'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/contacts/delete/csv',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminContactsDeleteController::class, 'postCsv'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/contacts/delete/execute',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminContactsDeleteController::class, 'postExecute'],
+            ],
             // ── Mix kontaktů (1:10 firma:OSVČ) ──
             [
                 'method' => 'GET',

@@ -118,6 +118,7 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
         $sections['Kontakty ♻'] = [
             ['label' => 'Recyklace kontaktů',     'href' => '/admin/contacts/recycle', 'icon' => '♻'],
             ['label' => 'Mix 9× OSVČ + 1× firma', 'href' => '/admin/contacts/mix',     'icon' => '🎲'],
+            ['label' => 'Smazat kontakty (filtr)','href' => '/admin/contacts/delete',  'icon' => '🗑'],
         ];
         // ── Sekce sgrupované per role, na kterou nastavení míří ──
         // Logika: když chci nastavit něco pro čističky, jdu do "Čističky".

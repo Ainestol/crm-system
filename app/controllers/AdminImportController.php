@@ -639,7 +639,9 @@ final class AdminImportController
         [$dncIco, $dncPhone, $dncEmail] = $this->loadDncHashes();
         [$dbIco, $dbPhone, $dbEmail]    = $this->loadExistingContactHashes();
         // Mapa email → user_id pro validaci oz_email v uzavřených smlouvách
-        $usersByEmail = $this->loadUsersByEmail();
+        $usersByEmail   = $this->loadUsersByEmail();
+        // Mapa email → user_id pro validaci caller_email (přiřazení navolávačky)
+        $callersByEmail = $this->loadCallersByEmail();
 
         $errors          = [];
         $duplicatesFile  = [];
@@ -768,6 +770,18 @@ final class AdminImportController
                 if (count($errors) < self::MAX_ERRORS_KEPT) {
                     $errors[] = ['row' => $rowNum, 'col' => 'oz_email', 'value' => $ozEmailRaw,
                         'reason'    => 'OZ email "' . $ozEmailRaw . '" v systému neexistuje. Zkontrolujte přesný zápis (case-insensitive) nebo uživatele založte v /admin/users.',
+                        'snapshot'  => $rowSnap];
+                }
+                continue;
+            }
+
+            // ── Validace caller_email (volitelný — přiřazení navolávačky) ──
+            $callerEmailRaw  = $this->cell($row, $map, 'caller_email');
+            $callerEmailNorm = strtolower(trim($callerEmailRaw));
+            if ($callerEmailNorm !== '' && !isset($callersByEmail[$callerEmailNorm])) {
+                if (count($errors) < self::MAX_ERRORS_KEPT) {
+                    $errors[] = ['row' => $rowNum, 'col' => 'caller_email', 'value' => $callerEmailRaw,
+                        'reason'    => 'caller_email "' . $callerEmailRaw . '" buď neexistuje, nebo nemá roli navolávačka. Použijte email aktivního uživatele s rolí navolavacka.',
                         'snapshot'  => $rowSnap];
                 }
                 continue;
@@ -941,7 +955,8 @@ final class AdminImportController
 
         [$dncIco, $dncPhone, $dncEmail] = $this->loadDncHashes();
         [$dbIco, $dbPhone, $dbEmail]    = $this->loadExistingContactHashes();
-        $usersByEmail = $this->loadUsersByEmail();
+        $usersByEmail    = $this->loadUsersByEmail();
+        $callersByEmail  = $this->loadCallersByEmail();
 
         $stats = ['total' => 0, 'imported' => 0, 'updated' => 0,
                   'merged' => 0,
@@ -997,6 +1012,8 @@ final class AdminImportController
             $stavRaw      = $this->cell($row, $map, 'stav');
             $datumVolani  = $this->cell($row, $map, 'datum_volani');
             $navolavacka  = $this->cell($row, $map, 'navolavacka_name');
+            // caller_email = email navolávačky → skutečné PŘIŘAZENÍ kontaktu
+            $callerEmailRaw = $this->cell($row, $map, 'caller_email');
 
             if ($firma === '' || $region === '') {
                 $stats['errors']++;
@@ -1027,6 +1044,16 @@ final class AdminImportController
             if ($stavMapped === 'FOR_SALES' && $ozUserId === null) {
                 $stats['errors']++;
                 continue;
+            }
+            // caller_email validace — pokud zadán, MUSÍ být navolávačka v users
+            $callerEmailNorm = strtolower(trim($callerEmailRaw));
+            $callerUserId = null;
+            if ($callerEmailNorm !== '') {
+                $callerUserId = $callersByEmail[$callerEmailNorm] ?? null;
+                if ($callerUserId === null) {
+                    $stats['errors']++;
+                    continue;
+                }
             }
             // Pokud řádek má datum_uzavreni, stav přepíše na DONE bez ohledu na CSV
             if ($hasClosedDate) $stavMapped = 'DONE';
@@ -1121,6 +1148,8 @@ final class AdminImportController
                 // Nová pole pro provolané kontakty (NEZAJEM, FOR_SALES, atd.)
                 'stav_mapped'  => $stavMapped,         // NEW / NEZAJEM / FOR_SALES / CALLBACK / …
                 'datum_volani' => $datumVolaniParsed,  // null nebo Y-m-d
+                // Přiřazení konkrétní navolávačky (pokud zadán caller_email)
+                'caller_user_id' => $callerUserId,     // null pokud sloupec prázdný
             ];
 
             if ($dbId !== null) {
@@ -1381,6 +1410,35 @@ final class AdminImportController
         return $map;
     }
 
+    /**
+     * Vrátí mapu email → user_id JEN pro navolávačky
+     * (primární `role='navolavacka'` NEBO `navolavacka` v `roles_extra`).
+     *
+     * Vč. neaktivních (= legacy). Filtrace zabraňuje omylem přiřadit kontakt
+     * uživateli, který není navolávačka.
+     */
+    private function loadCallersByEmail(): array
+    {
+        $map = [];
+        try {
+            $st = $this->pdo->query(
+                "SELECT id, email FROM users
+                 WHERE email IS NOT NULL AND email <> ''
+                   AND (role = 'navolavacka'
+                        OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"'))"
+            );
+            if ($st) {
+                while ($r = $st->fetch(PDO::FETCH_ASSOC)) {
+                    $em = strtolower(trim((string) $r['email']));
+                    if ($em !== '') $map[$em] = (int) $r['id'];
+                }
+            }
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+        }
+        return $map;
+    }
+
     /** @param list<array<string,mixed>> $batch */
     private function flushInserts(array $batch, int $adminId, string $origName): int
     {
@@ -1406,7 +1464,15 @@ final class AdminImportController
                                'BO_PREDANO','BO_VPRACI','BO_VRACENO','SMLOUVA','REKLAMACE'];
             // Pro účely "kontakt je rozjednaný" počítáme i CALLBACK a FOR_SALES
             $activeStates = array_merge($workflowStages, ['CALLBACK', 'FOR_SALES']);
-            $hasOz = !empty($r['oz_user_id']);
+            $hasOz     = !empty($r['oz_user_id']);
+            $hasCaller = !empty($r['caller_user_id']);
+
+            // Pokud admin přiřadil konkrétní navolávačku (caller_email) a stav je
+            // default NEW (= nezpracovaný), promote na ASSIGNED. Caller view filtruje
+            // svoji listu na READY+ASSIGNED — bez ASSIGNED by ji Evička neviděla.
+            if ($hasCaller && $stavRaw === 'NEW') {
+                $stavRaw = 'ASSIGNED';
+            }
 
             if (!empty($r['datum_uzavreni'])) {
                 $stav = 'DONE';
@@ -1431,7 +1497,7 @@ final class AdminImportController
             // rejection_reason: 'nezajem' pro NEZAJEM stav (jinak NULL)
             $rejReason = ($stav === 'NEZAJEM') ? 'nezajem' : null;
 
-            $placeholders[] = "(:ico{$p},:firma{$p},:adr{$p},:tel{$p},:em{$p},:op{$p},:prilez{$p},:reg{$p},:stav{$p},:poz{$p},:rej{$p},:naroz{$p},:vyroci{$p},:asid{$p},:sp{$p},:actd{$p},:dvol{$p},:st{$p},0,NOW(3),NOW(3))";
+            $placeholders[] = "(:ico{$p},:firma{$p},:adr{$p},:tel{$p},:em{$p},:op{$p},:prilez{$p},:reg{$p},:stav{$p},:poz{$p},:rej{$p},:naroz{$p},:vyroci{$p},:asid{$p},:acid{$p},:sp{$p},:actd{$p},:dvol{$p},:st{$p},0,NOW(3),NOW(3))";
             $values["ico{$p}"]    = $r['ico'];
             $values["firma{$p}"]  = $r['firma'];
             $values["adr{$p}"]    = $r['adr'];
@@ -1446,6 +1512,7 @@ final class AdminImportController
             $values["naroz{$p}"]  = $r['naroz'];
             $values["vyroci{$p}"] = $vyroci;
             $values["asid{$p}"]   = $r['oz_user_id'] ?? null;     // assigned_sales_id
+            $values["acid{$p}"]   = $r['caller_user_id'] ?? null; // assigned_caller_id
             $values["sp{$p}"]     = $r['sale_price'] ?? null;
             $values["actd{$p}"]   = !empty($r['datum_uzavreni']) ? $r['datum_uzavreni'] : null;
             // datum_volani — historický záznam kdy navolávačka volala (z `Dne` sloupce)
@@ -1460,7 +1527,7 @@ final class AdminImportController
                 ? crm_detect_subject_type((string) $r['firma'])
                 : 'unknown';
         }
-        $sql = 'INSERT INTO contacts (ico, firma, adresa, telefon, email, operator, prilez, region, stav, poznamka, rejection_reason, narozeniny_majitele, vyrocni_smlouvy, assigned_sales_id, sale_price, activation_date, datum_volani, subject_type, dnc_flag, created_at, updated_at) VALUES '
+        $sql = 'INSERT INTO contacts (ico, firma, adresa, telefon, email, operator, prilez, region, stav, poznamka, rejection_reason, narozeniny_majitele, vyrocni_smlouvy, assigned_sales_id, assigned_caller_id, sale_price, activation_date, datum_volani, subject_type, dnc_flag, created_at, updated_at) VALUES '
             . implode(',', $placeholders);
         try {
             $stmt = $this->pdo->prepare($sql);
@@ -1759,9 +1826,14 @@ final class AdminImportController
             'dne' => 'datum_volani', 'datum_volani' => 'datum_volani',
             'datum_telefonatu' => 'datum_volani', 'volano_dne' => 'datum_volani',
             'date_called' => 'datum_volani',
-            // Kdo volal — pouze info do poznámky (nepřiřazujeme)
+            // Kdo volal — pouze info do poznámky (jméno, ne email)
             'navolavacka' => 'navolavacka_name', 'caller_name' => 'navolavacka_name',
             'volala' => 'navolavacka_name', 'volal' => 'navolavacka_name',
+            // Kdo volal — email navolávačky pro skutečné PŘIŘAZENÍ (assigned_caller_id)
+            'caller_email'      => 'caller_email',
+            'navolavacka_email' => 'caller_email',
+            'volajici_email'    => 'caller_email',
+            'volajici'          => 'caller_email',
         ];
 
         $map = [];

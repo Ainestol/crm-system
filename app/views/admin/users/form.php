@@ -11,9 +11,20 @@ $isEdit       = is_array($editUser);
 $action       = $isEdit ? crm_url('/admin/users/save') : crm_url('/admin/users/new');
 $choices      = crm_region_choices();
 $currentRole  = $isEdit ? (string) ($editUser['role'] ?? '') : '';
+// Roles_extra (multi-role) — pokud má user obchodaka jako přídruženou roli,
+// region sekce se musí taky zobrazit (jinak admin nemůže nastavit region).
+$rolesExtraRaw = $isEdit ? (string) ($editUser['roles_extra'] ?? '[]') : '[]';
+$rolesExtraArr = [];
+if ($rolesExtraRaw !== '' && $rolesExtraRaw !== '[]') {
+    $decoded = json_decode($rolesExtraRaw, true);
+    if (is_array($decoded)) {
+        $rolesExtraArr = array_map('strval', $decoded);
+    }
+}
 // Region pole má smysl jen pro OZ (obchodák) — má region-based rotation lead.
 // Ostatní role (čistička, navolávačka, BO, admin) si region přepínají samy ve své view.
-$showRegions  = ($currentRole === 'obchodak');
+// POZOR: musí to platit i pro multi-role usery, kteří mají obchodaka v roles_extra.
+$showRegions  = ($currentRole === 'obchodak') || in_array('obchodak', $rolesExtraArr, true);
 ?>
 <section class="card">
     <h1><?= $isEdit ? 'Upravit uživatele' : 'Nový uživatel' ?></h1>
@@ -108,18 +119,31 @@ $showRegions  = ($currentRole === 'obchodak');
 </section>
 
 <script>
-// Region pole se zobrazí jen když je role = obchodak.
-// Hodnoty se v DB zachovají i při skrytí (odeslány vždy), takže přepnutí role
-// na non-OZ a zpět na OZ neztratí původní nastavení.
+// Region pole se zobrazí, pokud má user obchodaka buď JAKO PRIMÁRNÍ roli,
+// NEBO jako přídruženou v roles_extra (multi-role). Hodnoty se v DB zachovají
+// i při skrytí (odeslány vždy), takže přepnutí role na non-OZ a zpět na OZ
+// neztratí původní nastavení.
 (function () {
     var roleSel = document.getElementById('role');
     var group   = document.getElementById('oz-region-group');
     if (!roleSel || !group) return;
     var showFor = group.dataset.showFor || 'obchodak';
+
+    // Checkbox „obchodak" v roles_extra sekci (= multi-role)
+    var extraObchodakCb = document.querySelector('input[type="checkbox"][name="roles_extra[]"][value="obchodak"]');
+
+    function isOzActive() {
+        if (roleSel.value === showFor) return true;
+        if (extraObchodakCb && extraObchodakCb.checked) return true;
+        return false;
+    }
     function sync() {
-        group.style.display = (roleSel.value === showFor) ? '' : 'none';
+        group.style.display = isOzActive() ? '' : 'none';
     }
     roleSel.addEventListener('change', sync);
+    if (extraObchodakCb) {
+        extraObchodakCb.addEventListener('change', sync);
+    }
     sync();
 })();
 </script>

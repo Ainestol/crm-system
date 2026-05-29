@@ -273,8 +273,17 @@ function renderSnap(array $snap): string {
             <div class="preview-stat__lbl">Datových řádků celkem</div>
         </div>
         <div class="preview-stat preview-stat--ok">
-            <div class="preview-stat__val"><?= number_format($okRows, 0, ',', ' ') ?></div>
-            <div class="preview-stat__lbl">OK k importu</div>
+            <div class="preview-stat__val" id="live-import-count"
+                 data-base-ok="<?= (int)$okRows ?>"
+                 data-dup-file="<?= (int)$dupFile ?>"
+                 data-dup-file-ico="<?= (int)($dupFileByMatch['ico']     ?? 0) ?>"
+                 data-dup-file-tel="<?= (int)($dupFileByMatch['telefon'] ?? 0) ?>"
+                 data-dup-file-email="<?= (int)($dupFileByMatch['email'] ?? 0) ?>"
+                 data-dup-db="<?= (int)$dupDb ?>"><?= number_format($okRows, 0, ',', ' ') ?></div>
+            <div class="preview-stat__lbl">
+                Reálně se naimportuje
+                <br><small id="live-import-detail" style="color:var(--muted);font-style:italic;font-weight:400;">podle aktuálních voleb dole</small>
+            </div>
         </div>
         <div class="preview-stat preview-stat--err">
             <div class="preview-stat__val"><?= number_format($errCount, 0, ',', ' ') ?></div>
@@ -808,6 +817,7 @@ function applyFileStrategy(mode) {
 
     highlightSelectedCard('strategy_file', mode);
     refreshRulesSummary();
+    refreshLiveImportCount(); // counter musí update vždy, i bez summary listu
 }
 
 function applyDbStrategy(mode) {
@@ -829,6 +839,7 @@ function applyDbStrategy(mode) {
 
     highlightSelectedCard('strategy_db', mode);
     refreshRulesSummary();
+    refreshLiveImportCount(); // counter musí update vždy, i bez summary listu
 }
 
 function refreshRulesSummary() {
@@ -838,6 +849,87 @@ function refreshRulesSummary() {
         `<li><span class="r-ok">📂</span> <strong>V souboru:</strong> ${FILE_STRATEGY_RULES[currentFileStrategy].label}</li>` +
         `<li><span class="r-ok">🗄</span> <strong>V DB:</strong> ${DB_STRATEGY_RULES[currentDbStrategy].label}</li>`;
 }
+
+/**
+ * Live counter "Reálně se naimportuje X" — přepočítává se podle aktuálních
+ * voleb pro Duplicity v souboru + Duplicity v DB.
+ *
+ * Vzorec:
+ *   base = okRows (jednoznačně OK řádky bez duplicit)
+ *   + příspěvek z file duplicit podle file strategy
+ *   + příspěvek z DB duplicit podle DB strategy
+ */
+function refreshLiveImportCount() {
+    const el = document.getElementById('live-import-count');
+    const detail = document.getElementById('live-import-detail');
+    if (!el) return;
+
+    const baseOk    = parseInt(el.dataset.baseOk      || '0', 10);
+    const dupFile   = parseInt(el.dataset.dupFile     || '0', 10);
+    const dupFileIco   = parseInt(el.dataset.dupFileIco   || '0', 10);
+    const dupFileTel   = parseInt(el.dataset.dupFileTel   || '0', 10);
+    const dupFileEmail = parseInt(el.dataset.dupFileEmail || '0', 10);
+    const dupDb     = parseInt(el.dataset.dupDb       || '0', 10);
+
+    let total = baseOk;
+    let parts = [];
+
+    // ── Strategie pro Duplicity v souboru ──
+    switch (currentFileStrategy) {
+        case 'merge_smart':
+            // Stejné IČO → sloučí se do 1 (= ztrácíme 1 řádek za každou dvojici)
+            // Sdílený tel/email → zachovat oba (= +tel + email do počtu)
+            total += (dupFileTel + dupFileEmail);
+            // IČO duplicit se sloučí — řádek navíc nepřibude (cíl už je v okRows)
+            if (dupFileTel + dupFileEmail > 0) {
+                parts.push(`+${dupFileTel + dupFileEmail} sdílených tel/email`);
+            }
+            if (dupFileIco > 0) {
+                parts.push(`${dupFileIco}× IČO sloučeno do existujícího`);
+            }
+            break;
+        case 'keep_all':
+            // Žádné slučování — všechno se přidá
+            total += dupFile;
+            if (dupFile > 0) parts.push(`+${dupFile} duplicit zachováno`);
+            break;
+        case 'skip_all':
+            // Druhý výskyt v souboru se zahodí — žádný přírůstek
+            if (dupFile > 0) parts.push(`−${dupFile} duplicit zahozeno`);
+            break;
+    }
+
+    // ── Strategie pro Duplicity v DB ──
+    switch (currentDbStrategy) {
+        case 'skip':
+            // Existující v DB beze změny, nový řádek z importu zahodit
+            if (dupDb > 0) parts.push(`−${dupDb} DB-duplicit přeskočeno`);
+            break;
+        case 'update':
+            // Update existujícího — žádný nový INSERT, ale existující zůstává
+            if (dupDb > 0) parts.push(`${dupDb} DB-duplicit aktualizováno`);
+            break;
+        case 'merge':
+            // Sloučí data — žádný nový INSERT
+            if (dupDb > 0) parts.push(`${dupDb} DB-duplicit sloučeno`);
+            break;
+        case 'add':
+            // Vznikne dvojitý záznam — +dupDb
+            total += dupDb;
+            if (dupDb > 0) parts.push(`+${dupDb} duplicitních záznamů přidáno`);
+            break;
+    }
+
+    el.textContent = new Intl.NumberFormat('cs-CZ').format(total);
+    if (detail) {
+        detail.textContent = parts.length === 0
+            ? 'podle aktuálních voleb dole'
+            : parts.join(' · ');
+    }
+}
+
+// Spusť hned po loadu, abychom viděli skutečné default čísla
+document.addEventListener('DOMContentLoaded', refreshLiveImportCount);
 
 // Init — defaulty
 document.addEventListener('DOMContentLoaded', function() {
