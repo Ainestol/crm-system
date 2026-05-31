@@ -803,6 +803,13 @@ final class Router
                 'roles' => ['majitel', 'superadmin'],
                 'handler' => [AdminContactMixController::class, 'postSettings'],
             ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/contacts/mix/reclassify',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminContactMixController::class, 'postReclassify'],
+            ],
             // ── Nápověda (in-app dokumentace) ──
             [
                 'method' => 'GET',

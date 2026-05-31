@@ -145,6 +145,25 @@ $canMix = $totalUnmixed > 0;
             </button>
         </form>
 
+        <!-- Reklasifikace všech kontaktů (firma vs OSVČ) -->
+        <form method="post" action="<?= crm_h(crm_url('/admin/contacts/mix/reclassify')) ?>"
+              style="margin-top:1rem;padding-top:1rem;border-top:1px dashed #e5e7eb;"
+              onsubmit="return confirm('Spustit reklasifikaci subject_type pro VŠECHNY kontakty? Použije se aktuální heuristika (firma vs OSVČ podle názvu).');">
+            <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+            <div style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
+                <button type="submit"
+                        style="background:#0e7490;color:#fff;border:none;
+                               padding:0.5rem 1rem;border-radius:6px;cursor:pointer;font-weight:600;font-size:0.85rem;">
+                    🔁 Reklasifikovat všechny (firma vs OSVČ)
+                </button>
+                <small style="color:#6b7280;font-size:0.78rem;flex:1;min-width:200px;">
+                    Spustí znovu detekci typu (s.r.o., a.s., …) pro <strong>všechny kontakty</strong>.
+                    Použij po update heuristiky nebo při ručních opravách názvů. Bezpečné — nezmění
+                    nic, co se nezmění typem.
+                </small>
+            </div>
+        </form>
+
         <!-- Custom confirm modal -->
         <div id="mix-confirm-modal"
              style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);

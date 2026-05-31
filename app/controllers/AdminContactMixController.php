@@ -239,6 +239,43 @@ final class AdminContactMixController
         crm_redirect('/admin/contacts/mix');
     }
 
+    /** POST /admin/contacts/mix/reclassify — reklasifikuje subject_type pro VŠECHNY kontakty */
+    public function postReclassify(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['majitel', 'superadmin']);
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            crm_flash_set('Neplatný CSRF token.');
+            crm_redirect('/admin/contacts/mix');
+        }
+
+        if (!function_exists('crm_reclassify_all_subject_types')) {
+            crm_flash_set('⚠ Helper crm_reclassify_all_subject_types není dostupný.');
+            crm_redirect('/admin/contacts/mix');
+        }
+
+        try {
+            $res = crm_reclassify_all_subject_types($this->pdo);
+            $msg = sprintf(
+                '✓ Reklasifikace dokončena: prošlo %d kontaktů, změněno %d (firma: %d, OSVČ: %d).',
+                $res['total'], $res['changed'], $res['firma'], $res['osvc']
+            );
+            crm_flash_set($msg);
+
+            if (function_exists('crm_audit_log')) {
+                try {
+                    crm_audit_log($this->pdo, (int) $user['id'], 'subject_type.reclassify_all', 'contact', 0, $res);
+                } catch (\Throwable $_) {}
+            }
+        } catch (\Throwable $e) {
+            if (function_exists('crm_db_log_error')) crm_db_log_error($e, __METHOD__);
+            crm_flash_set('⚠ Chyba při reklasifikaci: ' . $e->getMessage());
+        }
+
+        crm_redirect('/admin/contacts/mix');
+    }
+
     /** POST /admin/contacts/mix/settings — admin uloží nový default ratio */
     public function postSettings(): void
     {
