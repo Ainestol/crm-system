@@ -21,10 +21,13 @@ if ($rolesExtraRaw !== '' && $rolesExtraRaw !== '[]') {
         $rolesExtraArr = array_map('strval', $decoded);
     }
 }
-// Region pole má smysl jen pro OZ (obchodák) — má region-based rotation lead.
-// Ostatní role (čistička, navolávačka, BO, admin) si region přepínají samy ve své view.
-// POZOR: musí to platit i pro multi-role usery, kteří mají obchodaka v roles_extra.
-$showRegions  = ($currentRole === 'obchodak') || in_array('obchodak', $rolesExtraArr, true);
+// Region pole se ukáže pro:
+//   - OZ (obchodák): primární region + povolené (auto-rotation FOR_SALES)
+//   - Navolávačka: povolené regiony omezují, ve kterých krajích vidí kontakty v queue
+//   - Multi-role kombinace: stejně pro obě
+$showRegions  = in_array($currentRole, ['obchodak', 'navolavacka'], true)
+             || in_array('obchodak', $rolesExtraArr, true)
+             || in_array('navolavacka', $rolesExtraArr, true);
 ?>
 <section class="card">
     <h1><?= $isEdit ? 'Upravit uživatele' : 'Nový uživatel' ?></h1>
@@ -86,12 +89,15 @@ $showRegions  = ($currentRole === 'obchodak') || in_array('obchodak', $rolesExtr
         -->
         <div id="oz-region-group" data-show-for="obchodak" style="<?= $showRegions ? '' : 'display:none;' ?>">
             <p style="font-size:0.78rem;color:var(--muted);margin:0.4rem 0 0.6rem;line-height:1.5;">
-                💡 <strong>Pouze pro OZ (obchodák):</strong> nastavuje se zde, protože systém
-                automaticky přiděluje leady (FOR_SALES) podle <em>primárního regionu</em>.
-                Ostatní role (čistička, navolávačka) si region přepínají samy ve svém panelu.
+                💡 <strong>Regionální omezení:</strong>
+                <br>• <strong>OZ (obchodák):</strong> primární region určuje auto-rotation leadů (FOR_SALES).
+                Povolené regiony omezují, které kraje OZ vidí v UI.
+                <br>• <strong>Navolávačka:</strong> povolené regiony určují, ve kterých krajích vidí kontakty ve své frontě.
+                Pokud nezaškrtneš nic, vidí všechny kraje, kde má kontakty.
+                <br>• <strong>Čistička:</strong> region picker v jejím panelu — tady se nenastavuje.
             </p>
 
-            <label for="primary_region">Primární region (auto-rotation leadů)</label>
+            <label for="primary_region">Primární region (jen pro OZ — auto-rotation FOR_SALES leadů)</label>
             <select id="primary_region" name="primary_region">
                 <option value="">—</option>
                 <?php foreach ($choices as $c) { ?>
@@ -100,7 +106,7 @@ $showRegions  = ($currentRole === 'obchodak') || in_array('obchodak', $rolesExtr
             </select>
 
             <fieldset class="fieldset">
-                <legend>Povolené regiony (které kraje OZ vidí v UI)</legend>
+                <legend>Povolené regiony (které kraje uvidí v UI — pro OZ i navolávačku)</legend>
                 <?php foreach ($choices as $c) { ?>
                     <label class="check"><input type="checkbox" name="regions[]" value="<?= crm_h($c) ?>"<?= in_array($c, $userRegions, true) ? ' checked' : '' ?>> <?= crm_h(crm_region_label($c)) ?></label>
                 <?php } ?>
@@ -150,23 +156,24 @@ $showRegions  = ($currentRole === 'obchodak') || in_array('obchodak', $rolesExtr
     var roleSel = document.getElementById('role');
     var group   = document.getElementById('oz-region-group');
     if (!roleSel || !group) return;
-    var showFor = group.dataset.showFor || 'obchodak';
 
-    // Checkbox „obchodak" v roles_extra sekci (= multi-role)
-    var extraObchodakCb = document.querySelector('input[type="checkbox"][name="roles_extra[]"][value="obchodak"]');
+    // Region sekce platí pro obchodak NEBO navolavacka (primary i extra)
+    var extraObchodakCb   = document.querySelector('input[type="checkbox"][name="roles_extra[]"][value="obchodak"]');
+    var extraNavolavCb    = document.querySelector('input[type="checkbox"][name="roles_extra[]"][value="navolavacka"]');
 
-    function isOzActive() {
-        if (roleSel.value === showFor) return true;
+    function shouldShow() {
+        var r = roleSel.value;
+        if (r === 'obchodak' || r === 'navolavacka') return true;
         if (extraObchodakCb && extraObchodakCb.checked) return true;
+        if (extraNavolavCb  && extraNavolavCb.checked)  return true;
         return false;
     }
     function sync() {
-        group.style.display = isOzActive() ? '' : 'none';
+        group.style.display = shouldShow() ? '' : 'none';
     }
     roleSel.addEventListener('change', sync);
-    if (extraObchodakCb) {
-        extraObchodakCb.addEventListener('change', sync);
-    }
+    if (extraObchodakCb) extraObchodakCb.addEventListener('change', sync);
+    if (extraNavolavCb)  extraNavolavCb.addEventListener('change', sync);
     sync();
 })();
 
