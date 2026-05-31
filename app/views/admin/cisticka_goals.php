@@ -518,6 +518,24 @@ if ($cwAdminNextM > 12) { $cwAdminNextM = 1; $cwAdminNextY++; }
             <a href="<?= crm_h(crm_url('/cisticka')) ?>" class="btn btn-secondary">Náhled — Čistička</a>
         </div>
     </form>
+
+    <!-- Samostatná akce: zkopírovat cíle z předchozího měsíce -->
+    <form method="post" action="<?= crm_h(crm_url('/admin/cisticka-goals/copy-prev')) ?>"
+          style="margin-top:1.2rem;padding:0.9rem 1rem;background:rgba(14,116,144,0.06);
+                 border:1px solid rgba(14,116,144,0.25);border-left:3px solid #0e7490;
+                 border-radius:6px;display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap;"
+          onsubmit="return confirm('Zkopírovat cíle z předchozího měsíce do aktuálně vybraného?\n\nExistující hodnoty v tomto měsíci budou PŘEPSÁNY hodnotami z minulého měsíce.\nPo zkopírování si můžeš jednotlivé kraje upravit a kliknout „Uložit cíle“.');">
+        <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+        <input type="hidden" name="period" value="<?= crm_h($selectedMonthKey) ?>">
+        <button type="submit" style="background:#0e7490;color:#fff;border:0;border-radius:6px;
+                                     padding:0.55rem 1.1rem;cursor:pointer;font-weight:600;font-size:0.88rem;">
+            📋 Zkopírovat cíle z minulého měsíce
+        </button>
+        <small style="color:#0e7490;font-size:0.82rem;flex:1;min-width:200px;">
+            Vyplní automaticky cíle a priority z minulého měsíce.
+            Šetří klikání na začátku nového měsíce. Po zkopírování klikni „Uložit cíle".
+        </small>
+    </form>
 </section>
 
 <script>

@@ -1522,6 +1522,95 @@ final class CistickaController
     }
 
     // ════════════════════════════════════════════════════════════════
+    //  POST /admin/cisticka-goals/copy-prev
+    //  Zkopíruje target + priority z PŘEDCHOZÍHO měsíce do aktuálně
+    //  vybraného. Existující hodnoty v cílovém měsíci se PŘEPÍŠOU
+    //  (= UPSERT). Použít na začátku měsíce, ať admin nemusí zadávat
+    //  hodnoty znova ručně.
+    // ════════════════════════════════════════════════════════════════
+    public function postAdminGoalsCopyPrev(): void
+    {
+        $actor = crm_require_user($this->pdo);
+        crm_require_roles($actor, ['majitel', 'superadmin']);
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            crm_flash_set('Neplatný CSRF token.');
+            crm_redirect('/admin/cisticka-goals');
+        }
+        $this->ensureRegionGoalsTable();
+
+        // Cílový měsíc (z hidden inputu — kam zkopírovat)
+        $targetPeriod = $this->parsePeriodKey((string) ($_POST['period'] ?? ''));
+
+        // Spočti předchozí měsíc (period format = "YYYY-MM" v parsePeriodKey,
+        // takže přes DateTime pohodlně odečteme měsíc)
+        try {
+            $dt = new \DateTime($targetPeriod . '-01');
+            $dt->modify('-1 month');
+            $prevPeriod = $dt->format('Y-m');
+        } catch (\Throwable $e) {
+            crm_flash_set('⚠ Chyba při výpočtu předchozího měsíce.');
+            crm_redirect('/admin/cisticka-goals?month_key=' . $this->periodToKey($targetPeriod));
+        }
+
+        // Načti cíle z předchozího měsíce
+        try {
+            $src = $this->pdo->prepare(
+                "SELECT region, monthly_target, priority FROM cisticka_region_goals
+                 WHERE period_yyyymm = :p"
+            );
+            $src->execute(['p' => $prevPeriod]);
+            $prevRows = $src->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $e) {
+            if (function_exists('crm_db_log_error')) crm_db_log_error($e, __METHOD__);
+            crm_flash_set('⚠ Chyba při načítání předchozího měsíce: ' . $e->getMessage());
+            crm_redirect('/admin/cisticka-goals?month_key=' . $this->periodToKey($targetPeriod));
+        }
+
+        if ($prevRows === []) {
+            crm_flash_set('ℹ V předchozím měsíci (' . $this->monthLabelFromPeriod($prevPeriod) . ') nejsou nastavené žádné cíle. Nemám co kopírovat.');
+            crm_redirect('/admin/cisticka-goals?month_key=' . $this->periodToKey($targetPeriod));
+        }
+
+        // UPSERT do cílového měsíce
+        $upsert = $this->pdo->prepare(
+            'INSERT INTO cisticka_region_goals
+                (region, period_yyyymm, monthly_target, priority, set_by)
+             VALUES (:r, :p, :t, :prio, :uid)
+             ON DUPLICATE KEY UPDATE
+                monthly_target = :t2,
+                priority       = :prio2,
+                set_by         = :uid2,
+                updated_at     = NOW(3)'
+        );
+        $copied = 0;
+        foreach ($prevRows as $row) {
+            try {
+                $upsert->execute([
+                    'r'     => (string) $row['region'],
+                    'p'     => $targetPeriod,
+                    't'     => (int) $row['monthly_target'],
+                    't2'    => (int) $row['monthly_target'],
+                    'prio'  => (int) ($row['priority'] ?? 5),
+                    'prio2' => (int) ($row['priority'] ?? 5),
+                    'uid'   => (int) $actor['id'],
+                    'uid2'  => (int) $actor['id'],
+                ]);
+                $copied++;
+            } catch (\PDOException $e) {
+                crm_db_log_error($e, __METHOD__);
+            }
+        }
+
+        crm_flash_set(sprintf(
+            '✓ Zkopírováno %d cílů z %s do %s. Pokud potřebuješ upravit konkrétní kraj, klikni „Uložit" po editaci.',
+            $copied,
+            $this->monthLabelFromPeriod($prevPeriod),
+            $this->monthLabelFromPeriod($targetPeriod)
+        ));
+        crm_redirect('/admin/cisticka-goals?month_key=' . $this->periodToKey($targetPeriod));
+    }
+
+    // ════════════════════════════════════════════════════════════════
     //  POST /admin/cisticka-rewards/save
     //
     //  Změna sazby čističky za jedno ověření.

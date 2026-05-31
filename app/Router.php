@@ -389,6 +389,13 @@ final class Router
                 'roles' => ['majitel', 'superadmin'],
                 'handler' => [CistickaController::class, 'postAdminGoals'],
             ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/cisticka-goals/copy-prev',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [CistickaController::class, 'postAdminGoalsCopyPrev'],
+            ],
             // ── Sazba odměny čističky (sdílí stránku /admin/cisticka-goals) ──
             [
                 'method' => 'POST',
