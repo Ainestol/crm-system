@@ -107,6 +107,29 @@ $showRegions  = ($currentRole === 'obchodak') || in_array('obchodak', $rolesExtr
             </fieldset>
         </div>
 
+        <!--
+            Subject type preference — VIDITELNÉ POUZE PRO ROLE = navolavacka.
+            Některé navolávačky chtějí volat jen firmy, jiné jen OSVČ.
+            Default 'any' = navolávačka dostane oboje (= chování jako dosud).
+        -->
+        <?php
+        $subjectPref = $isEdit ? (string) ($editUser['subject_type_pref'] ?? 'any') : 'any';
+        $showSubjectPref = ($currentRole === 'navolavacka') || in_array('navolavacka', $rolesExtraArr, true);
+        ?>
+        <div id="caller-subject-group" data-show-for="navolavacka" style="<?= $showSubjectPref ? '' : 'display:none;' ?>">
+            <p style="font-size:0.78rem;color:var(--muted);margin:0.8rem 0 0.4rem;line-height:1.5;">
+                🎯 <strong>Pouze pro navolávačku:</strong> filtr typu subjektu v frontě k provolání.
+                Některé navolávačky preferují jen firmy (s.r.o., a.s.), jiné jen OSVČ.
+                Mix poměr (globální) zůstává — tohle je jen filter, který kontakty navolávačka uvidí.
+            </p>
+            <label for="subject_type_pref">Co chce volat</label>
+            <select id="subject_type_pref" name="subject_type_pref">
+                <option value="any"   <?= $subjectPref === 'any'   ? 'selected' : '' ?>>🌐 Vše (default)</option>
+                <option value="firma" <?= $subjectPref === 'firma' ? 'selected' : '' ?>>🏢 Jen firmy (s.r.o., a.s., …)</option>
+                <option value="osvc"  <?= $subjectPref === 'osvc'  ? 'selected' : '' ?>>👤 Jen OSVČ</option>
+            </select>
+        </div>
+
         <?php if ($isEdit && (int) ($editUser['totp_enabled'] ?? 0) === 1) { ?>
             <label class="check"><input type="checkbox" name="disable_2fa" value="1"> Vypnout 2FA (administrátorský zásah)</label>
         <?php } ?>
@@ -144,6 +167,27 @@ $showRegions  = ($currentRole === 'obchodak') || in_array('obchodak', $rolesExtr
     if (extraObchodakCb) {
         extraObchodakCb.addEventListener('change', sync);
     }
+    sync();
+})();
+
+// Subject type pref — viditelné pro navolávačku (primary nebo extra)
+(function () {
+    var roleSel = document.getElementById('role');
+    var group   = document.getElementById('caller-subject-group');
+    if (!roleSel || !group) return;
+    var showFor = group.dataset.showFor || 'navolavacka';
+    var extraCb = document.querySelector('input[type="checkbox"][name="roles_extra[]"][value="navolavacka"]');
+
+    function isActive() {
+        if (roleSel.value === showFor) return true;
+        if (extraCb && extraCb.checked)  return true;
+        return false;
+    }
+    function sync() {
+        group.style.display = isActive() ? '' : 'none';
+    }
+    roleSel.addEventListener('change', sync);
+    if (extraCb) extraCb.addEventListener('change', sync);
     sync();
 })();
 </script>

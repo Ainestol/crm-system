@@ -339,6 +339,12 @@ final class AdminUsersController
         $regions = isset($_POST['regions']) && is_array($_POST['regions']) ? $_POST['regions'] : [];
         $disable2fa = !empty($_POST['disable_2fa']);
 
+        // Subject type pref (per-navolávačka filter firma/OSVČ; default 'any')
+        $subjectPref = strtolower(trim((string) ($_POST['subject_type_pref'] ?? 'any')));
+        if (!in_array($subjectPref, ['any', 'firma', 'osvc'], true)) {
+            $subjectPref = 'any';
+        }
+
         // Multi-role: další role z checkboxů (mimo primární)
         $extraRoles = isset($_POST['roles_extra']) && is_array($_POST['roles_extra']) ? $_POST['roles_extra'] : [];
         $allowedRoles = ['superadmin','majitel','navolavacka','obchodak','backoffice','cisticka'];
@@ -369,15 +375,18 @@ final class AdminUsersController
         $this->pdo->beginTransaction();
         try {
             $upd = $this->pdo->prepare(
-                'UPDATE users SET jmeno = :jm, email = :em, role = :rl, roles_extra = :re, primary_region = :pr WHERE id = :id'
+                'UPDATE users SET jmeno = :jm, email = :em, role = :rl, roles_extra = :re,
+                                  primary_region = :pr, subject_type_pref = :stp
+                 WHERE id = :id'
             );
             $upd->execute([
-                'jm' => $jmeno,
-                'em' => $email,
-                'rl' => $role,
-                're' => $rolesExtraJson,
-                'pr' => $primary,
-                'id' => $id,
+                'jm'  => $jmeno,
+                'em'  => $email,
+                'rl'  => $role,
+                're'  => $rolesExtraJson,
+                'pr'  => $primary,
+                'stp' => $subjectPref,
+                'id'  => $id,
             ]);
             $this->syncRegions($id, $regions);
             if ($disable2fa) {

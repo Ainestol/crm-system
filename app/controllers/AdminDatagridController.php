@@ -619,6 +619,36 @@ final class AdminDatagridController
                 }
             }
 
+            // 4) Při změně assigned_caller_id — auto-promote stav na ASSIGNED
+            //    Stejná logika jako u OZ (CALLED_OK), jen pro navolávačku.
+            //    Filter v /caller vyžaduje stav = 'READY' (z poolu) NEBO 'ASSIGNED'
+            //    (explicitně přiřazené). Bez bumpu na ASSIGNED by navolávačka
+            //    nevidela kontakt přiřazený přes datagrid.
+            if ($field === 'assigned_caller_id') {
+                $newCallerId = (int) ($sqlValue ?? 0);
+                $oldStavC    = (string) ($before['stav'] ?? 'NEW');
+
+                if ($newCallerId > 0) {
+                    // Raw stavy, ze kterých BUMPNEME na ASSIGNED. NEW je hlavní
+                    // (čerstvý import), READY/VF_SKIP/atd. už nějakou pre-klasifikaci
+                    // mají, ale admin to explicitně přiřazuje → respect.
+                    $rawStavsCaller = ['NEW', 'READY', 'VF_SKIP', 'NEDOVOLANO',
+                                       'EMAIL_READY', 'CHYBNY_KONTAKT', 'CALLED_BAD',
+                                       'NEZAJEM', 'FOR_SALES'];
+                    if (in_array($oldStavC, $rawStavsCaller, true)) {
+                        $this->pdo->prepare(
+                            "UPDATE contacts SET stav = 'ASSIGNED', updated_at = NOW(3)
+                             WHERE id = ?"
+                        )->execute([$contactId]);
+
+                        $this->pdo->prepare(
+                            "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
+                             VALUES (?, ?, ?, 'ASSIGNED', 'ADMIN EDIT: auto-promote stav po přiřazení navolávačky', NOW(3))"
+                        )->execute([$contactId, (int) $actor['id'], $oldStavC]);
+                    }
+                }
+            }
+
             $this->pdo->commit();
         } catch (\Throwable $e) {
             if ($this->pdo->inTransaction()) $this->pdo->rollBack();
@@ -653,6 +683,232 @@ final class AdminDatagridController
             'sql_value'  => $sqlValue,
         ], JSON_UNESCAPED_UNICODE);
         exit; // hard stop — žádný downstream kód
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  BULK AKCE — hromadné operace na vybraných kontaktech
+    //  POST /admin/datagrid/bulk
+    //  Body: ids[], action, value (caller_id / oz_id pro assign)
+    //  Limit: 500 kontaktů per request
+    // ════════════════════════════════════════════════════════════════
+
+    private const BULK_LIMIT = 500;
+
+    /** POST /admin/datagrid/bulk — bulk akce na vybraných kontaktech */
+    public function postBulk(): void
+    {
+        $actor = crm_require_user($this->pdo);
+        crm_require_roles($actor, ['majitel', 'superadmin']);
+
+        ob_start();
+        header('Content-Type: application/json; charset=UTF-8');
+        header('Cache-Control: no-store');
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(403);
+            echo json_encode(['ok' => false, 'error' => 'Neplatný CSRF token.']);
+            exit;
+        }
+
+        $action = (string) ($_POST['action'] ?? '');
+        $value  = (string) ($_POST['value'] ?? '');
+        $rawIds = isset($_POST['ids']) && is_array($_POST['ids']) ? $_POST['ids'] : [];
+        $ids = array_values(array_filter(array_map('intval', $rawIds), fn($i) => $i > 0));
+        $ids = array_unique($ids);
+
+        if ($ids === []) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Žádné kontakty vybrané.']);
+            exit;
+        }
+        if (count($ids) > self::BULK_LIMIT) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Limit ' . self::BULK_LIMIT . ' kontaktů per request (vybráno ' . count($ids) . ').']);
+            exit;
+        }
+
+        $validActions = ['assign_caller', 'assign_oz', 'reset_to_pool'];
+        if (!in_array($action, $validActions, true)) {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => "Neznámá akce '$action'."]);
+            exit;
+        }
+
+        try {
+            switch ($action) {
+                case 'assign_caller':
+                    $this->bulkAssignCaller($ids, (int) $value, (int) $actor['id']);
+                    break;
+                case 'assign_oz':
+                    $this->bulkAssignOz($ids, (int) $value, (int) $actor['id']);
+                    break;
+                case 'reset_to_pool':
+                    $this->bulkResetToPool($ids, (int) $actor['id']);
+                    break;
+            }
+        } catch (\Throwable $e) {
+            if (function_exists('crm_db_log_error')) crm_db_log_error($e, __METHOD__);
+            if (ob_get_length()) ob_clean();
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => 'DB chyba: ' . $e->getMessage()]);
+            exit;
+        }
+
+        // Audit log
+        if (function_exists('crm_audit_log')) {
+            try {
+                crm_audit_log($this->pdo, (int) $actor['id'], 'datagrid_bulk', 'contact', 0, [
+                    'action' => $action,
+                    'value'  => $value,
+                    'count'  => count($ids),
+                    'ids'    => array_slice($ids, 0, 50), // jen prvních 50 do logu
+                ]);
+            } catch (\Throwable $_) {}
+        }
+
+        if (ob_get_length()) ob_clean();
+        echo json_encode([
+            'ok'      => true,
+            'action'  => $action,
+            'count'   => count($ids),
+            'message' => '✓ Akce dokončena pro ' . count($ids) . ' kontaktů.',
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    /** Bulk: přiřaď navolávačku všem ids + auto-promote stav. */
+    private function bulkAssignCaller(array $ids, int $callerId, int $adminId): void
+    {
+        if ($callerId <= 0) {
+            throw new \RuntimeException('Neplatné ID navolávačky.');
+        }
+        // Ověř, že je to skutečně navolávačka
+        $cs = $this->pdo->prepare(
+            "SELECT id FROM users WHERE id = ? AND aktivni = 1
+             AND (role = 'navolavacka' OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"'))"
+        );
+        $cs->execute([$callerId]);
+        if (!$cs->fetchColumn()) {
+            throw new \RuntimeException('Uživatel není aktivní navolávačka.');
+        }
+
+        // VŠECHNY stavy MIMO finálních (= explicit admin přiřazení = navolávačka má volat)
+        // Finalní stavy zachováme — kontakt je už uzavřený, nemělo by smysl bumpnout.
+        $finalStavs = ['DONE', 'UZAVRENO'];
+
+        $this->pdo->beginTransaction();
+        try {
+            foreach (array_chunk($ids, 250) as $chunk) {
+                $ph = implode(',', array_fill(0, count($chunk), '?'));
+                // 1) Přiřaď navolávačku všem
+                $this->pdo->prepare(
+                    "UPDATE contacts SET assigned_caller_id = ?, updated_at = NOW(3)
+                     WHERE id IN ($ph)"
+                )->execute(array_merge([$callerId], $chunk));
+
+                // 2) Auto-promote: VŠECHNY kontakty mimo finálních → ASSIGNED
+                //    (= caller filter v /caller vyžaduje ASSIGNED nebo READY z poolu)
+                $phF = implode(',', array_fill(0, count($finalStavs), '?'));
+                $this->pdo->prepare(
+                    "UPDATE contacts SET stav = 'ASSIGNED'
+                     WHERE id IN ($ph) AND stav NOT IN ($phF)"
+                )->execute(array_merge($chunk, $finalStavs));
+            }
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /** Bulk: přiřaď OZ všem ids + auto-promote stav + workflow row. */
+    private function bulkAssignOz(array $ids, int $ozId, int $adminId): void
+    {
+        if ($ozId <= 0) {
+            throw new \RuntimeException('Neplatné ID obchodáka.');
+        }
+        $os = $this->pdo->prepare(
+            "SELECT id FROM users WHERE id = ? AND aktivni = 1
+             AND (role = 'obchodak' OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"'))"
+        );
+        $os->execute([$ozId]);
+        if (!$os->fetchColumn()) {
+            throw new \RuntimeException('Uživatel není aktivní obchodák (OZ).');
+        }
+
+        $rawStavs = ['NEW', 'READY', 'VF_SKIP', 'ASSIGNED', 'NEDOVOLANO',
+                     'EMAIL_READY', 'CHYBNY_KONTAKT', 'CALLED_BAD', 'NEZAJEM',
+                     'FOR_SALES'];
+
+        $this->pdo->beginTransaction();
+        try {
+            foreach (array_chunk($ids, 250) as $chunk) {
+                $ph = implode(',', array_fill(0, count($chunk), '?'));
+
+                // 1) Přiřaď OZ
+                $this->pdo->prepare(
+                    "UPDATE contacts SET assigned_sales_id = ?, updated_at = NOW(3)
+                     WHERE id IN ($ph)"
+                )->execute(array_merge([$ozId], $chunk));
+
+                // 2) Auto-promote raw → CALLED_OK + datum_predani
+                $phS = implode(',', array_fill(0, count($rawStavs), '?'));
+                $this->pdo->prepare(
+                    "UPDATE contacts SET stav = 'CALLED_OK',
+                                          datum_predani = COALESCE(datum_predani, NOW(3))
+                     WHERE id IN ($ph) AND stav IN ($phS)"
+                )->execute(array_merge($chunk, $rawStavs));
+
+                // 3) Vytvoř workflow row pro každého (kde neexistuje)
+                foreach ($chunk as $cid) {
+                    $wfCheck = $this->pdo->prepare(
+                        "SELECT id FROM oz_contact_workflow WHERE contact_id = ? AND oz_id = ?"
+                    );
+                    $wfCheck->execute([$cid, $ozId]);
+                    if ($wfCheck->fetchColumn() === false) {
+                        try {
+                            $this->pdo->prepare(
+                                "INSERT INTO oz_contact_workflow
+                                 (contact_id, oz_id, stav, started_at, stav_changed_at, updated_at)
+                                 VALUES (?, ?, 'NOVE', NOW(3), NOW(3), NOW(3))"
+                            )->execute([$cid, $ozId]);
+                        } catch (\Throwable $_) {}
+                    }
+                }
+            }
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /** Bulk: vrátit kontakty do pool (reset assigned_caller_id + stav=READY + unlock). */
+    private function bulkResetToPool(array $ids, int $adminId): void
+    {
+        $this->pdo->beginTransaction();
+        try {
+            foreach (array_chunk($ids, 250) as $chunk) {
+                $ph = implode(',', array_fill(0, count($chunk), '?'));
+                $this->pdo->prepare(
+                    "UPDATE contacts
+                     SET assigned_caller_id = NULL,
+                         locked_by = NULL,
+                         locked_until = NULL,
+                         stav = 'READY',
+                         updated_at = NOW(3)
+                     WHERE id IN ($ph)"
+                )->execute($chunk);
+            }
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            throw $e;
+        }
     }
 
     /**

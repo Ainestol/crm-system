@@ -67,6 +67,37 @@ final class CallerController
         $callerId = (int) $user['id'];
         $flash    = crm_flash_take();
         $csrf     = crm_csrf_token();
+
+        // Per-navolávačka filter typu subjektu (firma/osvc/any)
+        // Pokud sloupec ještě neexistuje (migrace 025 nespuštěna), bereme 'any'.
+        $subjectPref = 'any';
+        try {
+            $sp = $this->pdo->prepare("SELECT subject_type_pref FROM users WHERE id = ?");
+            $sp->execute([$callerId]);
+            $val = (string) ($sp->fetchColumn() ?: 'any');
+            if (in_array($val, ['any', 'firma', 'osvc'], true)) {
+                $subjectPref = $val;
+            }
+        } catch (\Throwable $_) {
+            // Sloupec ještě neexistuje — fallback 'any' (= dosavadní chování)
+        }
+
+        // Pokud caller změnil preferenci a má staré locks na kontakty jiného typu,
+        // uvolnit je — jinak jsou ti kontakty „mrtvé" (zamčené ale neviditelné v UI,
+        // protože load filter je teď filtruje pryč). Tohle vrátí kontakty do poolu
+        // pro jiné navolávačky.
+        if ($subjectPref === 'firma' || $subjectPref === 'osvc') {
+            try {
+                $this->pdo->prepare(
+                    "UPDATE contacts
+                     SET locked_by = NULL, locked_until = NULL
+                     WHERE locked_by = ?
+                       AND stav = 'READY'
+                       AND assigned_caller_id IS NULL
+                       AND subject_type <> ?"
+                )->execute([$callerId, $subjectPref]);
+            } catch (\Throwable $_) {}
+        }
         $validCallerTabs = ['aktivni', 'callback', 'nedovolano', 'navolane', 'prohra', 'izolace', 'chybny', 'chybne_oz', 'rescue', 'vykon'];
         $tab      = in_array((string) ($_GET['tab'] ?? 'aktivni'), $validCallerTabs, true)
                         ? (string) ($_GET['tab'] ?? 'aktivni') : 'aktivni';
@@ -195,24 +226,47 @@ final class CallerController
         )";
 
         if ($tab === 'aktivni') {
+            // Subject type filter pro pool query (aplikuje se i na region picker)
+            $availSubjFilter = '';
+            $availSubjParam  = [];
+            if ($subjectPref === 'firma' || $subjectPref === 'osvc') {
+                $availSubjFilter = ' AND subject_type = ?';
+                $availSubjParam  = [$subjectPref];
+            }
+
             if ($hasCallerRegions) {
                 $ph = implode(',', array_fill(0, count($callerRegions), '?'));
                 $avStmt = $this->pdo->prepare(
                     "SELECT DISTINCT region FROM contacts
                      WHERE stav='READY' AND operator IN('TM','O2')
                        AND assigned_caller_id IS NULL AND region IN($ph) AND region!=''
-                       $excludePremium
+                       $excludePremium $availSubjFilter
+                     UNION
+                     SELECT DISTINCT region FROM contacts
+                     WHERE stav = 'ASSIGNED' AND assigned_caller_id = ? AND region != ''
+                       $availSubjFilter
                      ORDER BY region"
                 );
-                $avStmt->execute($callerRegions);
+                $avStmt->execute(array_merge(
+                    $callerRegions, $availSubjParam,
+                    [$callerId], $availSubjParam
+                ));
             } else {
-                $avStmt = $this->pdo->query(
+                $avStmt = $this->pdo->prepare(
                     "SELECT DISTINCT region FROM contacts
                      WHERE stav='READY' AND operator IN('TM','O2')
                        AND assigned_caller_id IS NULL AND region!=''
-                       $excludePremium
+                       $excludePremium $availSubjFilter
+                     UNION
+                     SELECT DISTINCT region FROM contacts
+                     WHERE stav = 'ASSIGNED' AND assigned_caller_id = ? AND region != ''
+                       $availSubjFilter
                      ORDER BY region"
                 );
+                $avStmt->execute(array_merge(
+                    $availSubjParam,
+                    [$callerId], $availSubjParam
+                ));
             }
             $availableRegions = $avStmt ? ($avStmt->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
 
@@ -222,16 +276,30 @@ final class CallerController
 
             if ($availableRegions !== []) {
                 $ph2 = implode(',', array_fill(0, count($availableRegions), '?'));
-                // Počty: volné (unclaimed) + caller's vlastní zamčené v daném regionu
+                // Počty: 1) volné (unclaimed) READY v daném regionu
+                //         2) PLUS caller's vlastní ASSIGNED kontakty
+                //         + aplikujeme subject_type filter všude
                 $rcStmt = $this->pdo->prepare(
-                    "SELECT region, COUNT(*) AS cnt FROM contacts
-                     WHERE stav='READY' AND operator IN('TM','O2')
-                       AND assigned_caller_id IS NULL AND region IN($ph2)
-                       AND (locked_by IS NULL OR locked_until < NOW(3) OR locked_by = ?)
-                       $excludePremium
+                    "SELECT region, SUM(cnt) AS cnt FROM (
+                        SELECT region, COUNT(*) AS cnt FROM contacts
+                        WHERE stav='READY' AND operator IN('TM','O2')
+                          AND assigned_caller_id IS NULL AND region IN($ph2)
+                          AND (locked_by IS NULL OR locked_until < NOW(3) OR locked_by = ?)
+                          $excludePremium $availSubjFilter
+                        GROUP BY region
+                        UNION ALL
+                        SELECT region, COUNT(*) AS cnt FROM contacts
+                        WHERE stav = 'ASSIGNED' AND assigned_caller_id = ?
+                          AND region IN($ph2)
+                          $availSubjFilter
+                        GROUP BY region
+                     ) AS combined
                      GROUP BY region"
                 );
-                $rcStmt->execute(array_merge($availableRegions, [$callerId]));
+                $rcStmt->execute(array_merge(
+                    $availableRegions, [$callerId], $availSubjParam,
+                    [$callerId], $availableRegions, $availSubjParam
+                ));
                 foreach ($rcStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
                     $regionCounts[(string) $row['region']] = (int) $row['cnt'];
                 }
@@ -433,6 +501,12 @@ final class CallerController
                                 )";
                 $claimParams = [$selectedRegion];
 
+                // Per-navolávačka filter typu subjektu (firma/osvc)
+                if ($subjectPref === 'firma' || $subjectPref === 'osvc') {
+                    $claimWhere     .= " AND subject_type = ?";
+                    $claimParams[] = $subjectPref;
+                }
+
                 $this->pdo->beginTransaction();
                 try {
                     // ORDER (priorita):
@@ -469,7 +543,19 @@ final class CallerController
             }
 
             // 5. Načíst kontakty: caller's zamčené READY pool + vlastní ASSIGNED
+            // Subject type filter (STRIKTNÍ): aplikuje se na POOL i ASSIGNED.
+            // Logika: admin nastavil "Eva volá jen firmy" → Eva nesmí dostat OSVČ
+            // ani z ASSIGNED. Pokud má admin chyba (přiřadil OSVČ Eva s pref firma),
+            // ten kontakt zmizí z její fronty (musí ho přiřadit jiné navolávačce).
             $regionExtraWhere = $selectedRegion !== '' ? 'AND c.region = :reg' : '';
+            // POZOR: PDO bez emulated prepares nedovolí opakovat stejný :named
+            // parametr dvakrát. Pro pool a ASSIGNED máme 2 zvlášť pojmenované.
+            $subjExtraPool = '';
+            $subjExtraOwn  = '';
+            if ($subjectPref === 'firma' || $subjectPref === 'osvc') {
+                $subjExtraPool = ' AND c.subject_type = :subj_pref_pool';
+                $subjExtraOwn  = ' AND c.subject_type = :subj_pref_own';
+            }
 
             $sql = "SELECT c.*, u.jmeno AS sales_name,
                            CASE WHEN c.assigned_caller_id IS NULL THEN 1 ELSE 0 END AS is_pool
@@ -477,14 +563,18 @@ final class CallerController
                     LEFT JOIN users u ON u.id = c.assigned_sales_id
                     WHERE (
                       (c.stav = 'READY' AND c.locked_by = :cid_pool AND c.locked_until > NOW(3)
-                       AND c.assigned_caller_id IS NULL {$regionExtraWhere})
-                      OR (c.assigned_caller_id = :cid_own AND c.stav = 'ASSIGNED')
+                       AND c.assigned_caller_id IS NULL {$regionExtraWhere}{$subjExtraPool})
+                      OR (c.assigned_caller_id = :cid_own AND c.stav = 'ASSIGNED' {$subjExtraOwn})
                     )
                     ORDER BY is_pool ASC, c.created_at ASC";
 
             $mainParams = ['cid_pool' => $callerId, 'cid_own' => $callerId];
             if ($selectedRegion !== '') {
                 $mainParams['reg'] = $selectedRegion;
+            }
+            if ($subjExtraPool !== '') {
+                $mainParams['subj_pref_pool'] = $subjectPref;
+                $mainParams['subj_pref_own']  = $subjectPref;
             }
             $stmt = $this->pdo->prepare($sql);
             $stmt->execute($mainParams);
@@ -535,6 +625,13 @@ final class CallerController
         }
 
         // ── Počty pro taby ────────────────────────────────────────────────────
+        // Per-navolávačka filter (firma/osvc): tab "aktivni" počítá NEW v poolu,
+        // takže filter aplikujeme i tam. Vlastní (assigned_caller_id) kontakty
+        // navolávačka uvidí vždy, bez ohledu na pref — to jsou její přidělené.
+        $subjFilterSql = '';
+        if ($subjectPref === 'firma' || $subjectPref === 'osvc') {
+            $subjFilterSql = " AND subject_type = " . $this->pdo->quote($subjectPref);
+        }
         $counts = $this->pdo->prepare(
             'SELECT
                 SUM(CASE WHEN stav IN (\'NEW\', \'ASSIGNED\') THEN 1 ELSE 0 END)          AS aktivni,
@@ -547,8 +644,9 @@ final class CallerController
                 SUM(CASE WHEN stav = \'IZOLACE\' THEN 1 ELSE 0 END)                      AS izolace,
                 SUM(CASE WHEN stav = \'CHYBNY_KONTAKT\' THEN 1 ELSE 0 END)               AS chybny
              FROM contacts
-             WHERE assigned_caller_id = :cid2
-               OR (stav = \'CALLBACK\' AND assigned_caller_id IS NULL)'
+             WHERE (assigned_caller_id = :cid2
+                    OR (stav = \'CALLBACK\' AND assigned_caller_id IS NULL))'
+            . $subjFilterSql
         );
         $counts->execute(['cid1' => $callerId, 'cid2' => $callerId]);
         $tabCounts = $counts->fetch(PDO::FETCH_ASSOC)

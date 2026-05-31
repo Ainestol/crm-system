@@ -341,5 +341,162 @@ if (!$_isAuthPage
     </div>
 
 </div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     CRM MODAL — pěkné custom alert/confirm dialogy
+     Globální API: crmAlert(msg, opts), crmConfirm(msg, opts), crmToast(msg, type)
+     Voláte odkudkoliv: const ok = await crmConfirm('Opravdu smazat?');
+     ════════════════════════════════════════════════════════════════ -->
+<div id="crm-modal-overlay" style="display:none;position:fixed;inset:0;
+        background:rgba(15,23,42,0.55);backdrop-filter:blur(3px);
+        z-index:99999;align-items:center;justify-content:center;
+        animation:crmModalFadeIn 0.18s ease-out;">
+    <div id="crm-modal-box" style="background:#fff;border-radius:14px;
+            box-shadow:0 25px 80px rgba(0,0,0,0.35);min-width:380px;max-width:520px;
+            width:90vw;overflow:hidden;transform:scale(0.96);
+            animation:crmModalPop 0.22s cubic-bezier(0.18,0.89,0.32,1.28) forwards;">
+        <!-- Header s gradientem (typ definuje barvu) -->
+        <div id="crm-modal-header" style="padding:1rem 1.4rem;display:flex;align-items:center;gap:0.7rem;
+                background:linear-gradient(135deg,#7e22ce,#a855f7);color:#fff;">
+            <span id="crm-modal-icon" style="font-size:1.6rem;">🐌</span>
+            <strong id="crm-modal-title" style="font-size:1rem;flex:1;">Clockwork Man</strong>
+        </div>
+        <!-- Body -->
+        <div id="crm-modal-body" style="padding:1.4rem;color:#1f2937;font-size:0.95rem;
+                line-height:1.55;white-space:pre-line;"></div>
+        <!-- Footer s tlačítky -->
+        <div id="crm-modal-footer" style="padding:0.85rem 1.4rem;background:#f9fafb;
+                border-top:1px solid #e5e7eb;display:flex;justify-content:flex-end;
+                gap:0.5rem;flex-wrap:wrap;">
+            <button id="crm-modal-cancel" type="button" style="background:#fff;color:#374151;
+                    border:1px solid #d1d5db;border-radius:6px;padding:0.55rem 1.1rem;
+                    cursor:pointer;font-weight:500;">Zrušit</button>
+            <button id="crm-modal-ok" type="button" style="background:#7e22ce;color:#fff;
+                    border:0;border-radius:6px;padding:0.55rem 1.3rem;
+                    cursor:pointer;font-weight:600;">OK</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast container (pravý dolní roh, fade-out) -->
+<div id="crm-toast-container" style="position:fixed;bottom:1.2rem;right:1.2rem;
+        z-index:99998;display:flex;flex-direction:column;gap:0.5rem;
+        pointer-events:none;"></div>
+
+<style>
+@keyframes crmModalFadeIn { from { opacity:0; } to { opacity:1; } }
+@keyframes crmModalPop {
+    from { transform:scale(0.92); opacity:0; }
+    to   { transform:scale(1);    opacity:1; }
+}
+@keyframes crmToastSlide {
+    from { transform:translateX(120%); opacity:0; }
+    to   { transform:translateX(0);    opacity:1; }
+}
+@keyframes crmToastFade {
+    to { opacity:0; transform:translateX(40%); }
+}
+.crm-toast {
+    background:#fff;border-radius:8px;padding:0.7rem 1rem;
+    box-shadow:0 8px 24px rgba(0,0,0,0.18);
+    min-width:240px;max-width:380px;font-size:0.88rem;
+    border-left:4px solid #7e22ce;
+    pointer-events:auto;display:flex;align-items:center;gap:0.55rem;
+    animation:crmToastSlide 0.22s cubic-bezier(0.18,0.89,0.32,1.28);
+}
+.crm-toast--success { border-left-color:#22c55e; }
+.crm-toast--success #crm-modal-icon { color:#22c55e; }
+.crm-toast--error   { border-left-color:#ef4444; }
+.crm-toast--warn    { border-left-color:#f59e0b; }
+.crm-toast--info    { border-left-color:#3b82f6; }
+#crm-modal-cancel:hover { background:#f3f4f6; }
+#crm-modal-ok:hover { filter:brightness(1.1); }
+</style>
+
+<script>
+(function() {
+    const overlay = document.getElementById('crm-modal-overlay');
+    const headerEl = document.getElementById('crm-modal-header');
+    const iconEl   = document.getElementById('crm-modal-icon');
+    const titleEl  = document.getElementById('crm-modal-title');
+    const bodyEl   = document.getElementById('crm-modal-body');
+    const okBtn    = document.getElementById('crm-modal-ok');
+    const cancelBtn= document.getElementById('crm-modal-cancel');
+    let currentResolve = null;
+
+    // Theme presets per typ
+    const THEMES = {
+        default: { icon:'🐌', title:'Clockwork Man', headerBg:'linear-gradient(135deg,#7e22ce,#a855f7)', okBg:'#7e22ce' },
+        info:    { icon:'ℹ️', title:'Informace',     headerBg:'linear-gradient(135deg,#1e40af,#3b82f6)', okBg:'#3b82f6' },
+        success: { icon:'✅', title:'Hotovo',        headerBg:'linear-gradient(135deg,#15803d,#22c55e)', okBg:'#22c55e' },
+        warn:    { icon:'⚠️', title:'Pozor',         headerBg:'linear-gradient(135deg,#b45309,#f59e0b)', okBg:'#f59e0b' },
+        danger:  { icon:'🗑', title:'Nevratná akce', headerBg:'linear-gradient(135deg,#991b1b,#ef4444)', okBg:'#dc2626' },
+        confirm: { icon:'❓', title:'Potvrzení',     headerBg:'linear-gradient(135deg,#7e22ce,#a855f7)', okBg:'#7e22ce' },
+    };
+
+    function applyTheme(type, customTitle) {
+        const t = THEMES[type] || THEMES.default;
+        iconEl.textContent  = t.icon;
+        titleEl.textContent = customTitle || t.title;
+        headerEl.style.background = t.headerBg;
+        okBtn.style.background    = t.okBg;
+    }
+
+    function openModal(opts) {
+        return new Promise(resolve => {
+            currentResolve = resolve;
+            applyTheme(opts.type || 'default', opts.title);
+            bodyEl.textContent = opts.message || '';
+            okBtn.textContent     = opts.okText     || 'OK';
+            cancelBtn.textContent = opts.cancelText || 'Zrušit';
+            cancelBtn.style.display = opts.alert ? 'none' : '';
+            overlay.style.display = 'flex';
+            setTimeout(() => okBtn.focus(), 50);
+        });
+    }
+
+    function closeModal(result) {
+        overlay.style.display = 'none';
+        if (currentResolve) {
+            currentResolve(result);
+            currentResolve = null;
+        }
+    }
+
+    okBtn.addEventListener('click',     () => closeModal(true));
+    cancelBtn.addEventListener('click', () => closeModal(false));
+    overlay.addEventListener('click', e => {
+        if (e.target === overlay) closeModal(false);
+    });
+    document.addEventListener('keydown', e => {
+        if (overlay.style.display === 'flex') {
+            if (e.key === 'Escape') closeModal(false);
+            if (e.key === 'Enter')  closeModal(true);
+        }
+    });
+
+    // ── Public API ─────────────────────────────────────────────────
+    window.crmAlert = function(message, opts) {
+        return openModal(Object.assign({ alert:true, type:'info' }, opts || {}, { message }));
+    };
+    window.crmConfirm = function(message, opts) {
+        return openModal(Object.assign({ alert:false, type:'confirm' }, opts || {}, { message }));
+    };
+    window.crmToast = function(message, type) {
+        const c = document.getElementById('crm-toast-container');
+        if (!c) return;
+        const el = document.createElement('div');
+        el.className = 'crm-toast crm-toast--' + (type || 'info');
+        const ic = { success:'✅', error:'⚠️', warn:'⚠️', info:'ℹ️' }[type || 'info'];
+        el.innerHTML = `<span style="font-size:1.1rem;">${ic}</span><span style="flex:1;">${message}</span>`;
+        c.appendChild(el);
+        setTimeout(() => {
+            el.style.animation = 'crmToastFade 0.3s forwards';
+            setTimeout(() => el.remove(), 320);
+        }, 3500);
+    };
+})();
+</script>
+
 </body>
 </html>

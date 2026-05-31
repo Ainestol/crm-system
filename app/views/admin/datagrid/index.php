@@ -401,21 +401,40 @@
                placeholder="🔍 Hledat: firma, telefon, e-mail, OZ, číslo smlouvy…"
                style="flex:1 1 280px;min-width:200px;padding:0.4rem 0.7rem;background:var(--bo-bg);color:var(--bo-text);border:1px solid var(--bo-border);border-radius:6px;font-size:0.85rem;">
 
-        <select id="dg-filter-stav" title="Filtr: Workflow stav">
+        <select id="dg-filter-stav" title="Filtr: Workflow stav (Stav OZ)">
             <option value="">Všechny stavy</option>
-            <option>NEW</option>
-            <option>READY</option>
-            <option>ASSIGNED</option>
-            <option>CALLBACK</option>
+            <option value="__empty__">— prázdné (bez Stavu OZ) —</option>
+            <option>NOVE</option>
+            <option>ZPRACOVAVA</option>
             <option>NABIDKA</option>
             <option>SCHUZKA</option>
             <option>SANCE</option>
+            <option>CALLBACK</option>
             <option>BO_PREDANO</option>
             <option>BO_VPRACI</option>
             <option>BO_VRACENO</option>
+            <option>SMLOUVA</option>
             <option>UZAVRENO</option>
             <option>NEZAJEM</option>
             <option>REKLAMACE</option>
+            <option>FOR_SALES</option>
+        </select>
+
+        <select id="dg-filter-contact-stav" title="Filtr: Stav kontaktu">
+            <option value="">Všechny stavy kontaktu</option>
+            <option value="__empty__">— prázdné —</option>
+            <option>NEW</option>
+            <option>READY</option>
+            <option>ASSIGNED</option>
+            <option>VF_SKIP</option>
+            <option>NEDOVOLANO</option>
+            <option>CALLED_OK</option>
+            <option>CALLED_BAD</option>
+            <option>CHYBNY_KONTAKT</option>
+            <option>NEZAJEM</option>
+            <option>FOR_SALES</option>
+            <option>IZOLACE</option>
+            <option>DONE</option>
         </select>
 
         <select id="dg-filter-region" title="Filtr: Kraj">
@@ -456,6 +475,54 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Bulk akce toolbar — zobrazí se až když je něco vybrané -->
+    <div id="dg-bulk-bar" style="display:none;position:sticky;top:0;z-index:50;
+                                  background:linear-gradient(180deg,#fef3c7,#fde68a);
+                                  border:1px solid #f59e0b;border-radius:8px;
+                                  padding:0.6rem 0.9rem;margin-top:0.6rem;
+                                  display:flex;align-items:center;gap:0.7rem;flex-wrap:wrap;
+                                  box-shadow:0 2px 8px rgba(245,158,11,0.2);">
+        <strong style="color:#78350f;">
+            Vybráno: <span id="dg-bulk-count">0</span> řádků
+        </strong>
+        <select id="dg-bulk-action" style="font-size:0.85rem;padding:0.3rem 0.5rem;">
+            <option value="">— Vyber akci —</option>
+            <option value="assign_caller">🎯 Přiřadit navolávačku</option>
+            <option value="assign_oz">🎯 Přiřadit OZ</option>
+            <option value="reset_to_pool">🔄 Vrátit do poolu</option>
+        </select>
+        <select id="dg-bulk-user" style="font-size:0.85rem;padding:0.3rem 0.5rem;display:none;min-width:180px;">
+            <option value="">— Vyber uživatele —</option>
+        </select>
+        <button type="button" id="dg-bulk-execute"
+                style="background:#dc2626;color:#fff;border:0;border-radius:4px;
+                       padding:0.4rem 0.9rem;cursor:pointer;font-weight:700;">
+            ✓ Provést
+        </button>
+        <button type="button" id="dg-bulk-clear"
+                style="background:transparent;border:1px solid #92400e;color:#92400e;
+                       border-radius:4px;padding:0.4rem 0.7rem;cursor:pointer;">
+            ✗ Zrušit výběr
+        </button>
+        <small id="dg-bulk-hint" style="color:#78350f;flex:1;text-align:right;">
+            Max 500 řádků / akce.
+        </small>
+    </div>
+
+    <!-- Tlačítko VŽDY VIDITELNÉ pro vybrání všech viditelných řádků -->
+    <div id="dg-select-helpers" style="margin-top:0.5rem;display:flex;gap:0.5rem;flex-wrap:wrap;">
+        <button type="button" id="dg-select-all-visible"
+                style="background:#3498db;color:#fff;border:0;border-radius:4px;
+                       padding:0.4rem 0.9rem;cursor:pointer;font-size:0.85rem;">
+            ☑ Vybrat všechny viditelné (na stránce)
+        </button>
+        <button type="button" id="dg-select-none"
+                style="background:#6b7280;color:#fff;border:0;border-radius:4px;
+                       padding:0.4rem 0.9rem;cursor:pointer;font-size:0.85rem;">
+            ☐ Zrušit celý výběr
+        </button>
     </div>
 
     <!-- Horní scrollbar — duplikuje native scroll pro snadnější ovládání u širokých tabulek -->
@@ -651,14 +718,32 @@
     // ── Filtrování ──────────────────────────────────────────────────
     function applyFilters(rows) {
         const stav     = document.getElementById('dg-filter-stav').value;
+        const cStav    = document.getElementById('dg-filter-contact-stav')
+                            ? document.getElementById('dg-filter-contact-stav').value : '';
         const region   = document.getElementById('dg-filter-region').value;
         const onlyVyr  = document.getElementById('dg-filter-vyroci').checked;
         const search   = (document.getElementById('dg-search').value || '').toLowerCase().trim();
         const sDigits  = search.replace(/\D/g, ''); // jen číslice — pro tel
         const isDigit  = sDigits !== '' && /^\d+$/.test(search.replace(/\s|\+/g, ''));
 
+        // Helper: prázdné = '' / '—' / null
+        const isEmpty = (v) => !v || v === '—' || v === '';
+
         return rows.filter(r => {
-            if (stav && r.workflow_stav !== stav) return false;
+            if (stav) {
+                if (stav === '__empty__') {
+                    if (!isEmpty(r.workflow_stav)) return false;
+                } else if (r.workflow_stav !== stav) {
+                    return false;
+                }
+            }
+            if (cStav) {
+                if (cStav === '__empty__') {
+                    if (!isEmpty(r.contact_stav)) return false;
+                } else if (r.contact_stav !== cStav) {
+                    return false;
+                }
+            }
             if (region && r.region !== region) return false;
             if (onlyVyr) {
                 // Výročí v rozmezí 0–180 dní (ani v minulosti, ani daleko)
@@ -803,8 +888,11 @@
             grid = new gridjs.Grid({
                 data,
                 columns: [
-                    { name: 'ID', width: '60px',
-                      formatter: id => gridjs.html(`<a href="javascript:void(0)" onclick="dgOpenHistory(${id})" class="dg-id-link" title="Zobrazit historii">#${id}</a>`) },
+                    { name: 'ID', width: '90px',
+                      formatter: id => gridjs.html(
+                          `<input type="checkbox" class="dg-row-check" data-cid="${id}" title="Vybrat" style="margin-right:0.3rem;vertical-align:middle;" onclick="event.stopPropagation()">` +
+                          `<a href="javascript:void(0)" onclick="dgOpenHistory(${id})" class="dg-id-link" title="Zobrazit historii">#${id}</a>`
+                      ) },
                     { name: 'Firma', width: '170px',
                       formatter: (firma, row) => {
                           const id = row.cells[0].data;
@@ -1147,6 +1235,8 @@
 
     // ── Filter listenery ────────────────────────────────────────────
     document.getElementById('dg-filter-stav').addEventListener('change', () => renderGrid(applyFilters(allRows)));
+    const dgFilterCS = document.getElementById('dg-filter-contact-stav');
+    if (dgFilterCS) dgFilterCS.addEventListener('change', () => renderGrid(applyFilters(allRows)));
     document.getElementById('dg-filter-region').addEventListener('change', () => renderGrid(applyFilters(allRows)));
     document.getElementById('dg-filter-vyroci').addEventListener('change', () => renderGrid(applyFilters(allRows)));
 
@@ -1377,6 +1467,7 @@
     // ── Inline edit funkcionalita ────────────────────────────────────
     const EDIT_OPTIONS_ENDPOINT = '<?= crm_h(crm_url('/admin/datagrid/edit-options')) ?>';
     const EDIT_UPDATE_ENDPOINT  = '<?= crm_h(crm_url('/admin/datagrid/update')) ?>';
+    const BULK_ENDPOINT         = '<?= crm_h(crm_url('/admin/datagrid/bulk')) ?>';
     const EDIT_CSRF             = '<?= crm_h($csrf) ?>';
     const EDIT_CSRF_KEY         = '<?= crm_h(crm_csrf_field_name()) ?>';
 
@@ -1728,7 +1819,160 @@
         setupAutoRefresh();
         setupHorizontalScroll();
         loadEditOptions(); // pre-cache options
+        setupBulkActions(); // bulk akce (checkboxy + toolbar)
     });
     // Activity feed je nyní samostatná stránka /admin/feed
+
+    // ════════════════════════════════════════════════════════════════
+    // BULK AKCE
+    // ════════════════════════════════════════════════════════════════
+    const selectedIds = new Set();
+
+    function setupBulkActions() {
+        const bar       = document.getElementById('dg-bulk-bar');
+        const countEl   = document.getElementById('dg-bulk-count');
+        const actionSel = document.getElementById('dg-bulk-action');
+        const userSel   = document.getElementById('dg-bulk-user');
+        const btnRun    = document.getElementById('dg-bulk-execute');
+        const btnClear  = document.getElementById('dg-bulk-clear');
+
+        // Event delegation pro checkboxy (Grid.js re-renders měnily DOM)
+        document.addEventListener('change', function(e) {
+            if (e.target.classList && e.target.classList.contains('dg-row-check')) {
+                const cid = parseInt(e.target.dataset.cid, 10);
+                if (!cid) return;
+                if (e.target.checked) selectedIds.add(cid);
+                else                  selectedIds.delete(cid);
+                updateBulkBar();
+            }
+        });
+
+        // Tlačítka "Vybrat všechny viditelné na stránce" / "Zrušit"
+        // POZOR: Grid.js drží všechny řádky v DOM (i z jiných stránek),
+        // jen je skrývá CSS. Proto bereme JEN ty s offsetParent != null
+        // (= reálně viditelné v aktuální stránce).
+        const btnSelAll  = document.getElementById('dg-select-all-visible');
+        const btnSelNone = document.getElementById('dg-select-none');
+        if (btnSelAll) btnSelAll.addEventListener('click', function() {
+            let cnt = 0;
+            document.querySelectorAll('#dg-grid .dg-row-check').forEach(cb => {
+                // offsetParent === null znamená, že element je skrytý
+                // (display:none v rodičovi nebo přímo). Skip ty.
+                if (cb.offsetParent === null) return;
+                cb.checked = true;
+                const cid = parseInt(cb.dataset.cid, 10);
+                if (cid) { selectedIds.add(cid); cnt++; }
+            });
+            updateBulkBar();
+        });
+        if (btnSelNone) btnSelNone.addEventListener('click', clearSelection);
+
+        // Action select — show/hide user picker podle akce
+        actionSel.addEventListener('change', function() {
+            const a = actionSel.value;
+            if (a === 'assign_caller' || a === 'assign_oz') {
+                userSel.style.display = '';
+                // Naplň options podle role.
+                // editOptions.caller/oz jsou POLE OBJEKTŮ [{id, jmeno, email}, ...]
+                userSel.innerHTML = '<option value="">— Vyber uživatele —</option>';
+                if (editOptions) {
+                    const opts = a === 'assign_caller' ? editOptions.caller : editOptions.oz;
+                    (Array.isArray(opts) ? opts : []).forEach(u => {
+                        if (!u || !u.id) return;
+                        const o = document.createElement('option');
+                        o.value = String(u.id);
+                        o.textContent = u.jmeno + (u.email ? ' (' + u.email + ')' : '');
+                        userSel.appendChild(o);
+                    });
+                }
+            } else {
+                userSel.style.display = 'none';
+                userSel.value = '';
+            }
+        });
+
+        // Execute (async pro await crmConfirm)
+        btnRun.addEventListener('click', async function() {
+            const action = actionSel.value;
+            if (!action) { crmAlert('Nejprve vyber akci.', { type: 'warn' }); return; }
+            if (selectedIds.size === 0) { crmAlert('Žádné řádky nejsou vybrané.', { type: 'warn' }); return; }
+            if (selectedIds.size > 500) {
+                crmAlert('Max 500 řádků naráz (vybráno ' + selectedIds.size + '). Zúž výběr.', { type: 'warn' });
+                return;
+            }
+            let userId = 0;
+            if (action === 'assign_caller' || action === 'assign_oz') {
+                userId = parseInt(userSel.value, 10);
+                if (!userId) { crmAlert('Vyber uživatele z dropdownu.', { type: 'warn' }); return; }
+            }
+
+            const labels = {
+                'assign_caller': '🎯 přiřadit navolávačku',
+                'assign_oz':     '🎯 přiřadit OZ',
+                'reset_to_pool': '🔄 vrátit do poolu',
+            };
+            const big = selectedIds.size > 50;
+            const confirmMsg = `Opravdu chceš ${labels[action]} pro ${selectedIds.size} kontaktů?` +
+                               (big ? '\n\n⚠ Větší dávka — operace je nevratná.' : '');
+            const ok = await crmConfirm(confirmMsg, {
+                type: big ? 'danger' : 'confirm',
+                title: big ? 'Velká dávka — pozor' : 'Potvrzení akce',
+                okText: '✓ Provést',
+                cancelText: 'Zrušit',
+            });
+            if (!ok) return;
+
+            btnRun.disabled = true;
+            btnRun.textContent = '⏳ Provádím…';
+
+            const fd = new FormData();
+            fd.append(EDIT_CSRF_KEY, EDIT_CSRF);
+            fd.append('action', action);
+            fd.append('value', String(userId));
+            selectedIds.forEach(id => fd.append('ids[]', String(id)));
+
+            fetch(BULK_ENDPOINT, { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(d => {
+                    btnRun.disabled = false;
+                    btnRun.textContent = '✓ Provést';
+                    if (d.ok) {
+                        crmToast(d.message, 'success');
+                        clearSelection();
+                        fetchData();
+                    } else {
+                        crmAlert(d.error || 'Neznámá chyba.', { type: 'danger', title: 'Chyba akce' });
+                    }
+                })
+                .catch(e => {
+                    btnRun.disabled = false;
+                    btnRun.textContent = '✓ Provést';
+                    crmAlert('Síťová chyba: ' + e, { type: 'danger', title: 'Spojení selhalo' });
+                });
+        });
+
+        btnClear.addEventListener('click', clearSelection);
+    }
+
+    function updateBulkBar() {
+        const bar = document.getElementById('dg-bulk-bar');
+        const cnt = document.getElementById('dg-bulk-count');
+        if (selectedIds.size === 0) {
+            bar.style.display = 'none';
+        } else {
+            bar.style.display = 'flex';
+            cnt.textContent = selectedIds.size;
+        }
+    }
+
+    function clearSelection() {
+        selectedIds.clear();
+        document.querySelectorAll('.dg-row-check').forEach(cb => cb.checked = false);
+        const actionSel = document.getElementById('dg-bulk-action');
+        const userSel   = document.getElementById('dg-bulk-user');
+        if (actionSel) actionSel.value = '';
+        if (userSel) { userSel.style.display = 'none'; userSel.value = ''; }
+        updateBulkBar();
+    }
 })();
 </script>

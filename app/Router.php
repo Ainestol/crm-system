@@ -356,6 +356,13 @@ final class Router
                 'handler' => [AdminDatagridController::class, 'postUpdate'],
             ],
             [
+                'method' => 'POST',
+                'path' => '/admin/datagrid/bulk',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminDatagridController::class, 'postBulk'],
+            ],
+            [
                 'method' => 'GET',
                 'path' => '/admin/feed',
                 'auth' => true,
