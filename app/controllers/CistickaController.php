@@ -1538,21 +1538,17 @@ final class CistickaController
         }
         $this->ensureRegionGoalsTable();
 
-        // Cílový měsíc (z hidden inputu — kam zkopírovat)
+        // Cílový měsíc — parsePeriodKey vrací INT YYYYMM (= 202605), ne string.
         $targetPeriod = $this->parsePeriodKey((string) ($_POST['period'] ?? ''));
 
-        // Spočti předchozí měsíc (period format = "YYYY-MM" v parsePeriodKey,
-        // takže přes DateTime pohodlně odečteme měsíc)
-        try {
-            $dt = new \DateTime($targetPeriod . '-01');
-            $dt->modify('-1 month');
-            $prevPeriod = $dt->format('Y-m');
-        } catch (\Throwable $e) {
-            crm_flash_set('⚠ Chyba při výpočtu předchozího měsíce.');
-            crm_redirect('/admin/cisticka-goals?month_key=' . $this->periodToKey($targetPeriod));
-        }
+        // Spočti předchozí měsíc jako INT YYYYMM
+        $y = intdiv($targetPeriod, 100);
+        $mo = $targetPeriod % 100;
+        $mo--;
+        if ($mo < 1) { $mo = 12; $y--; }
+        $prevPeriod = $y * 100 + $mo;
 
-        // Načti cíle z předchozího měsíce
+        // Načti cíle z předchozího měsíce (period_yyyymm v DB je INT)
         try {
             $src = $this->pdo->prepare(
                 "SELECT region, monthly_target, priority FROM cisticka_region_goals
