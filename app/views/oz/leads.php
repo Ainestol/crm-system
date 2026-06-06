@@ -294,6 +294,116 @@ $renewalsForOz = $renewalsForOz ?? [];
         <span>📋 Moje pracovní plocha</span>
     </div>
 
+    <?php
+    // ── Lišta filtru krajů (jen pro OZ s víc jak 1 krajem) ──────────────
+    /** @var list<string>           $ozRegions */
+    /** @var string                 $activeRegion */
+    /** @var array<string,int>      $regionCounts */
+    /** @var array<string,int>      $pendingRegionCounts */
+    /** @var int                    $totalTabCount */
+    /** @var int                    $totalPendingCount */
+    $ozRegions           = $ozRegions           ?? [];
+    $activeRegion        = $activeRegion        ?? '';
+    $regionCounts        = $regionCounts        ?? [];
+    $pendingRegionCounts = $pendingRegionCounts ?? [];
+    $totalTabCount       = $totalTabCount       ?? 0;
+    $totalPendingCount   = $totalPendingCount   ?? 0;
+    $sortDir             = isset($sortDir) && $sortDir === 'desc' ? 'desc' : 'asc';
+    // URL suffix pro zachování aktivního filteru + řazení při klikání na taby
+    $regSuffix  = $activeRegion !== '' ? '&region=' . urlencode($activeRegion) : '';
+    $sortSuffix = $sortDir === 'desc' ? '&sort=desc' : '';
+    $regSuffix  .= $sortSuffix;
+    ?>
+    <?php if (count($ozRegions) > 1) { ?>
+    <div class="oz-region-filter" style="display:flex;flex-wrap:wrap;gap:0.35rem;align-items:center;
+                                          margin:0.6rem 0 0.4rem;padding:0.5rem 0.75rem;
+                                          background:rgba(0,0,0,0.025);border:1px solid rgba(0,0,0,0.06);
+                                          border-radius:8px;">
+        <span style="font-size:0.72rem;color:var(--muted);font-weight:600;margin-right:0.3rem;">
+            🗺 Kraj:
+        </span>
+        <?php
+        // Tlačítko "Vše"
+        $allActive = $activeRegion === '';
+        $allUrl    = '/oz/leads?tab=' . urlencode($tab);
+        ?>
+        <a href="<?= crm_h(crm_url($allUrl)) ?>"
+           class="oz-region-chip <?= $allActive ? 'oz-region-chip--active' : '' ?>"
+           style="padding:0.25rem 0.7rem;font-size:0.78rem;border-radius:14px;text-decoration:none;
+                  background:<?= $allActive ? '#0e7490' : '#fff' ?>;
+                  color:<?= $allActive ? '#fff' : '#374151' ?>;
+                  border:1px solid <?= $allActive ? '#0e7490' : 'rgba(0,0,0,0.12)' ?>;
+                  font-weight:<?= $allActive ? '700' : '500' ?>;
+                  display:inline-flex;align-items:center;gap:0.3rem;">
+            Vše
+            <span style="font-size:0.7rem;opacity:0.85;">
+                · <?= $totalTabCount ?><?php if ($totalPendingCount > 0) { ?> · +<?= $totalPendingCount ?> nových<?php } ?>
+            </span>
+        </a>
+        <?php foreach ($ozRegions as $regCode) {
+            $isAct  = $activeRegion === $regCode;
+            $tabCnt = (int) ($regionCounts[$regCode]        ?? 0);
+            $penCnt = (int) ($pendingRegionCounts[$regCode] ?? 0);
+            $url    = '/oz/leads?tab=' . urlencode($tab) . '&region=' . urlencode($regCode);
+            $label  = function_exists('crm_region_label_short')
+                ? crm_region_label_short($regCode)
+                : (function_exists('crm_region_label') ? crm_region_label($regCode) : $regCode);
+        ?>
+        <a href="<?= crm_h(crm_url($url)) ?>"
+           class="oz-region-chip <?= $isAct ? 'oz-region-chip--active' : '' ?>"
+           style="padding:0.25rem 0.7rem;font-size:0.78rem;border-radius:14px;text-decoration:none;
+                  background:<?= $isAct ? '#0e7490' : '#fff' ?>;
+                  color:<?= $isAct ? '#fff' : '#374151' ?>;
+                  border:1px solid <?= $isAct ? '#0e7490' : 'rgba(0,0,0,0.12)' ?>;
+                  font-weight:<?= $isAct ? '700' : '500' ?>;
+                  display:inline-flex;align-items:center;gap:0.3rem;">
+            <?= crm_h($label) ?>
+            <span style="font-size:0.7rem;opacity:0.85;">
+                · <?= $tabCnt ?><?php if ($penCnt > 0) { ?> · +<?= $penCnt ?><?php } ?>
+            </span>
+        </a>
+        <?php } ?>
+        <?php if ($activeRegion !== '') { ?>
+        <span style="margin-left:auto;font-size:0.7rem;color:var(--muted);font-style:italic;">
+            Filtr je aktivní — vidíš jen kontakty z <?= crm_h($label ?? $activeRegion) ?>
+        </span>
+        <?php } ?>
+    </div>
+    <?php } ?>
+
+    <!-- ── Sort toggle (zobrazit pro běžné taby; Callback/Schuzka mají vlastní řazení) ── -->
+    <?php
+    $hideSortFor = ['callback', 'schuzka', 'dokonceno'];
+    if (!in_array($tab, $hideSortFor, true)) {
+        $regOnly  = $activeRegion !== '' ? '&region=' . urlencode($activeRegion) : '';
+        $urlAsc   = '/oz/leads?tab=' . urlencode($tab) . $regOnly;          // sort=asc je default
+        $urlDesc  = '/oz/leads?tab=' . urlencode($tab) . $regOnly . '&sort=desc';
+    ?>
+    <div style="display:flex;gap:0.35rem;align-items:center;margin:0.3rem 0 0.5rem;
+                padding:0.3rem 0.6rem;font-size:0.74rem;color:var(--muted);">
+        <span>Řazení:</span>
+        <a href="<?= crm_h(crm_url($urlAsc)) ?>"
+           style="padding:0.18rem 0.55rem;border-radius:12px;text-decoration:none;
+                  font-weight:<?= $sortDir === 'asc' ? '700' : '500' ?>;
+                  background:<?= $sortDir === 'asc' ? '#0e7490' : '#fff' ?>;
+                  color:<?= $sortDir === 'asc' ? '#fff' : '#374151' ?>;
+                  border:1px solid <?= $sortDir === 'asc' ? '#0e7490' : 'rgba(0,0,0,0.12)' ?>;">
+            ⬆ Nejstarší navrchu
+        </a>
+        <a href="<?= crm_h(crm_url($urlDesc)) ?>"
+           style="padding:0.18rem 0.55rem;border-radius:12px;text-decoration:none;
+                  font-weight:<?= $sortDir === 'desc' ? '700' : '500' ?>;
+                  background:<?= $sortDir === 'desc' ? '#0e7490' : '#fff' ?>;
+                  color:<?= $sortDir === 'desc' ? '#fff' : '#374151' ?>;
+                  border:1px solid <?= $sortDir === 'desc' ? '#0e7490' : 'rgba(0,0,0,0.12)' ?>;">
+            ⬇ Nejnovější navrchu
+        </a>
+        <span style="font-style:italic;opacity:0.7;margin-left:0.4rem;">
+            (dle data poslední navolávky)
+        </span>
+    </div>
+    <?php } ?>
+
     <!-- ── Taby (s hierarchií super-tabů: 📅 V plánu, 🏢 Back-office) ── -->
     <?php
     // Atomické taby (každý má vlastní URL ?tab=…). Sub-taby super-tabu mají 'parent'.
@@ -401,7 +511,7 @@ $renewalsForOz = $renewalsForOz ?? [];
                           data-parent="<?= crm_h($topKey) ?>"
                           draggable="true"
                           style="display:flex;align-items:center;position:relative;cursor:grab;">
-                        <a href="<?= crm_h(crm_url('/oz/leads?tab=' . $childKey)) ?>"
+                        <a href="<?= crm_h(crm_url('/oz/leads?tab=' . $childKey . $regSuffix)) ?>"
                            class="oz-tab oz-tab--child <?= crm_h($childDef['cls']) ?> <?= $isChildAct ? 'oz-tab--active' : '' ?>"
                            <?php if (!empty($childDef['title'])) { ?>title="<?= crm_h($childDef['title']) ?>"<?php } ?>>
                             <?= crm_h($childDef['label']) ?>
@@ -457,7 +567,7 @@ $renewalsForOz = $renewalsForOz ?? [];
               data-tab-key="<?= crm_h($topKey) ?>"
               draggable="true"
               style="display:inline-flex;align-items:center;position:relative;cursor:grab;">
-            <a href="<?= crm_h(crm_url('/oz/leads?tab=' . $topKey)) ?>"
+            <a href="<?= crm_h(crm_url('/oz/leads?tab=' . $topKey . $regSuffix)) ?>"
                class="oz-tab <?= crm_h($tabDef['cls']) ?> <?= $isActive ? 'oz-tab--active' : '' ?>"
                <?php if (!empty($tabDef['title'])) { ?>title="<?= crm_h($tabDef['title']) ?>"<?php } ?>>
                 <?= crm_h($tabDef['label']) ?>
@@ -1087,6 +1197,37 @@ $renewalsForOz = $renewalsForOz ?? [];
                         </span>
                     </div>
                     <?php } ?>
+
+                    <?php
+                    // ── Příležitost (2-stavová: má / nemá) + volitelný termín "do kdy" ──
+                    $prilezTxt = trim((string)($c['prilez'] ?? ''));
+                    $prilezDo  = (string)($c['prilez_do'] ?? '');
+                    $hasPrilez = ($prilezTxt !== '');
+                    $expired   = false;
+                    $prilezDoFmt = '';
+                    if ($prilezDo !== '' && $prilezDo !== '0000-00-00') {
+                        $ts = strtotime($prilezDo);
+                        if ($ts !== false) {
+                            $prilezDoFmt = date('d.m.Y', $ts);
+                            $expired     = ($ts < strtotime(date('Y-m-d')));
+                        }
+                    }
+                    $prilezShow = $hasPrilez
+                        ? ($prilezTxt === 'ano' ? 'má příležitost' : $prilezTxt)
+                        : 'nemá';
+                    ?>
+                    <div class="oz-info-row">
+                        <span class="oz-info-label">Příležitost</span>
+                        <span class="oz-info-val">
+                            <?= crm_h($prilezShow) ?><?php if ($prilezDoFmt !== '') { ?>
+                                <span style="color:<?= $expired ? '#dc2626' : 'var(--muted)' ?>;
+                                             font-size:0.78rem;margin-left:0.4rem;
+                                             <?= $expired ? 'font-weight:700;' : '' ?>">
+                                    <?= $expired ? '(vypršelo ' : '(do ' ?><?= crm_h($prilezDoFmt) ?>)
+                                </span>
+                            <?php } ?>
+                        </span>
+                    </div>
                 </div>
 
                 <!-- Edit režim — formulář (skrytý do kliknutí na ✏️) -->
@@ -1158,6 +1299,45 @@ $renewalsForOz = $renewalsForOz ?? [];
                                           padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;">
                         </label>
 
+                        <?php
+                        $editPrilez   = trim((string)($c['prilez'] ?? ''));
+                        $editHasPril  = ($editPrilez !== '');
+                        $editPrilezDo = (string)($c['prilez_do'] ?? '');
+                        if ($editPrilezDo === '0000-00-00') { $editPrilezDo = ''; }
+                        // "ano" je sentinel — neukazuj ho ve volném textu
+                        $editPrilezTxt = ($editPrilez === 'ano') ? '' : $editPrilez;
+                        ?>
+                        <div style="border-top:1px dashed rgba(0,0,0,0.1);padding-top:0.4rem;margin-top:0.15rem;
+                                    display:flex;flex-direction:column;gap:0.3rem;">
+                            <label style="display:flex;align-items:center;gap:0.35rem;font-size:0.78rem;color:var(--text);cursor:pointer;">
+                                <input type="checkbox" name="has_prilez" value="1"
+                                       id="oz-edit-haspril-<?= $cId ?>"
+                                       <?= $editHasPril ? 'checked' : '' ?>
+                                       onchange="document.getElementById('oz-edit-prildet-<?= $cId ?>').style.display = this.checked ? 'flex' : 'none';">
+                                <strong>Má příležitost</strong>
+                            </label>
+                            <div id="oz-edit-prildet-<?= $cId ?>"
+                                 style="display:<?= $editHasPril ? 'flex' : 'none' ?>;flex-direction:column;gap:0.3rem;padding-left:1.3rem;">
+                                <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--muted);">
+                                    Popis (volitelné — co zákazník chce)
+                                    <input type="text" name="prilez" maxlength="255"
+                                           value="<?= crm_h($editPrilezTxt) ?>"
+                                           placeholder="např. 3× telefon + internet"
+                                           style="background:var(--bg);color:var(--text);
+                                                  border:1px solid rgba(0,0,0,0.15);border-radius:4px;
+                                                  padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;">
+                                </label>
+                                <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--muted);">
+                                    Do kdy je platná (volitelné)
+                                    <input type="date" name="prilez_do"
+                                           value="<?= crm_h($editPrilezDo) ?>"
+                                           style="background:var(--bg);color:var(--text);
+                                                  border:1px solid rgba(0,0,0,0.15);border-radius:4px;
+                                                  padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;width:max-content;">
+                                </label>
+                            </div>
+                        </div>
+
                         <div style="font-size:0.65rem;color:var(--muted);font-style:italic;margin-top:0.15rem;">
                             ℹ Operátor a kraj řídí admin.<br>
                             Instalační adresa internetu se píše do Pracovního deníku.
@@ -1182,23 +1362,10 @@ $renewalsForOz = $renewalsForOz ?? [];
                 </div>
             </div>
 
-            <!-- Poznámky: navolávačka + historie OZ -->
+            <!-- Poznámky: historie OZ (nejnovější nahoře) + navolávačka úplně dole -->
             <div class="oz-contact__col">
 
-                <!-- Poznámka navolávačky -->
-                <div class="oz-caller-block">
-                    <div class="oz-caller-block__who">
-                        📞 Navolal/a: <?= crm_h((string)($c['caller_name'] ?? '—')) ?>
-                    </div>
-                    <?php if (!empty($c['caller_poznamka'])) { ?>
-                        <div class="oz-caller-block__note"><?= crm_h((string)$c['caller_poznamka']) ?></div>
-                    <?php } else { ?>
-                        <div class="oz-caller-block__empty">Bez poznámky navolávačky.</div>
-                    <?php } ?>
-                </div>
-
-
-                <!-- Historie poznámek OZ -->
+                <!-- Historie poznámek OZ (DESC z controlleru — nejnovější nahoře) -->
                 <?php if ($contactNotes !== []) { ?>
                 <div class="oz-notes-history">
                     <div class="oz-notes-history__label">Moje poznámky</div>
@@ -1210,6 +1377,19 @@ $renewalsForOz = $renewalsForOz ?? [];
                     <?php } ?>
                 </div>
                 <?php } ?>
+
+
+                <!-- Poznámka navolávačky (chronologicky nejstarší → úplně dole) -->
+                <div class="oz-caller-block">
+                    <div class="oz-caller-block__who">
+                        📞 Navolal/a: <?= crm_h((string)($c['caller_name'] ?? '—')) ?>
+                    </div>
+                    <?php if (!empty($c['caller_poznamka'])) { ?>
+                        <div class="oz-caller-block__note"><?= crm_h((string)$c['caller_poznamka']) ?></div>
+                    <?php } else { ?>
+                        <div class="oz-caller-block__empty">Bez poznámky navolávačky.</div>
+                    <?php } ?>
+                </div>
 
 
                 <?php

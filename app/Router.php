@@ -848,6 +848,42 @@ final class Router
                 'roles' => ['obchodak', 'majitel', 'superadmin'],
                 'handler' => [OzController::class, 'getLeads'],
             ],
+            // ── OZ: vyhledávání kontaktů (search + karta + převzít) ──
+            [
+                'method' => 'GET',
+                'path' => '/oz/search',
+                'auth' => true,
+                'roles' => ['obchodak', 'majitel', 'superadmin'],
+                'handler' => [OzSearchController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/oz/search/card',
+                'auth' => true,
+                'roles' => ['obchodak', 'majitel', 'superadmin'],
+                'handler' => [OzSearchController::class, 'getCard'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/oz/search/note',
+                'auth' => true,
+                'roles' => ['obchodak', 'majitel', 'superadmin'],
+                'handler' => [OzSearchController::class, 'postNote'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/oz/search/takeover',
+                'auth' => true,
+                'roles' => ['obchodak', 'majitel', 'superadmin'],
+                'handler' => [OzSearchController::class, 'postTakeover'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/oz/search/edit',
+                'auth' => true,
+                'roles' => ['obchodak', 'majitel', 'superadmin'],
+                'handler' => [OzSearchController::class, 'postEdit'],
+            ],
             // ── OZ: nová queue obrazovka (pending leady + accept) ──
             // Paralelní k /oz/leads — stará URL stále funguje. Po dokončení
             // refactoru bude /oz/leads → 301 redirect → /oz/queue.

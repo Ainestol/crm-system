@@ -81,6 +81,7 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
         $sections['Práce'] = [
             ['label' => 'Příchozí leady',     'href' => '/oz/queue',       'icon' => '📋'],
             ['label' => 'Pracovní plocha',    'href' => '/oz/leads',       'icon' => '💼'],
+            ['label' => 'Vyhledávání',        'href' => '/oz/search',      'icon' => '🔍'],
             ['label' => 'Moje kampaně',       'href' => '/oz/campaigns',   'icon' => '🎯'],
             ['label' => 'Email leady',        'href' => '/oz/email-leads', 'icon' => '📧'],
             ['label' => 'Můj měsíc',          'href' => '/oz',             'icon' => '📅'],

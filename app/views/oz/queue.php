@@ -32,6 +32,26 @@ function ozqElapsed(?string $dt): string {
     if ($diff < 86400) return 'před ' . (int)($diff/3600) . ' h';
     return 'před ' . (int)($diff/86400) . ' d';
 }
+
+// Helper pro varovnou barvu stáří — aby OZ viděl, co může vychladnout
+//   ≤ 3 dny  → šedá (čerstvé)
+//   4–7 dní  → oranžová (stárne)
+//   8+ dní   → červená (chladne!)
+function ozqAgeColor(?string $dt): string {
+    if ($dt === null || $dt === '') return 'var(--oz-text-3)';
+    $ts = strtotime($dt);
+    if ($ts === false) return 'var(--oz-text-3)';
+    $days = (int) ((time() - $ts) / 86400);
+    if ($days <= 3) return 'var(--oz-text-3)';
+    if ($days <= 7) return '#ea580c'; // oranžová
+    return '#dc2626';                  // červená
+}
+function ozqAgeWeight(?string $dt): string {
+    if ($dt === null || $dt === '') return '400';
+    $ts = strtotime($dt);
+    if ($ts === false) return '400';
+    return ((time() - $ts) / 86400 > 3) ? '700' : '400';
+}
 ?>
 <!-- Načti samostatný design system jen pro tuto obrazovku -->
 <link rel="stylesheet" href="<?= crm_h(crm_url('/assets/css/oz_kit.css')) ?>">
@@ -99,13 +119,96 @@ function ozqElapsed(?string $dt): string {
             <span class="oz-section__count">(<?= $totalPending ?>)</span>
         </h2>
 
+        <!-- ── Region filter — vždy nahoře, i když 0 pending leadů ──
+             OZ tak vidí všechny svoje kraje + kolik je v každém čeká.
+             Klik na chip → ?region=… → server filter. „Vše" odstraní filter. -->
+        <?php
+        $sortDirEarly = isset($sortDir) && $sortDir === 'desc' ? 'desc' : 'asc';
+        $sortKeep     = $sortDirEarly === 'desc' ? '&sort=desc' : '';
+        $sortKeepAll  = $sortDirEarly === 'desc' ? '?sort=desc' : '';
+        ?>
+        <?php if (count($regionCounts) > 1) { ?>
+        <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:1rem;
+                    padding:0.55rem 0.75rem;background:var(--oz-border-soft);
+                    border-radius:var(--oz-radius-md);font-size:var(--oz-text-sm);
+                    color:var(--oz-text-3);align-items:center;">
+            <span style="font-weight:600;flex-shrink:0;">🗺️ Kraj:</span>
+            <a href="<?= crm_h(crm_url('/oz/queue' . $sortKeepAll)) ?>"
+               class="oz-badge<?= $selectedRegion === '' ? ' oz-badge--primary' : '' ?>"
+               style="text-decoration:none;cursor:pointer;<?= $selectedRegion === '' ? '' : 'opacity:0.7;' ?>">
+                Vše · <?= array_sum($regionCounts) ?>
+            </a>
+            <?php foreach ($regionCounts as $reg => $cnt) {
+                if ($reg === '') continue;
+                $regL = function_exists('crm_region_label') ? crm_region_label($reg) : $reg;
+                $isActive = ($selectedRegion === $reg);
+                $href = crm_url('/oz/queue?region=' . urlencode($reg) . $sortKeep);
+                // Šedá chip pro kraje s 0 pending — OZ vidí, že existují, ale prázdné
+                $zeroStyle = ($cnt === 0 && !$isActive) ? 'opacity:0.4;' : '';
+            ?>
+                <a href="<?= crm_h($href) ?>"
+                   class="oz-badge<?= $isActive ? ' oz-badge--primary' : '' ?>"
+                   style="text-decoration:none;cursor:pointer;<?= $isActive ? '' : 'opacity:0.7;' ?><?= $zeroStyle ?>"
+                   title="Filtrovat na <?= crm_h($regL) ?>">
+                    <?= crm_h($regL) ?> · <?= $cnt ?>
+                </a>
+            <?php } ?>
+            <?php if ($selectedRegion !== '') { ?>
+                <span style="margin-left:auto;font-size:var(--oz-text-xs);color:var(--oz-text-3);">
+                    Filtr aktivní · <?= $totalPending ?> z <?= array_sum($regionCounts) ?>
+                </span>
+            <?php } ?>
+        </div>
+        <?php } ?>
+
+        <!-- ── Sort toggle (nejstarší ↔ nejnovější navolané) ── -->
+        <?php
+        $sortDir   = isset($sortDir) && $sortDir === 'desc' ? 'desc' : 'asc';
+        $regParam  = $selectedRegion !== '' ? '?region=' . urlencode($selectedRegion) : '';
+        $sepAsc    = $regParam === '' ? '' : '&';
+        $urlAsc    = '/oz/queue' . $regParam;
+        $urlDesc   = '/oz/queue' . $regParam . $sepAsc . ($regParam === '' ? '?' : '') . 'sort=desc';
+        ?>
+        <div style="display:flex;gap:0.35rem;align-items:center;margin-bottom:0.8rem;
+                    font-size:var(--oz-text-sm);color:var(--oz-text-3);">
+            <span>Řazení:</span>
+            <a href="<?= crm_h(crm_url($urlAsc)) ?>"
+               style="padding:0.18rem 0.6rem;border-radius:12px;text-decoration:none;
+                      font-weight:<?= $sortDir === 'asc' ? '700' : '500' ?>;
+                      background:<?= $sortDir === 'asc' ? '#0e7490' : '#fff' ?>;
+                      color:<?= $sortDir === 'asc' ? '#fff' : 'var(--oz-text-2)' ?>;
+                      border:1px solid <?= $sortDir === 'asc' ? '#0e7490' : 'var(--oz-border)' ?>;">
+                ⬆ Nejstarší navrchu
+            </a>
+            <a href="<?= crm_h(crm_url($urlDesc)) ?>"
+               style="padding:0.18rem 0.6rem;border-radius:12px;text-decoration:none;
+                      font-weight:<?= $sortDir === 'desc' ? '700' : '500' ?>;
+                      background:<?= $sortDir === 'desc' ? '#0e7490' : '#fff' ?>;
+                      color:<?= $sortDir === 'desc' ? '#fff' : 'var(--oz-text-2)' ?>;
+                      border:1px solid <?= $sortDir === 'desc' ? '#0e7490' : 'var(--oz-border)' ?>;">
+                ⬇ Nejnovější navrchu
+            </a>
+            <span style="font-style:italic;opacity:0.7;margin-left:0.4rem;">
+                (dle data poslední navolávky)
+            </span>
+        </div>
+
         <?php if ($pendingLeads === []) { ?>
             <div class="oz-empty">
                 <div class="oz-empty__icon">📪</div>
-                <div>Žádné nové leady k převzetí.</div>
-                <div style="font-size:var(--oz-text-sm);margin-top:0.5rem;color:var(--oz-text-3);">
-                    Jakmile ti navolávačka přiřadí kontakt nebo majitel přidá nový, objeví se tady.
-                </div>
+                <?php if ($selectedRegion !== '') {
+                    $rL = function_exists('crm_region_label') ? crm_region_label($selectedRegion) : $selectedRegion;
+                ?>
+                    <div>Žádné nové leady k převzetí v kraji <strong><?= crm_h($rL) ?></strong>.</div>
+                    <div style="font-size:var(--oz-text-sm);margin-top:0.5rem;color:var(--oz-text-3);">
+                        Zkus jiný kraj — klikni na chip „<strong>Vše</strong>" nahoře.
+                    </div>
+                <?php } else { ?>
+                    <div>Žádné nové leady k převzetí.</div>
+                    <div style="font-size:var(--oz-text-sm);margin-top:0.5rem;color:var(--oz-text-3);">
+                        Jakmile ti navolávačka přiřadí kontakt nebo majitel přidá nový, objeví se tady.
+                    </div>
+                <?php } ?>
                 <?php if ($inProgressCount > 0) { ?>
                     <div style="margin-top:1.4rem;padding-top:1.2rem;border-top:1px dashed var(--oz-border);
                                 font-size:var(--oz-text-base);color:var(--oz-text-2);">
@@ -120,40 +223,6 @@ function ozqElapsed(?string $dt): string {
                 <?php } ?>
             </div>
         <?php } else { ?>
-
-            <!-- Region filter — klikatelný (Bonus refactor)
-                 Při kliknutí ?region=praha → server filter, redirect zpět na queue.
-                 'Vše' tile odstraní filter. -->
-            <?php if (count($regionCounts) > 1) { ?>
-            <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:1rem;
-                        padding:0.55rem 0.75rem;background:var(--oz-border-soft);
-                        border-radius:var(--oz-radius-md);font-size:var(--oz-text-sm);
-                        color:var(--oz-text-3);align-items:center;">
-                <span style="font-weight:600;flex-shrink:0;">🗺️ Filtr kraj:</span>
-                <a href="<?= crm_h(crm_url('/oz/queue')) ?>"
-                   class="oz-badge<?= $selectedRegion === '' ? ' oz-badge--primary' : '' ?>"
-                   style="text-decoration:none;cursor:pointer;<?= $selectedRegion === '' ? '' : 'opacity:0.7;' ?>">
-                    Vše · <?= array_sum($regionCounts) ?>
-                </a>
-                <?php foreach ($regionCounts as $reg => $cnt) {
-                    $regL = function_exists('crm_region_label') ? crm_region_label($reg) : $reg;
-                    $isActive = ($selectedRegion === $reg);
-                    $href = crm_url('/oz/queue?region=' . urlencode($reg));
-                ?>
-                    <a href="<?= crm_h($href) ?>"
-                       class="oz-badge<?= $isActive ? ' oz-badge--primary' : '' ?>"
-                       style="text-decoration:none;cursor:pointer;<?= $isActive ? '' : 'opacity:0.7;' ?>"
-                       title="Filtrovat na <?= crm_h($regL) ?>">
-                        <?= crm_h($regL) ?> · <?= $cnt ?>
-                    </a>
-                <?php } ?>
-                <?php if ($selectedRegion !== '') { ?>
-                    <span style="margin-left:auto;font-size:var(--oz-text-xs);color:var(--oz-text-3);">
-                        Filtr aktivní · <?= $totalPending ?> z <?= array_sum($regionCounts) ?>
-                    </span>
-                <?php } ?>
-            </div>
-            <?php } ?>
 
             <?php
             // Tracker — globální idx pro „aktivní 1. karta"
@@ -239,8 +308,12 @@ function ozqElapsed(?string $dt): string {
                             <?php if ($tel !== '') { ?>
                                 <a href="tel:<?= crm_h($tel) ?>" class="oz-card__phone"><?= crm_h($tel) ?></a>
                             <?php } ?>
-                            <?php if ($when !== '') { ?>
-                                <div style="font-size:var(--oz-text-xs);color:var(--oz-text-3);margin-top:0.3rem;">
+                            <?php if ($when !== '') {
+                                $ageColor  = ozqAgeColor($when);
+                                $ageWeight = ozqAgeWeight($when);
+                            ?>
+                                <div style="font-size:var(--oz-text-xs);margin-top:0.3rem;
+                                            color:<?= $ageColor ?>;font-weight:<?= $ageWeight ?>;">
                                     📞 navoláno <?= crm_h(ozqElapsed($when)) ?>
                                 </div>
                             <?php } ?>

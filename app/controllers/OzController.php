@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'helpers' . DIRECTORY_SEPARATOR . 'audit.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'helpers' . DIRECTORY_SEPARATOR . 'region.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'helpers' . DIRECTORY_SEPARATOR . 'users_admin.php';
 
 /**
  * Obchodní zástupce (OZ):
@@ -65,7 +67,8 @@ final class OzController
         if ($doneMonth < 1 || $doneMonth > 12) { $doneMonth = (int) date('n'); }
         if ($doneYear < 2000 || $doneYear > 2100) { $doneYear = (int) date('Y'); }
 
-        $tabWhere = match ($tab) {
+        // $tabWhereBase = filtr STAVu bez region filtru (potřebujeme pro per-region counts)
+        $tabWhereBase = match ($tab) {
             'nabidka'    => "w.stav = 'NABIDKA'",
             'schuzka'    => "w.stav = 'SCHUZKA'",
             'callback'   => "w.stav = 'CALLBACK'",
@@ -83,17 +86,42 @@ final class OzController
             default      => "w.stav IN ('NOVE','OBVOLANO','ZPRACOVAVA')",
         };
 
-        // Stabilní řazení — karty po update poznámky/stavu neskáčou nahoru.
-        // Default: podle started_at (kdy OZ převzal) nebo c.created_at jako fallback.
+        // ── Filtr kraje (z GET, validovaný proti krajům OZ — žádný IDOR) ──
+        // OZ smí filtrovat jen na kraje, které mu admin přiřadil.
+        // Default: prázdný řetězec = bez filtru (zobraz všechny kraje OZ).
+        $ozRegions    = crm_regions_allowed($this->pdo, $ozId);
+        $activeRegion = (string) ($_GET['region'] ?? '');
+        if ($activeRegion !== '' && !in_array($activeRegion, $ozRegions, true)) {
+            $activeRegion = ''; // ochrana proti podvržení neznámého kraje
+        }
+        // $sortDir je nastavený níže v ORDER BY bloku — předáváme ho ven do view
+
+        // Finální tabWhere = baseStavFilter (+ AND c.region = '…' pokud aktivní)
+        $tabWhere = $tabWhereBase;
+        if ($activeRegion !== '') {
+            $tabWhere .= ' AND c.region = ' . $this->pdo->quote($activeRegion);
+        }
+
+        // ── Řazení (přepínatelné GET parametrem ?sort=asc|desc) ──
+        // Default = asc (nejstarší navrchu — aby OZ viděl, co může vychladnout).
+        // Toggle se aplikuje na "běžné" taby (Rozpracované, Nabídky, Šance,
+        // BO, Nezájem, Reklamace) — taby Callback/Schuzka/Dokonceno mají
+        // smysl řadit dle vlastních dat (callback_at, schuzka_at, closed_at).
+        $sortDir = strtolower((string) ($_GET['sort'] ?? 'asc'));
+        if ($sortDir !== 'desc') { $sortDir = 'asc'; }
+        $defaultDir = $sortDir === 'desc'
+            ? 'ORDER BY c.datum_volani IS NULL, c.datum_volani DESC, c.id DESC'
+            : 'ORDER BY c.datum_volani IS NULL, c.datum_volani ASC, c.id ASC';
         $orderBy = match ($tab) {
             'callback'  => 'ORDER BY w.callback_at IS NULL, w.callback_at ASC, c.id ASC',
             'schuzka'   => 'ORDER BY w.schuzka_at ASC, c.id ASC',
             'dokonceno' => 'ORDER BY COALESCE(w.closed_at, w.updated_at) DESC, c.id DESC',
-            default     => 'ORDER BY COALESCE(w.started_at, c.created_at) ASC, c.id ASC',
+            default     => $defaultDir,
         };
 
         // ── Hlavní dotaz kontaktů ─────────────────────────────────────
         $sql = "SELECT c.id, c.firma, c.telefon, c.email, c.ico, c.adresa, c.region,
+                       c.prilez, c.prilez_do,
                        c.poznamka AS caller_poznamka, c.datum_volani, c.operator,
                        COALESCE(cu.jmeno, '—')           AS caller_name,
                        COALESCE(w.stav, 'NOVE')           AS oz_stav,
@@ -140,11 +168,13 @@ final class OzController
         $notesByContact = [];
         try {
             $nStmt = $this->pdo->prepare(
+                // Seskupení per kontakt (contact_id ASC) — uvnitř per kontakt
+                // chronologicky DESC, aby nejnovější poznámka byla nahoře.
                 'SELECT cn.contact_id, cn.note, cn.created_at
                  FROM oz_contact_notes cn
                  INNER JOIN contacts c ON c.id = cn.contact_id
                  WHERE cn.oz_id = :ozid AND c.assigned_sales_id = :ozid2
-                 ORDER BY cn.contact_id ASC, cn.created_at ASC'
+                 ORDER BY cn.contact_id ASC, cn.created_at DESC'
             );
             $nStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
             foreach ($nStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $n) {
@@ -353,7 +383,12 @@ final class OzController
         }
 
         // ── Čekající leady (bez workflow záznamu = ještě nepřijaté OZ) ──
+        // Region filter respektuje hlavní filter v hlavičce + řazení: nejstarší
+        // navrchu (datum_volani ASC), aby OZ viděl, co tam sedí nejdéle.
         $pendingByCaller = [];
+        $pendingRegionWhere = ($activeRegion !== '')
+            ? ' AND c.region = ' . $this->pdo->quote($activeRegion)
+            : '';
         try {
             $pStmt = $this->pdo->prepare(
                 "SELECT c.id, c.firma, c.region, c.datum_volani,
@@ -366,7 +401,8 @@ final class OzController
                  WHERE c.assigned_sales_id = :ozid2
                    AND c.stav = 'CALLED_OK'
                    AND w.id IS NULL
-                 ORDER BY c.datum_volani DESC"
+                   {$pendingRegionWhere}
+                 ORDER BY c.datum_volani IS NULL, c.datum_volani ASC"
             );
             $pStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
             $pendingMap = [];
@@ -525,6 +561,52 @@ final class OzController
             } else {
                 @error_log('[oz/leads birthdays] ' . $e->getMessage());
             }
+        }
+
+        // ── Per-region counts: kolik je kontaktů per kraj v AKTUÁLNÍM tabu ──
+        // Pro lištu filtru krajů. Nepoužíváme zde region filtr (chceme znát
+        // počty pro VŠECHNY kraje OZ — i ty, na které není aktuálně filtrováno).
+        // Plus zvlášť počet pending leadů per kraj (sidebar Příchozí leady).
+        $regionCounts        = [];
+        $pendingRegionCounts = [];
+        $totalTabCount       = 0;
+        $totalPendingCount   = 0;
+        try {
+            $rcStmt = $this->pdo->prepare(
+                "SELECT c.region, COUNT(*) AS cnt
+                 FROM contacts c
+                 LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
+                 WHERE c.assigned_sales_id = :ozid2
+                   AND c.stav = 'CALLED_OK'
+                   AND ({$tabWhereBase})
+                 GROUP BY c.region"
+            );
+            $rcStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            foreach ($rcStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+                $reg = (string) ($row['region'] ?? '');
+                $cnt = (int) $row['cnt'];
+                $regionCounts[$reg] = $cnt;
+                $totalTabCount += $cnt;
+            }
+
+            $prcStmt = $this->pdo->prepare(
+                "SELECT c.region, COUNT(*) AS cnt
+                 FROM contacts c
+                 LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
+                 WHERE c.assigned_sales_id = :ozid2
+                   AND c.stav = 'CALLED_OK'
+                   AND w.id IS NULL
+                 GROUP BY c.region"
+            );
+            $prcStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            foreach ($prcStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+                $reg = (string) ($row['region'] ?? '');
+                $cnt = (int) $row['cnt'];
+                $pendingRegionCounts[$reg] = $cnt;
+                $totalPendingCount += $cnt;
+            }
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
         }
 
         $title = 'Pracovní plocha';
@@ -1986,6 +2068,23 @@ final class OzController
         $ico       = trim((string) ($_POST['ico'] ?? ''));
         $adresa    = trim((string) ($_POST['adresa'] ?? ''));
 
+        // ── Příležitost (2-stavová: má / nemá) + volitelný termín "do kdy" ──
+        $hasPrilez = !empty($_POST['has_prilez']);
+        $prilezTxt = trim((string) ($_POST['prilez'] ?? ''));
+        $prilezDo  = trim((string) ($_POST['prilez_do'] ?? ''));
+        if (!$hasPrilez) {
+            $prilezTxt = '';
+            $prilezDo  = '';
+        } else {
+            // Když OZ zaškrtl "má", ale nevyplnil text → použij sentinel "ano"
+            if ($prilezTxt === '') { $prilezTxt = 'ano'; }
+        }
+        // Validace formátu data (YYYY-MM-DD) — jinak prázdné
+        if ($prilezDo !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $prilezDo)) {
+            $prilezDo = '';
+        }
+        if (mb_strlen($prilezTxt) > 255) { $prilezTxt = mb_substr($prilezTxt, 0, 255); }
+
         // Ověřit, že kontakt patří OZ (resp. byl mu přiřazen)
         $check = $this->pdo->prepare(
             "SELECT id FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid LIMIT 1"
@@ -2016,15 +2115,19 @@ final class OzController
                  email      = :email,
                  ico        = :ico,
                  adresa     = :adresa,
+                 prilez     = :prilez,
+                 prilez_do  = :prilez_do,
                  updated_at = NOW(3)
              WHERE id = :cid"
         )->execute([
-            'firma'   => $firma,
-            'telefon' => $telefon === '' ? null : $telefon,
-            'email'   => $email === '' ? null : $email,
-            'ico'     => $ico === '' ? null : $ico,
-            'adresa'  => $adresa === '' ? null : $adresa,
-            'cid'     => $contactId,
+            'firma'    => $firma,
+            'telefon'  => $telefon === '' ? null : $telefon,
+            'email'    => $email   === '' ? null : $email,
+            'ico'      => $ico     === '' ? null : $ico,
+            'adresa'   => $adresa  === '' ? null : $adresa,
+            'prilez'   => $prilezTxt === '' ? null : $prilezTxt,
+            'prilez_do'=> $prilezDo  === '' ? null : $prilezDo,
+            'cid'      => $contactId,
         ]);
 
         crm_flash_set('✓ Údaje kontaktu uloženy.');
@@ -2776,6 +2879,13 @@ final class OzController
         // stav='CALLED_OK', BEZ záznamu v oz_contact_workflow.
         // Po načtení sgrupujeme do $pendingByCaller (sekce per navolávačka)
         // pro lepší přehled — OZ vidí "Od koho" agregovaně.
+        // Sort toggle: asc = nejstarší navrchu (default), desc = nejnovější navrchu
+        $sortDir = strtolower((string) ($_GET['sort'] ?? 'asc'));
+        if ($sortDir !== 'desc') { $sortDir = 'asc'; }
+        $sortOrder = $sortDir === 'desc'
+            ? 'ORDER BY c.datum_volani IS NULL, c.datum_volani DESC'
+            : 'ORDER BY c.datum_volani IS NULL, c.datum_volani ASC';
+
         $pendingLeads = [];
         try {
             $pStmt = $this->pdo->prepare(
@@ -2799,8 +2909,8 @@ final class OzController
                  WHERE c.assigned_sales_id = :ozid2
                    AND c.stav = 'CALLED_OK'
                    AND w.id IS NULL
-                 ORDER BY c.datum_volani DESC
-                 LIMIT 50"
+                 {$sortOrder}
+                 LIMIT 200"
             );
             $pStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
             $pendingLeads = $pStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -2822,8 +2932,8 @@ final class OzController
                      WHERE c.assigned_sales_id = :ozid2
                        AND c.stav = 'CALLED_OK'
                        AND w.id IS NULL
-                     ORDER BY c.datum_volani DESC
-                     LIMIT 50"
+                     {$sortOrder}
+                     LIMIT 200"
                 );
                 $pStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
                 $pendingLeads = $pStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -2833,21 +2943,28 @@ final class OzController
         }
 
         // ── 1b) Region filter (klikatelný v UI, URL ?region=...) ──
-        // Souhrn krajů (regionCounts) se ZACHOVÁVÁ z ALL pending — UI tak ukáže
-        // všechny dostupné kraje pro filtr i když je některý filtrovaný pryč.
+        // Zobrazíme VŠECHNY kraje, které OZ má přiřazené (i ty s 0 pending leady).
+        // OZ tak vidí celý svůj region prostor + counter "kolik tam reálně sedí".
+        $ozRegions = crm_regions_allowed($this->pdo, $ozId);
+
+        // Spočítáme pending PER kraj (jen z pending leadů co reálně přišly)
         $regionCountsAll = [];
+        foreach ($ozRegions as $reg) {
+            $regionCountsAll[$reg] = 0; // start s 0 pro každý kraj OZ
+        }
         foreach ($pendingLeads as $p) {
             $reg = (string) ($p['region'] ?? '');
             if ($reg === '') continue;
             if (!isset($regionCountsAll[$reg])) $regionCountsAll[$reg] = 0;
             $regionCountsAll[$reg]++;
         }
+        // Pořadí: kraje s nejvíc leady první, OZ kraje s 0 leady taky vidí
         arsort($regionCountsAll);
 
-        // Aplikovat region filter pokud je v GET
+        // Aplikovat region filter pokud je v GET — validovat proti krajům OZ
         $selectedRegion = (string) ($_GET['region'] ?? '');
-        if ($selectedRegion !== '' && !isset($regionCountsAll[$selectedRegion])) {
-            $selectedRegion = ''; // neplatný region → ignorovat
+        if ($selectedRegion !== '' && !in_array($selectedRegion, $ozRegions, true)) {
+            $selectedRegion = ''; // neplatný kraj (cizí) → ignorovat
         }
         if ($selectedRegion !== '') {
             $pendingLeads = array_values(array_filter(

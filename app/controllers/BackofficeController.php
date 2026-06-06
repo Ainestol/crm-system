@@ -127,6 +127,8 @@ final class BackofficeController
         $notesByContact = [];
         try {
             $nStmt = $this->pdo->query(
+                // Seskupení per kontakt (contact_id ASC) — uvnitř per kontakt
+                // chronologicky DESC, aby nejnovější poznámka byla nahoře.
                 "SELECT n.contact_id, n.note, n.created_at,
                         COALESCE(u.jmeno, '—') AS author_name
                  FROM oz_contact_notes n
@@ -134,7 +136,7 @@ final class BackofficeController
                  INNER JOIN oz_contact_workflow w ON w.contact_id = c.id
                  LEFT JOIN users u ON u.id = n.oz_id
                  WHERE w.stav IN ('SMLOUVA','BO_PREDANO','BO_VPRACI','BO_VRACENO','UZAVRENO')
-                 ORDER BY n.contact_id ASC, n.created_at ASC"
+                 ORDER BY n.contact_id ASC, n.created_at DESC"
             );
             if ($nStmt) {
                 foreach ($nStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $n) {
