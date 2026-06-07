@@ -69,15 +69,29 @@ final class ContactProposalsController
         );
     }
 
-    /** Seznam aktivních OZ pro dropdown. */
+    /** Seznam aktivních OZ pro dropdown. Vrací i obchodáky v roles_extra (multi-role). */
     private function activeSalesUsers(): array
     {
         $rows = $this->pdo->query(
             "SELECT id, jmeno FROM users
-             WHERE role = 'obchodak' AND aktivni = 1
+             WHERE aktivni = 1
+               AND (role = 'obchodak'
+                    OR JSON_SEARCH(COALESCE(roles_extra, '[]'), 'one', 'obchodak') IS NOT NULL)
              ORDER BY jmeno ASC"
         )->fetchAll(PDO::FETCH_ASSOC);
         return is_array($rows) ? $rows : [];
+    }
+
+    /** True pokud má user roli 'obchodak' (primárně i v roles_extra). */
+    private static function userIsOz(array $user): bool
+    {
+        if ((string) ($user['role'] ?? '') === 'obchodak') return true;
+        $extra = $user['roles_extra'] ?? null;
+        if (is_string($extra)) {
+            $decoded = json_decode($extra, true);
+            $extra   = is_array($decoded) ? $decoded : [];
+        }
+        return is_array($extra) && in_array('obchodak', $extra, true);
     }
 
     /** Whitelist operátorů — synced s tím, co používá zbytek aplikace. */
@@ -108,7 +122,7 @@ final class ContactProposalsController
         $user = crm_require_user($this->pdo);
         $this->ensureTable();
 
-        $title       = 'Nový kontakt — návrh';
+        $title       = 'Nový kontakt';
         $csrf        = crm_csrf_token();
         $flash       = crm_flash_take();
         $regions     = crm_region_choices();   // list<string> kódů krajů
@@ -206,87 +220,385 @@ final class ContactProposalsController
             if (!$check->fetchColumn()) { $suggested = 0; }
         }
 
-        // ── BY-PASS pro majitele/superadmina ──
-        // Když zadává kontakt majitel, nechce ho schvalovat sám sobě.
-        // Vytvoří se rovnou řádek v `contacts` (stejné jako kdyby šel
-        // přes proposal → schvál). Povinné je vybrat OZ, kterému patří.
-        $isOwnerOrAdmin = in_array((string) ($user['role'] ?? ''), ['majitel', 'superadmin'], true);
-        if ($isOwnerOrAdmin) {
-            if ($suggested <= 0) {
-                $bounce('⚠ Vyberte OZ — komu má kontakt patřit.');
-            }
-            try {
-                $this->pdo->prepare(
-                    "INSERT INTO contacts
-                       (firma, email, telefon, ico, adresa, region, operator, poznamka,
-                        stav, assigned_sales_id, datum_volani, datum_predani,
-                        created_at, updated_at)
-                     VALUES
-                       (:firma, :email, :tel, :ico, :adresa, :reg, :op, :poz,
-                        'CALLED_OK', :ozid, NOW(3), NOW(3),
-                        NOW(3), NOW(3))"
-                )->execute([
-                    'firma'  => $firma,
-                    'email'  => $email,
-                    'tel'    => $telefon,
-                    'ico'    => $ico,
-                    'adresa' => $adresa,
-                    'reg'    => $region,
-                    'op'     => $operator,
-                    'poz'    => $poznamka,
-                    'ozid'   => $suggested,
-                ]);
-                $newContactId = (int) $this->pdo->lastInsertId();
-            } catch (\PDOException $e) {
-                crm_db_log_error($e, __METHOD__);
-                $bounce('⚠ Chyba při vytváření kontaktu. Zkuste to prosím znovu.');
-            }
-
-            crm_audit_log(
-                $this->pdo, (int) $user['id'],
-                'contact_create_direct', 'contact', $newContactId,
-                [
-                    'firma'        => $firma,
-                    'region'       => $region,
-                    'assigned_oz'  => $suggested,
-                    'via'          => 'manual_owner_form',
-                ]
-            );
-
-            crm_flash_set('✓ Kontakt vytvořen a přiřazen OZ.');
-            crm_redirect('/contacts/new');
+        // ── Default OZ: pokud user JE OZ → preselect sebe (ale může změnit) ──
+        // Pokud user není OZ → výběr je povinný.
+        $userIsOz = self::userIsOz($user);
+        if ($suggested <= 0 && $userIsOz) {
+            $suggested = (int) $user['id'];
+        }
+        if ($suggested <= 0) {
+            $bounce('⚠ Vyberte OZ — komu má kontakt patřit.');
         }
 
-        // ── Standard proposal flow pro ostatní role ──
-        $this->pdo->prepare(
-            "INSERT INTO contact_proposals
-               (proposed_by_user_id, firma, email, telefon, ico, adresa,
-                region, operator, poznamka, suggested_oz_id, status)
-             VALUES
-               (:uid, :firma, :email, :tel, :ico, :adresa,
-                :reg, :op, :poz, :sug, 'pending')"
-        )->execute([
-            'uid'    => (int) $user['id'],
-            'firma'  => $firma,
-            'email'  => $email,
-            'tel'    => $telefon,
-            'ico'    => $ico,
-            'adresa' => $adresa,
-            'reg'    => $region,
-            'op'     => $operator,
-            'poz'    => $poznamka,
-            'sug'    => $suggested > 0 ? $suggested : null,
-        ]);
+        // ── Duplicita: pokud user nepotvrdil přidání duplicity → bounce ──
+        // (Default UX: form ukáže warning po blur na IČO. User pak buď
+        //  klikne na existující kontakt, nebo zaškrtne "Přidat přesto".)
+        $allowDup = !empty($_POST['allow_duplicate']);
+        if (!$allowDup) {
+            $dupStmt = $this->pdo->prepare(
+                "SELECT id, firma FROM contacts WHERE ico = :ico LIMIT 1"
+            );
+            $dupStmt->execute(['ico' => $ico]);
+            $dup = $dupStmt->fetch(PDO::FETCH_ASSOC);
+            if ($dup) {
+                // Bounce s konkrétní hláškou — server-side ochrana, klient ji uvidí
+                // a může pak buď zaškrtnout "Přidat přesto" nebo otevřít existující.
+                $bounce(sprintf(
+                    '⚠ Kontakt s IČO %s už existuje (firma "%s", #%d). '
+                    . 'Zaškrtni „Přidat přesto i jako duplicitu", pokud opravdu chceš.',
+                    $ico, $dup['firma'], (int) $dup['id']
+                ));
+            }
+        }
 
-        $newId = (int) $this->pdo->lastInsertId();
+        // ── INSERT do contacts ──
+        // Stav = CALLED_OK → skip navolávačku, jde rovnou OZ-ovi do queue.
+        // created_by_user_id = kdo přidal (pro audit /admin/contacts/added).
+        try {
+            $this->pdo->prepare(
+                "INSERT INTO contacts
+                   (firma, email, telefon, ico, adresa, region, operator, poznamka,
+                    stav, assigned_sales_id, created_by_user_id,
+                    datum_volani, datum_predani,
+                    created_at, updated_at)
+                 VALUES
+                   (:firma, :email, :tel, :ico, :adresa, :reg, :op, :poz,
+                    'CALLED_OK', :ozid, :cby,
+                    NOW(3), NOW(3),
+                    NOW(3), NOW(3))"
+            )->execute([
+                'firma'  => $firma,
+                'email'  => $email,
+                'tel'    => $telefon,
+                'ico'    => $ico,
+                'adresa' => $adresa,
+                'reg'    => $region,
+                'op'     => $operator,
+                'poz'    => $poznamka,
+                'ozid'   => $suggested,
+                'cby'    => (int) $user['id'],
+            ]);
+            $newContactId = (int) $this->pdo->lastInsertId();
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+            $bounce('⚠ Chyba při vytváření kontaktu. Zkuste to prosím znovu.');
+        }
+
         crm_audit_log(
             $this->pdo, (int) $user['id'],
-            'contact_proposal_create', 'contact_proposal', $newId,
-            ['firma' => $firma, 'region' => $region, 'suggested_oz_id' => $suggested]
+            'contact_create_direct', 'contact', $newContactId,
+            [
+                'firma'        => $firma,
+                'ico'          => $ico,
+                'region'       => $region,
+                'assigned_oz'  => $suggested,
+                'via'          => 'manual_form',
+                'self_assign'  => $userIsOz && $suggested === (int) $user['id'],
+            ]
         );
 
-        crm_flash_set('✓ Návrh kontaktu odeslán ke schválení majiteli.');
+        // Hláška podle toho, komu kontakt patří
+        $assignedToSelf = $userIsOz && $suggested === (int) $user['id'];
+        crm_flash_set($assignedToSelf
+            ? '✓ Kontakt přidán — najdeš ho v Příchozí leady (klikni „Přijmout").'
+            : '✓ Kontakt přidán a přiřazen OZ — uvidí ho v Příchozí leady.'
+        );
         crm_redirect('/contacts/new');
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  GET /contacts/check-ico — AJAX duplicita check
+    //
+    //  Vrátí JSON: { found: bool, contact: {id, firma, oz_name, region, stav} }
+    //  Použito v /contacts/new formuláři pro live varování při vyplnění IČO.
+    // ════════════════════════════════════════════════════════════════
+    public function getCheckIco(): void
+    {
+        $user = crm_require_user($this->pdo);
+
+        // Vyčistit jakýkoli buffer aby JSON odpověď byla čistá (žádné <br/> bordel)
+        while (ob_get_level() > 0) { ob_end_clean(); }
+        header('Content-Type: application/json; charset=utf-8');
+
+        $ico = crm_normalize_ico((string) ($_GET['ico'] ?? ''));
+        if (mb_strlen($ico) !== 8 || !ctype_digit($ico)) {
+            echo json_encode(['found' => false, 'reason' => 'invalid_ico']);
+            exit;
+        }
+
+        try {
+            $stmt = $this->pdo->prepare(
+                "SELECT c.id, c.firma, c.region, c.stav,
+                        COALESCE(w.stav, c.stav)   AS effective_stav,
+                        COALESCE(su.jmeno, '—')    AS oz_name,
+                        c.created_at
+                 FROM contacts c
+                 LEFT JOIN users su ON su.id = c.assigned_sales_id
+                 LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = c.assigned_sales_id
+                 WHERE c.ico = :ico
+                 LIMIT 1"
+            );
+            $stmt->execute(['ico' => $ico]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+            echo json_encode(['found' => false, 'reason' => 'db_error']);
+            exit;
+        }
+
+        if (!$row) {
+            echo json_encode(['found' => false]);
+            exit;
+        }
+
+        echo json_encode([
+            'found'   => true,
+            'contact' => [
+                'id'         => (int) $row['id'],
+                'firma'      => (string) $row['firma'],
+                'region'     => (string) $row['region'],
+                'stav'       => (string) $row['effective_stav'],
+                'oz_name'    => (string) $row['oz_name'],
+                'created_at' => (string) ($row['created_at'] ?? ''),
+            ],
+        ]);
+        exit;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  GET /me/added-contacts — Moje doporučenky (per zaměstnanec)
+    //
+    //  Každý zaměstnanec si může otevřít přehled vlastních doporučenek
+    //  — kolik přidal, kdy a v jakém stavu jsou. Důkaz vlastní práce
+    //  + konverzní stats (aktivní vs. uzavřené vs. nezájem).
+    // ════════════════════════════════════════════════════════════════
+    public function getMyAdditions(): void
+    {
+        $user  = crm_require_user($this->pdo);
+        $myId  = (int) $user['id'];
+
+        $title = 'Moje doporučenky';
+        $csrf  = crm_csrf_token();
+        $flash = crm_flash_take();
+
+        $period = (string) ($_GET['period'] ?? '30d');
+        $valid  = ['today', '7d', '30d', '90d', 'all'];
+        if (!in_array($period, $valid, true)) { $period = '30d'; }
+
+        $periodWhere = match ($period) {
+            'today' => "AND c.created_at >= CURDATE()",
+            '7d'    => "AND c.created_at >= NOW() - INTERVAL 7 DAY",
+            '30d'   => "AND c.created_at >= NOW() - INTERVAL 30 DAY",
+            '90d'   => "AND c.created_at >= NOW() - INTERVAL 90 DAY",
+            default => "",
+        };
+
+        // Hlavní seznam — moje doporučenky v daném období
+        $sql = "SELECT c.id, c.firma, c.ico, c.telefon, c.email, c.region, c.stav,
+                       c.created_at,
+                       COALESCE(oz.jmeno, '—')   AS oz_name,
+                       COALESCE(w.stav, c.stav)  AS effective_stav
+                FROM contacts c
+                LEFT JOIN users oz ON oz.id = c.assigned_sales_id
+                LEFT JOIN oz_contact_workflow w
+                       ON w.contact_id = c.id AND w.oz_id = c.assigned_sales_id
+                WHERE c.created_by_user_id = :uid
+                  {$periodWhere}
+                ORDER BY c.created_at DESC
+                LIMIT 500";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute(['uid' => $myId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        // Konverzní statistiky — jen z mých doporučenek (bez period filteru)
+        $statStmt = $this->pdo->prepare(
+            "SELECT
+                COUNT(*)                                                      AS total,
+                SUM(CASE WHEN c.created_at >= CURDATE()              THEN 1 ELSE 0 END) AS today,
+                SUM(CASE WHEN c.created_at >= NOW() - INTERVAL 7 DAY THEN 1 ELSE 0 END) AS last7,
+                SUM(CASE WHEN COALESCE(w.stav, c.stav) IN ('UZAVRENO')                                  THEN 1 ELSE 0 END) AS uzavreno,
+                SUM(CASE WHEN COALESCE(w.stav, c.stav) IN ('NABIDKA','SCHUZKA','CALLBACK','SANCE',
+                                                          'SMLOUVA','BO_PREDANO','BO_VPRACI','BO_VRACENO',
+                                                          'NOVE','OBVOLANO','ZPRACOVAVA')              THEN 1 ELSE 0 END) AS aktivni,
+                SUM(CASE WHEN COALESCE(w.stav, c.stav) IN ('NEZAJEM','NERELEVANTNI')                   THEN 1 ELSE 0 END) AS nezajem,
+                SUM(CASE WHEN c.stav = 'CALLED_OK' AND w.id IS NULL                                     THEN 1 ELSE 0 END) AS ceka
+             FROM contacts c
+             LEFT JOIN oz_contact_workflow w
+                    ON w.contact_id = c.id AND w.oz_id = c.assigned_sales_id
+             WHERE c.created_by_user_id = :uid"
+        );
+        $statStmt->execute(['uid' => $myId]);
+        $stats = $statStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        ob_start();
+        require dirname(__DIR__) . '/views/my-additions/index.php';
+        $content = (string) ob_get_clean();
+        require dirname(__DIR__) . '/views/layout/base.php';
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  GET /me/contact-detail?id=X — Read-only detail mojí doporučenky
+    //
+    //  Zaměstnanec uvidí jen kontakty, které sám přidal (created_by_user_id).
+    //  Bez edit, bez akcí, jen info: stav, OZ, poznámky OZ, timeline.
+    //  Admin/majitel uvidí cokoli (full audit).
+    // ════════════════════════════════════════════════════════════════
+    public function getMyContactDetail(): void
+    {
+        $user  = crm_require_user($this->pdo);
+        $myId  = (int) $user['id'];
+        $cid   = (int) ($_GET['id'] ?? 0);
+
+        if ($cid <= 0) {
+            crm_flash_set('Chybí ID kontaktu.');
+            crm_redirect('/me/added-contacts');
+        }
+
+        // Načti kontakt + ověř ownership (created_by_user_id) nebo admin role
+        $isAdmin = in_array((string) ($user['role'] ?? ''), ['majitel', 'superadmin'], true);
+
+        $stmt = $this->pdo->prepare(
+            "SELECT c.id, c.firma, c.ico, c.telefon, c.email, c.adresa, c.region,
+                    c.operator, c.stav, c.poznamka, c.created_at, c.created_by_user_id,
+                    c.assigned_sales_id, c.prilez, c.prilez_do,
+                    COALESCE(oz.jmeno, '—')   AS oz_name,
+                    COALESCE(w.stav, c.stav)  AS effective_stav,
+                    w.updated_at              AS workflow_updated_at,
+                    w.callback_at, w.schuzka_at
+             FROM contacts c
+             LEFT JOIN users oz ON oz.id = c.assigned_sales_id
+             LEFT JOIN oz_contact_workflow w
+                    ON w.contact_id = c.id AND w.oz_id = c.assigned_sales_id
+             WHERE c.id = :id LIMIT 1"
+        );
+        $stmt->execute(['id' => $cid]);
+        $contact = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$contact) {
+            crm_flash_set('⚠ Kontakt nenalezen.');
+            crm_redirect('/me/added-contacts');
+        }
+
+        // Security: smí vidět jen pokud ho přidal, nebo je admin
+        $addedByMe = ((int) ($contact['created_by_user_id'] ?? 0) === $myId);
+        if (!$addedByMe && !$isAdmin) {
+            crm_flash_set('⚠ Tento kontakt jsi nepřidal — vidíš jen své doporučenky.');
+            crm_redirect('/me/added-contacts');
+        }
+
+        // Poslední 10 poznámek OZ k tomu kontaktu (aby zaměstnanec viděl,
+        // co OZ se zákazníkem řešil — důležité pro feedback loop)
+        $ozNotes = [];
+        try {
+            $nStmt = $this->pdo->prepare(
+                "SELECT n.note, n.created_at, COALESCE(u.jmeno, '—') AS author
+                 FROM oz_contact_notes n
+                 LEFT JOIN users u ON u.id = n.oz_id
+                 WHERE n.contact_id = :cid
+                 ORDER BY n.created_at DESC
+                 LIMIT 10"
+            );
+            $nStmt->execute(['cid' => $cid]);
+            $ozNotes = $nStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\PDOException) {}
+
+        $title = '📄 ' . ($contact['firma'] ?: 'Detail #' . $cid);
+        $csrf  = crm_csrf_token();
+        $flash = crm_flash_take();
+
+        ob_start();
+        require dirname(__DIR__) . '/views/my-additions/detail.php';
+        $content = (string) ob_get_clean();
+        require dirname(__DIR__) . '/views/layout/base.php';
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  GET /admin/contacts/added — Audit: nedávno přidané kontakty
+    //
+    //  Přehled kdo kdy přidal jaký kontakt přes /contacts/new.
+    //  Filtr: dle uživatele (kdo přidal), období.
+    // ════════════════════════════════════════════════════════════════
+    public function getAdminRecentAdditions(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['majitel', 'superadmin']);
+
+        $title = 'Přidané kontakty (doporučenky)';
+        $csrf  = crm_csrf_token();
+        $flash = crm_flash_take();
+
+        // Filtry z GET
+        $byUser   = (int) ($_GET['by'] ?? 0);
+        $period   = (string) ($_GET['period'] ?? '30d');
+        $valid    = ['today', '7d', '30d', '90d', 'all'];
+        if (!in_array($period, $valid, true)) { $period = '30d'; }
+
+        $periodWhere = match ($period) {
+            'today' => "AND c.created_at >= CURDATE()",
+            '7d'    => "AND c.created_at >= NOW() - INTERVAL 7 DAY",
+            '30d'   => "AND c.created_at >= NOW() - INTERVAL 30 DAY",
+            '90d'   => "AND c.created_at >= NOW() - INTERVAL 90 DAY",
+            default => "",
+        };
+
+        $params = [];
+        $userWhere = '';
+        if ($byUser > 0) {
+            $userWhere = 'AND c.created_by_user_id = :byuid';
+            $params['byuid'] = $byUser;
+        }
+
+        // Hlavní dotaz — jen kontakty s vyplněným created_by_user_id
+        $sql = "SELECT c.id, c.firma, c.ico, c.telefon, c.email, c.region, c.stav,
+                       c.created_at, c.created_by_user_id,
+                       COALESCE(adder.jmeno, '—')      AS adder_name,
+                       COALESCE(adder.role, '')        AS adder_role,
+                       COALESCE(oz.jmeno, '—')         AS oz_name,
+                       COALESCE(w.stav, c.stav)        AS effective_stav
+                FROM contacts c
+                LEFT JOIN users adder ON adder.id = c.created_by_user_id
+                LEFT JOIN users oz    ON oz.id    = c.assigned_sales_id
+                LEFT JOIN oz_contact_workflow w
+                       ON w.contact_id = c.id AND w.oz_id = c.assigned_sales_id
+                WHERE c.created_by_user_id IS NOT NULL
+                  {$periodWhere}
+                  {$userWhere}
+                ORDER BY c.created_at DESC
+                LIMIT 500";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        // Top přidávači (pro filtr-dropdown a stats)
+        $topStmt = $this->pdo->query(
+            "SELECT c.created_by_user_id AS uid,
+                    COALESCE(u.jmeno, '—') AS jmeno,
+                    COALESCE(u.role, '')   AS role,
+                    COUNT(*)               AS cnt
+             FROM contacts c
+             LEFT JOIN users u ON u.id = c.created_by_user_id
+             WHERE c.created_by_user_id IS NOT NULL
+             GROUP BY c.created_by_user_id
+             ORDER BY cnt DESC
+             LIMIT 50"
+        );
+        $topAdders = $topStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        // Total counts pro hlavičku
+        $totalStmt = $this->pdo->query(
+            "SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN created_at >= CURDATE()              THEN 1 ELSE 0 END) AS today,
+                SUM(CASE WHEN created_at >= NOW() - INTERVAL 7 DAY THEN 1 ELSE 0 END) AS last7
+             FROM contacts
+             WHERE created_by_user_id IS NOT NULL"
+        );
+        $totals = $totalStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'today' => 0, 'last7' => 0];
+
+        ob_start();
+        require dirname(__DIR__) . '/views/admin/contacts-added/index.php';
+        $content = (string) ob_get_clean();
+        require dirname(__DIR__) . '/views/layout/base.php';
     }
 
     // ════════════════════════════════════════════════════════════════

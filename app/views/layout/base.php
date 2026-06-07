@@ -32,19 +32,30 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
     // Hlavní sekce: Dashboard + Nový kontakt (všem) + Návrhy ke schválení (majitelé).
     // Vše blízko sebe, ať schvalovatel vidí všechno na očích.
     $sections['Hlavní'] = [
-        ['label' => 'Dashboard',       'href' => '/dashboard',     'icon' => '🏠'],
-        ['label' => 'Nový kontakt',    'href' => '/contacts/new',  'icon' => '➕'],
+        ['label' => 'Dashboard',       'href' => '/dashboard',         'icon' => '🏠'],
+        ['label' => 'Nový kontakt',    'href' => '/contacts/new',      'icon' => '➕'],
+        // Moje doporučenky — každý zaměstnanec vidí kontakty, které sám přidal,
+        // a v jakém jsou stavu (čeká na OZ, v jednání, uzavřeno, nezájem).
+        ['label' => 'Moje doporučenky', 'href' => '/me/added-contacts', 'icon' => '📋'],
     ];
     if (in_array($role, ['majitel', 'superadmin'], true)) {
-        $proposalLabelMain = 'Kontakty ke schválení';
-        if ($proposalsPending > 0) {
-            $proposalLabelMain .= ' (' . $proposalsPending . ')';
-        }
+        // Admin přehled: všechny doporučenky napříč firmou (kdo komu co)
         $sections['Hlavní'][] = [
-            'label' => $proposalLabelMain,
-            'href'  => '/admin/contact-proposals',
-            'icon'  => '📋',
+            'label' => 'Přidané kontakty (tým)',
+            'href'  => '/admin/contacts/added',
+            'icon'  => '👥',
         ];
+        // Legacy: pending návrhy ze starého schvalovacího flow.
+        // Zobrazí se jen pokud nějaké pending stále jsou (historie do
+        // doby, než admin starý queue dopracuje). Když je 0, link skryjeme,
+        // protože nový flow už proposals nepoužívá.
+        if ($proposalsPending > 0) {
+            $sections['Hlavní'][] = [
+                'label' => 'Návrhy ke schválení (' . $proposalsPending . ')',
+                'href'  => '/admin/contact-proposals',
+                'icon'  => '⏳',
+            ];
+        }
     }
 
     if ($role === 'navolavacka') {

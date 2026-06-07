@@ -4,14 +4,24 @@ declare(strict_types=1);
 /** @var array<string,mixed>             $user */
 /** @var string                          $csrf */
 /** @var ?string                         $flash */
-/** @var array<string,string>            $regions      kód → label (z crm_region_choices) */
+/** @var array<string,string>            $regions      kód → label */
 /** @var list<array<string,mixed>>       $salesUsers   aktivní OZ pro dropdown */
 /** @var list<string>                    $operators    whitelist operátorů */
 /** @var array<string,mixed>             $form         re-fill data po validační chybě */
 
-// Majitel/superadmin: by-pass schvalování — kontakt jde rovnou do contacts.
-// View se podle toho přepíná: copy, povinnost OZ, label submit tlačítka.
-$_isOwnerOrAdmin = in_array((string) ($user['role'] ?? ''), ['majitel', 'superadmin'], true);
+// Detekce: má user roli OZ (primární nebo extra)?
+$_userIsOz = false;
+if ((string) ($user['role'] ?? '') === 'obchodak') { $_userIsOz = true; }
+else {
+    $_extra = $user['roles_extra'] ?? null;
+    if (is_string($_extra)) { $_extra = json_decode($_extra, true) ?: []; }
+    if (is_array($_extra) && in_array('obchodak', $_extra, true)) { $_userIsOz = true; }
+}
+$_userId = (int) ($user['id'] ?? 0);
+
+// Default zvolený OZ: pokud OZ → sebe; jinak re-fill z form data
+$_defaultOzId = (int) ($form['suggested_oz_id'] ?? 0);
+if ($_defaultOzId <= 0 && $_userIsOz) { $_defaultOzId = $_userId; }
 ?>
 
 <style>
@@ -75,6 +85,37 @@ $_isOwnerOrAdmin = in_array((string) ($user['role'] ?? ''), ['majitel', 'superad
     margin-bottom: 1rem;
 }
 
+.cp-dup-warn {
+    display: none;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-left: 4px solid #f59e0b;
+    border-radius: 0 6px 6px 0;
+    padding: 0.7rem 0.9rem;
+    font-size: 0.83rem;
+    color: #78350f;
+    margin: 0.4rem 0 0;
+    line-height: 1.5;
+}
+.cp-dup-warn strong { color: #92400e; }
+.cp-dup-warn a { color: #b45309; text-decoration: underline; }
+.cp-dup-warn .cp-dup-checkbox-row {
+    margin-top: 0.55rem;
+    padding-top: 0.45rem;
+    border-top: 1px dashed rgba(120, 53, 15, 0.3);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.cp-ico-status {
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--color-text-muted);
+    margin-top: 0.15rem;
+    min-height: 0.9rem;
+}
+
 .cp-actions {
     display: flex;
     gap: 0.5rem;
@@ -96,38 +137,29 @@ $_isOwnerOrAdmin = in_array((string) ($user['role'] ?? ''), ['majitel', 'superad
 </style>
 
 <section class="card cp-card">
-    <?php if ($_isOwnerOrAdmin) { ?>
-        <h1>➕ Nový kontakt</h1>
-        <p class="lead">
-            Jako <strong>majitel/superadmin</strong> kontakt vytváříš <strong>přímo</strong>
-            (bez schvalovacího procesu). Vyber konkrétního OZ — kontakt se mu rovnou
-            objeví v <strong>Příchozí leady</strong> jako každý jiný.
-        </p>
-    <?php } else { ?>
-        <h1>➕ Nový kontakt — návrh ke schválení</h1>
-        <p class="lead">
-            Tento formulář <strong>neukládá kontakt přímo do databáze</strong>. Návrh nejprve
-            zkontroluje a schválí majitel, který také rozhodne, kterému OZ-ovi bude přiřazen.
-            Po schválení se kontakt objeví OZ-ovi v <strong>Příchozí leady</strong>.
-        </p>
-    <?php } ?>
+    <h1>➕ Nový kontakt</h1>
+    <p class="lead">
+        Kontakt se uloží <strong>okamžitě</strong> a přiřadí vybranému OZ —
+        objeví se mu v <strong>Příchozí leady</strong> (sekce „📥 Příchozí leady"),
+        odkud ho jedním klikem na <strong>„Přijmout"</strong> vezme do své pracovní plochy.
+        Navolávačka se tím přeskakuje.
+        <?php if ($_userIsOz) { ?>
+            Jako OZ máš sebe přednastavené, ale můžeš přiřadit kolegovi.
+        <?php } else { ?>
+            Vyber, komu má kontakt patřit.
+        <?php } ?>
+    </p>
 
     <?php if (!empty($flash)) { ?>
         <p class="alert alert-info" style="margin-bottom:1rem;"><?= crm_h($flash) ?></p>
     <?php } ?>
 
     <div class="cp-info-box">
-        <?php if ($_isOwnerOrAdmin) { ?>
-            🚀 Kontakt se uloží <strong>okamžitě</strong> a přiřadí vybranému OZ
-            (stav <code>CALLED_OK</code>). Pole označená <span style="color:#e74c3c;">*</span> jsou povinná.
-        <?php } else { ?>
-            💡 Hot lead = kontakt s vysokou pravděpodobností uzavření smlouvy
-            (doporučení od klienta, vlastní akvizice, návrh majitele).
-            Pole označená <span style="color:#e74c3c;">*</span> jsou povinná.
-        <?php } ?>
+        🚀 Pole označená <span style="color:#e74c3c;">*</span> jsou povinná.
+        Po vyplnění IČO ověříme, jestli už kontakt nemáme v databázi.
     </div>
 
-    <form method="post" action="<?= crm_h(crm_url('/contacts/new')) ?>" class="cp-form" autocomplete="off">
+    <form method="post" action="<?= crm_h(crm_url('/contacts/new')) ?>" class="cp-form" autocomplete="off" id="cp-form">
         <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
 
         <!-- Firma + IČO -->
@@ -142,10 +174,23 @@ $_isOwnerOrAdmin = in_array((string) ($user['role'] ?? ''), ['majitel', 'superad
             <label>
                 IČO <span class="req">*</span>
                 <input type="text" name="ico" required maxlength="20"
+                       id="cp-ico"
                        value="<?= crm_h((string)($form['ico'] ?? '')) ?>"
                        placeholder="8 číslic">
-                <span class="hint">Po uložení se ověří přes ARES.</span>
+                <span class="cp-ico-status" id="cp-ico-status"></span>
             </label>
+        </div>
+
+        <!-- Duplicita warning (skryté, JS odhalí když najde) -->
+        <div class="cp-dup-warn" id="cp-dup-warn">
+            <strong>⚠ Tento IČO už v databázi máme.</strong><br>
+            <span id="cp-dup-info">…</span>
+            <div class="cp-dup-checkbox-row">
+                <input type="checkbox" name="allow_duplicate" value="1" id="cp-allow-dup">
+                <label for="cp-allow-dup" style="font-weight:500;cursor:pointer;font-size:0.78rem;">
+                    Přidat přesto i jako duplicitu (pokud opravdu chceš)
+                </label>
+            </div>
         </div>
 
         <!-- Telefon + Email -->
@@ -164,7 +209,7 @@ $_isOwnerOrAdmin = in_array((string) ($user['role'] ?? ''), ['majitel', 'superad
             </label>
         </div>
 
-        <!-- Adresa (full row) -->
+        <!-- Adresa -->
         <label>
             Adresa <span class="req">*</span>
             <input type="text" name="adresa" required maxlength="500"
@@ -204,32 +249,26 @@ $_isOwnerOrAdmin = in_array((string) ($user['role'] ?? ''), ['majitel', 'superad
             </label>
         </div>
 
-        <!-- OZ — povinný pro majitele (přímý INSERT), volitelný pro ostatní (návrh) -->
+        <!-- Přiřadit OZ — povinný pro všechny -->
         <label>
-            <?php if ($_isOwnerOrAdmin) { ?>
-                Přiřadit OZ <span class="req">*</span>
-            <?php } else { ?>
-                Doporučený OZ
-            <?php } ?>
-            <select name="suggested_oz_id" <?= $_isOwnerOrAdmin ? 'required' : '' ?>>
-                <option value="0">
-                    <?= $_isOwnerOrAdmin ? '— vyberte OZ —' : '— nechat na majiteli —' ?>
-                </option>
-                <?php
-                $selOz = (int)($form['suggested_oz_id'] ?? 0);
-                foreach ($salesUsers as $oz) {
+            Přiřadit OZ <span class="req">*</span>
+            <select name="suggested_oz_id" required>
+                <option value="0">— vyberte OZ —</option>
+                <?php foreach ($salesUsers as $oz) {
                     $oid = (int)($oz['id'] ?? 0);
-                    $sel = $oid === $selOz ? 'selected' : '';
-                    echo '<option value="' . $oid . '" ' . $sel . '>'
-                       . crm_h((string)($oz['jmeno'] ?? '')) . '</option>';
-                }
+                    $sel = $oid === $_defaultOzId ? 'selected' : '';
+                    $isSelf = $_userIsOz && $oid === $_userId;
+                    $label = (string)($oz['jmeno'] ?? '') . ($isSelf ? ' (já)' : '');
                 ?>
+                    <option value="<?= $oid ?>" <?= $sel ?>><?= crm_h($label) ?></option>
+                <?php } ?>
             </select>
             <span class="hint">
-                <?php if ($_isOwnerOrAdmin) { ?>
-                    Komu se kontakt přiřadí. Objeví se mu okamžitě v Příchozí leady.
+                <?php if ($_userIsOz) { ?>
+                    Kontakt se přiřadí tomuto OZ — uvidí ho v Příchozí leady.
+                    Sebe můžeš změnit na kolegu.
                 <?php } else { ?>
-                    Volitelné — můžeš nechat na majiteli, nebo navrhnout vlastního OZ-a.
+                    Komu se kontakt přiřadí. Objeví se mu okamžitě v Příchozí leady.
                 <?php } ?>
             </span>
         </label>
@@ -239,13 +278,96 @@ $_isOwnerOrAdmin = in_array((string) ($user['role'] ?? ''), ['majitel', 'superad
             Poznámka <span class="req">*</span>
             <textarea name="poznamka" required maxlength="1000"
                       placeholder="Proč je to hot lead? Doporučení od kterého klienta? Jaký je kontext?"><?= crm_h((string)($form['poznamka'] ?? '')) ?></textarea>
-            <span class="hint">Pomáhá majiteli rozhodnout o schválení a OZ-ovi navázat kontakt.</span>
+            <span class="hint">OZ-ovi pomůže při prvním navázání kontaktu.</span>
         </label>
 
         <div class="cp-actions">
-            <button type="submit" class="cp-btn-primary">
-                <?= $_isOwnerOrAdmin ? '🚀 Vytvořit kontakt' : '📨 Odeslat ke schválení' ?>
-            </button>
+            <button type="submit" class="cp-btn-primary">🚀 Přidat kontakt</button>
         </div>
     </form>
 </section>
+
+<script>
+(function () {
+    'use strict';
+    // ── Live IČO duplicita check ─────────────────────────────────────
+    // Po 600ms ticha (debounce) zavolá /contacts/check-ico?ico=...
+    // Pokud najde existující kontakt → zobrazí warning + checkbox „Přesto přidat".
+    var icoInput    = document.getElementById('cp-ico');
+    var statusEl    = document.getElementById('cp-ico-status');
+    var warnBox     = document.getElementById('cp-dup-warn');
+    var infoEl      = document.getElementById('cp-dup-info');
+    var allowDupCb  = document.getElementById('cp-allow-dup');
+    if (!icoInput) return;
+
+    var debounceTimer = null;
+    var lastChecked   = '';
+
+    function digitsOnly(s) { return (s || '').replace(/\D+/g, ''); }
+    function hideWarn() {
+        warnBox.style.display = 'none';
+        allowDupCb.checked = false;
+    }
+
+    function performCheck() {
+        var ico = digitsOnly(icoInput.value);
+        if (ico.length !== 8) {
+            statusEl.textContent = '';
+            hideWarn();
+            return;
+        }
+        if (ico === lastChecked) return;
+        lastChecked = ico;
+        statusEl.textContent = '⏳ Ověřuji v databázi…';
+
+        fetch('<?= crm_h(crm_url('/contacts/check-ico')) ?>?ico=' + encodeURIComponent(ico), {
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (!data || !data.found) {
+                    statusEl.innerHTML = '<span style="color:#16a34a;">✓ V databázi nemáme — můžeš pokračovat.</span>';
+                    hideWarn();
+                    return;
+                }
+                var c = data.contact || {};
+                statusEl.innerHTML = '<span style="color:#dc2626;font-weight:600;">⚠ Tento IČO už máme!</span>';
+                var html =
+                    'Firma: <strong>' + escapeHtml(c.firma || '—') + '</strong> '
+                    + '(#' + (c.id || '?') + ')<br>'
+                    + 'OZ: <strong>' + escapeHtml(c.oz_name || '—') + '</strong> · '
+                    + 'Kraj: ' + escapeHtml(c.region || '—') + ' · '
+                    + 'Stav: <code>' + escapeHtml(c.stav || '—') + '</code><br>'
+                    + '<a href="<?= crm_h(crm_url('/oz/search/card?id=')) ?>' + (c.id || 0) + '" target="_blank">→ Otevřít existující kartu</a>';
+                infoEl.innerHTML = html;
+                warnBox.style.display = 'block';
+            })
+            .catch(function () {
+                statusEl.innerHTML = '<span style="color:#9ca3af;">⚠ Nepodařilo se ověřit — zkus znovu.</span>';
+                hideWarn();
+            });
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, function (ch) {
+            return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch];
+        });
+    }
+
+    icoInput.addEventListener('input', function () {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(performCheck, 600);
+    });
+    icoInput.addEventListener('blur', function () {
+        clearTimeout(debounceTimer);
+        performCheck();
+    });
+
+    // Pokud server vrátil bounce s "už existuje" hláškou a form je re-fillnutý,
+    // udělej check rovnou hned, aby user viděl warning.
+    if (icoInput.value && digitsOnly(icoInput.value).length === 8) {
+        performCheck();
+    }
+})();
+</script>

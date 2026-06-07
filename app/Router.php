@@ -1184,6 +1184,38 @@ final class Router
                 'roles'  => ['navolavacka', 'cisticka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
                 'handler'=> [ContactProposalsController::class, 'postNew'],
             ],
+            // AJAX duplicita check (kdokoli z form rolí) — vrátí JSON
+            [
+                'method' => 'GET',
+                'path'   => '/contacts/check-ico',
+                'auth'   => true,
+                'roles'  => ['navolavacka', 'cisticka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
+                'handler'=> [ContactProposalsController::class, 'getCheckIco'],
+            ],
+            // Admin přehled: nedávno přidané kontakty (kdo kdy co)
+            [
+                'method' => 'GET',
+                'path'   => '/admin/contacts/added',
+                'auth'   => true,
+                'roles'  => ['majitel', 'superadmin'],
+                'handler'=> [ContactProposalsController::class, 'getAdminRecentAdditions'],
+            ],
+            // Per-uživatel přehled: moje doporučenky (caller/cisticka/oz/BO)
+            [
+                'method' => 'GET',
+                'path'   => '/me/added-contacts',
+                'auth'   => true,
+                'roles'  => ['navolavacka', 'cisticka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
+                'handler'=> [ContactProposalsController::class, 'getMyAdditions'],
+            ],
+            // Read-only detail mojí doporučenky (security: jen own + admin)
+            [
+                'method' => 'GET',
+                'path'   => '/me/contact-detail',
+                'auth'   => true,
+                'roles'  => ['navolavacka', 'cisticka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
+                'handler'=> [ContactProposalsController::class, 'getMyContactDetail'],
+            ],
             [
                 'method' => 'GET',
                 'path'   => '/admin/contact-proposals',
