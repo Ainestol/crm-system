@@ -55,8 +55,9 @@ final class OzController
         //   'bo_predano'  Předáno BO (SMLOUVA + BO_PREDANO + BO_VPRACI) — sub-tab BO super-tabu
         //   'bo_vraceno'  Vráceno z BO (BO_VRACENO) — sub-tab BO super-tabu
         //   'dokonceno'   UZAVRENO (BO finalizoval) — sub-tab BO super-tabu, zelený, s filtrem měsíců
+        //   'zachrana'    NOVÝ samostatný tab — c.stav = 'RESCUE_REQUESTED', bez ohledu na workflow.
         //   Legacy 'bo'   ponecháno jako alias (mapuje se na 'bo_predano').
-        $validTabs = ['nove', 'nabidka', 'schuzka', 'callback', 'sance', 'bo', 'bo_predano', 'bo_vraceno', 'dokonceno', 'nezajem', 'reklamace'];
+        $validTabs = ['nove', 'nabidka', 'schuzka', 'callback', 'sance', 'zachrana', 'bo', 'bo_predano', 'bo_vraceno', 'dokonceno', 'nezajem', 'reklamace'];
         $tab = in_array($tab, $validTabs, true) ? $tab : 'nove';
         // Backward compat: starý 'bo' tab → 'bo_predano' (default sub-tab BO super-tabu)
         if ($tab === 'bo') { $tab = 'bo_predano'; }
@@ -67,8 +68,13 @@ final class OzController
         if ($doneMonth < 1 || $doneMonth > 12) { $doneMonth = (int) date('n'); }
         if ($doneYear < 2000 || $doneYear > 2100) { $doneYear = (int) date('Y'); }
 
-        // $tabWhereBase = filtr STAVu bez region filtru (potřebujeme pro per-region counts)
+        // $tabWhereBase = filtr STAVu bez region filtru (potřebujeme pro per-region counts).
+        //
+        // Záchrana je SPECIÁLNÍ tab — filtruje podle c.stav (nikoli w.stav), protože
+        // záchrana může vzniknout z libovolného workflow stavu (NABIDKA, SCHUZKA, …).
+        // Po dobu záchrany kontakt v ostatních tabech nezobrazujeme, ať se to nemíchá.
         $tabWhereBase = match ($tab) {
+            'zachrana'   => "c.stav = 'RESCUE_REQUESTED'",
             'nabidka'    => "w.stav = 'NABIDKA'",
             'schuzka'    => "w.stav = 'SCHUZKA'",
             'callback'   => "w.stav = 'CALLBACK'",
@@ -85,6 +91,11 @@ final class OzController
             // dokud OZ neklikne "Přijmout" nebo "Přijmout vše".
             default      => "w.stav IN ('NOVE','OBVOLANO','ZPRACOVAVA')",
         };
+
+        // Filtr c.stav podle aktivního tabu — záchrana má vlastní stav, ostatní jen CALLED_OK
+        $tabStavFilter = ($tab === 'zachrana')
+            ? "c.stav = 'RESCUE_REQUESTED'"
+            : "c.stav = 'CALLED_OK'";
 
         // ── Filtr kraje (z GET, validovaný proti krajům OZ — žádný IDOR) ──
         // OZ smí filtrovat jen na kraje, které mu admin přiřadil.
@@ -104,18 +115,29 @@ final class OzController
 
         // ── Řazení (přepínatelné GET parametrem ?sort=asc|desc) ──
         // Default = asc (nejstarší navrchu — aby OZ viděl, co může vychladnout).
-        // Toggle se aplikuje na "běžné" taby (Rozpracované, Nabídky, Šance,
-        // BO, Nezájem, Reklamace) — taby Callback/Schuzka/Dokonceno mají
-        // smysl řadit dle vlastních dat (callback_at, schuzka_at, closed_at).
+        //
+        // "Poslední aktivita" = GREATEST(workflow.updated_at, MAX(oz_contact_notes.created_at)).
+        // Tj. řadíme podle TOHO, KDY OZ NAPOSLEDY S KONTAKTEM PRACOVAL — změnil
+        // stav, callback datum, schůzku, BMSL… anebo přidal poznámku.
+        // c.datum_volani (datum poslední navolávky) je fallback, kdyby workflow
+        // ještě nebyl založen (nemělo by se stát, ale chrání proti NULL).
+        $lastActivityExpr = "GREATEST(
+            COALESCE(w.updated_at, c.datum_volani, c.created_at, '1970-01-01'),
+            COALESCE((SELECT MAX(n.created_at) FROM oz_contact_notes n
+                      WHERE n.contact_id = c.id AND n.oz_id = :ozid_la), '1970-01-01')
+        )";
+
         $sortDir = strtolower((string) ($_GET['sort'] ?? 'asc'));
         if ($sortDir !== 'desc') { $sortDir = 'asc'; }
         $defaultDir = $sortDir === 'desc'
-            ? 'ORDER BY c.datum_volani IS NULL, c.datum_volani DESC, c.id DESC'
-            : 'ORDER BY c.datum_volani IS NULL, c.datum_volani ASC, c.id ASC';
+            ? "ORDER BY {$lastActivityExpr} DESC, c.id DESC"
+            : "ORDER BY {$lastActivityExpr} ASC, c.id ASC";
         $orderBy = match ($tab) {
             'callback'  => 'ORDER BY w.callback_at IS NULL, w.callback_at ASC, c.id ASC',
             'schuzka'   => 'ORDER BY w.schuzka_at ASC, c.id ASC',
             'dokonceno' => 'ORDER BY COALESCE(w.closed_at, w.updated_at) DESC, c.id DESC',
+            // Záchrany: nejstarší rescue navrchu (čím déle čeká, tím urgentnější — riziko expirace)
+            'zachrana'  => 'ORDER BY c.updated_at ASC, c.id ASC',
             default     => $defaultDir,
         };
 
@@ -156,12 +178,18 @@ final class OzController
                 LEFT JOIN contact_oz_flags f
                        ON f.contact_id = c.id AND f.oz_id = :ozid2
                 WHERE c.assigned_sales_id = :ozid3
-                  AND c.stav IN ('CALLED_OK', 'RESCUE_REQUESTED')
+                  AND {$tabStavFilter}
                   AND {$tabWhere}
                 {$orderBy}";
 
         $stmt = $this->pdo->prepare($sql);
-        $stmt->execute(['ozid1' => $ozId, 'ozid2' => $ozId, 'ozid3' => $ozId]);
+        // ozid_la = parameter pro subquery v ORDER BY ($lastActivityExpr).
+        // PDO ho odmítá pokud není v $orderBy použit, takže předáme jen když je.
+        $execParams = ['ozid1' => $ozId, 'ozid2' => $ozId, 'ozid3' => $ozId];
+        if (strpos($orderBy, ':ozid_la') !== false) {
+            $execParams['ozid_la'] = $ozId;
+        }
+        $stmt->execute($execParams);
         $contacts = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         // ── Historie poznámek (seskupené per kontakt) ─────────────────
@@ -282,25 +310,29 @@ final class OzController
             "SELECT
                 -- Tab Nové: jen aktivně přijaté (workflow stav NOVE/OBVOLANO/ZPRACOVAVA).
                 -- Pending leady (bez workflow řádku) jsou v levém sidebaru, ne tady.
-                SUM(CASE WHEN w.stav IN ('NOVE','OBVOLANO','ZPRACOVAVA')                     THEN 1 ELSE 0 END) AS nove,
-                SUM(CASE WHEN w.stav = 'NABIDKA'                                             THEN 1 ELSE 0 END) AS nabidka,
-                SUM(CASE WHEN w.stav = 'SCHUZKA'                                             THEN 1 ELSE 0 END) AS schuzka,
-                SUM(CASE WHEN w.stav = 'CALLBACK'                                            THEN 1 ELSE 0 END) AS callback,
-                SUM(CASE WHEN w.stav = 'SANCE'                                               THEN 1 ELSE 0 END) AS sance,
-                SUM(CASE WHEN w.stav IN ('SMLOUVA','BO_PREDANO','BO_VPRACI')                 THEN 1 ELSE 0 END) AS bo_predano,
-                SUM(CASE WHEN w.stav = 'BO_VRACENO'                                          THEN 1 ELSE 0 END) AS bo_vraceno,
-                SUM(CASE WHEN w.stav = 'UZAVRENO'
+                -- Pozn: všechny ostatní taby kromě 'zachrana' filtrují na c.stav = 'CALLED_OK',
+                -- aby kontakt v záchraně NEbyl počítaný 2× (zde i v jeho původním tabu).
+                SUM(CASE WHEN c.stav = 'CALLED_OK' AND w.stav IN ('NOVE','OBVOLANO','ZPRACOVAVA') THEN 1 ELSE 0 END) AS nove,
+                SUM(CASE WHEN c.stav = 'CALLED_OK' AND w.stav = 'NABIDKA'                         THEN 1 ELSE 0 END) AS nabidka,
+                SUM(CASE WHEN c.stav = 'CALLED_OK' AND w.stav = 'SCHUZKA'                         THEN 1 ELSE 0 END) AS schuzka,
+                SUM(CASE WHEN c.stav = 'CALLED_OK' AND w.stav = 'CALLBACK'                        THEN 1 ELSE 0 END) AS callback,
+                SUM(CASE WHEN c.stav = 'CALLED_OK' AND w.stav = 'SANCE'                           THEN 1 ELSE 0 END) AS sance,
+                SUM(CASE WHEN c.stav = 'CALLED_OK' AND w.stav IN ('SMLOUVA','BO_PREDANO','BO_VPRACI') THEN 1 ELSE 0 END) AS bo_predano,
+                SUM(CASE WHEN c.stav = 'CALLED_OK' AND w.stav = 'BO_VRACENO'                      THEN 1 ELSE 0 END) AS bo_vraceno,
+                SUM(CASE WHEN c.stav = 'CALLED_OK' AND w.stav = 'UZAVRENO'
                           AND YEAR(COALESCE(w.closed_at, w.updated_at))  = :doneY
-                          AND MONTH(COALESCE(w.closed_at, w.updated_at)) = :doneM                THEN 1 ELSE 0 END) AS dokonceno,
-                SUM(CASE WHEN w.stav IN ('NEZAJEM','NERELEVANTNI')                           THEN 1 ELSE 0 END) AS nezajem,
-                SUM(CASE WHEN w.stav = 'REKLAMACE'                                           THEN 1 ELSE 0 END) AS reklamace
+                          AND MONTH(COALESCE(w.closed_at, w.updated_at)) = :doneM                  THEN 1 ELSE 0 END) AS dokonceno,
+                SUM(CASE WHEN c.stav = 'CALLED_OK' AND w.stav IN ('NEZAJEM','NERELEVANTNI')       THEN 1 ELSE 0 END) AS nezajem,
+                SUM(CASE WHEN c.stav = 'CALLED_OK' AND w.stav = 'REKLAMACE'                       THEN 1 ELSE 0 END) AS reklamace,
+                -- Tab Záchrana: počítá podle c.stav (vlastní filtr, nezávisí na workflow)
+                SUM(CASE WHEN c.stav = 'RESCUE_REQUESTED'                                         THEN 1 ELSE 0 END) AS zachrana
              FROM contacts c
              LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
              WHERE c.assigned_sales_id = :ozid2 AND c.stav IN ('CALLED_OK', 'RESCUE_REQUESTED')"
         );
         $countStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'doneY' => $doneYear, 'doneM' => $doneMonth]);
         $tabCounts = $countStmt->fetch(PDO::FETCH_ASSOC)
-            ?: ['nove' => 0, 'nabidka' => 0, 'schuzka' => 0, 'callback' => 0, 'sance' => 0,
+            ?: ['nove' => 0, 'nabidka' => 0, 'schuzka' => 0, 'callback' => 0, 'sance' => 0, 'zachrana' => 0,
                 'bo_predano' => 0, 'bo_vraceno' => 0, 'dokonceno' => 0, 'nezajem' => 0, 'reklamace' => 0];
 
         // Virtuální agregáty pro super-taby (badge na parent zobrazí součet dětí)
@@ -308,7 +340,8 @@ final class OzController
                            + (int) ($tabCounts['bo_vraceno'] ?? 0)
                            + (int) ($tabCounts['dokonceno']  ?? 0);
         $tabCounts['plan'] = (int) ($tabCounts['callback']   ?? 0)
-                           + (int) ($tabCounts['schuzka']    ?? 0);
+                           + (int) ($tabCounts['schuzka']    ?? 0)
+                           + (int) ($tabCounts['zachrana']   ?? 0);
 
         // ── Výhry a BMSL tento měsíc ──────────────────────────────────
         // Počítají se kontakty se zaškrtnutým "Podpis potvrzen" v tomto měsíci.
@@ -577,7 +610,7 @@ final class OzController
                  FROM contacts c
                  LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
                  WHERE c.assigned_sales_id = :ozid2
-                   AND c.stav IN ('CALLED_OK', 'RESCUE_REQUESTED')
+                   AND {$tabStavFilter}
                    AND ({$tabWhereBase})
                  GROUP BY c.region"
             );

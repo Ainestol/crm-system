@@ -153,9 +153,27 @@
 .oz-tab--dokonceno,
 .oz-tab--nezajem,
 .oz-tab--reklamace,
-.oz-tab--sance {
+.oz-tab--sance,
+.oz-tab--zachrana {
     color: var(--muted);
     border-color: transparent;
+}
+
+/* ── Záchrany — urgentní stav, OZ ho má vidět z dálky.
+   Když má count > 0, badge nutí pozornost oranžovou barvou. */
+.oz-tab--zachrana {
+    color: #ea580c !important;
+    font-weight: 600;
+}
+.oz-tab--zachrana .oz-badge {
+    background: #ea580c;
+    color: #fff;
+    font-weight: 700;
+}
+.oz-tab--zachrana.oz-tab--active {
+    color: #c2410c !important;
+    border-color: #ea580c;
+    background: rgba(234, 88, 12, 0.13);
 }
 
 /* ── Active tab — JEDINÝ kde se zapíná variant color ──

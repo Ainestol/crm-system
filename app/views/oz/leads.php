@@ -399,7 +399,7 @@ $renewalsForOz = $renewalsForOz ?? [];
             ⬇ Nejnovější navrchu
         </a>
         <span style="font-style:italic;opacity:0.7;margin-left:0.4rem;">
-            (dle data poslední navolávky)
+            (dle poslední aktivity — změna stavu nebo poznámka)
         </span>
     </div>
     <?php } ?>
@@ -414,6 +414,7 @@ $renewalsForOz = $renewalsForOz ?? [];
         'callback'   => ['key' => 'callback',   'label' => '📞 Callbacky',            'cls' => 'oz-tab--callback', 'parent' => 'plan'],
         'schuzka'    => ['key' => 'schuzka',    'label' => '📅 Schůzky',              'cls' => 'oz-tab--schuzka',  'parent' => 'plan'],
         'sance'      => ['key' => 'sance',      'label' => '💡 Šance',                'cls' => 'oz-tab--sance',    'title' => 'Zákazník chce, ale chybí mu administrativní doklady'],
+        'zachrana'   => ['key' => 'zachrana',   'label' => '🆘 Záchrany (SOS)',       'cls' => 'oz-tab--zachrana', 'parent' => 'plan', 'title' => 'Kontakty, které jsi předal navolávačce na záchranu (čekají na druhý pokus)'],
         'bo_predano' => ['key' => 'bo_predano', 'label' => '📤 Předáno BO',           'cls' => 'oz-tab--bo',       'parent' => 'bo', 'title' => 'U Back-office ke zpracování'],
         'bo_vraceno' => ['key' => 'bo_vraceno', 'label' => '↩ Vráceno z BO',          'cls' => 'oz-tab--bo',       'parent' => 'bo', 'title' => 'BO vrátil — OZ má doplnit'],
         'dokonceno'  => ['key' => 'dokonceno',  'label' => '✅ Dokončeno',            'cls' => 'oz-tab--dokonceno','parent' => 'bo', 'title' => 'Uzavřené smlouvy — filtr podle měsíce'],
@@ -428,7 +429,7 @@ $renewalsForOz = $renewalsForOz ?? [];
             'key'      => 'plan',
             'label'    => '📅 V plánu',
             'cls'      => 'oz-tab--super-plan',
-            'children' => ['callback', 'schuzka'],
+            'children' => ['callback', 'schuzka', 'zachrana'],
         ],
         'bo'   => [
             'key'      => 'bo',
@@ -439,6 +440,7 @@ $renewalsForOz = $renewalsForOz ?? [];
     ];
 
     // Defaultní top-level pořadí (atomické top-level taby + super-taby)
+    // Záchrany jsou sub-tab uvnitř "V plánu" (parent='plan'), takže tady nejsou.
     $defaultTopOrder = ['nove', 'nabidka', 'plan', 'sance', 'bo', 'reklamace', 'nezajem'];
 
     // Aplikuj per-user pořadí (filtrované — ignoruj sub-tab klíče i neznámé)
@@ -729,6 +731,33 @@ $renewalsForOz = $renewalsForOz ?? [];
     </div>
     <?php } ?>
 
+    <!-- ── Vyhledávání v aktivním tabu (klient-side, instant filter) ── -->
+    <?php if ($contacts !== [] && count($contacts) > 5) { ?>
+    <div id="oz-cards-search-wrap"
+         style="display:flex;gap:0.5rem;align-items:center;margin:0.6rem 0;
+                padding:0.45rem 0.7rem;background:#fff;border:1px solid var(--color-border, rgba(0,0,0,0.1));
+                border-radius:8px;">
+        <span style="font-size:0.85rem;">🔍</span>
+        <input type="text" id="oz-cards-search"
+               placeholder="Hledat v této záložce — firma, telefon, IČO, e-mail…"
+               style="flex:1;border:0;outline:0;padding:0.25rem 0;font-size:0.88rem;
+                      background:transparent;color:var(--text);font-family:inherit;">
+        <button type="button" id="oz-cards-search-clear"
+                onclick="ozCardsSearchClear()"
+                style="background:transparent;border:0;cursor:pointer;color:var(--muted);
+                       font-size:0.75rem;padding:0.2rem 0.45rem;display:none;">✗ Zrušit</button>
+        <span id="oz-cards-search-count"
+              style="font-size:0.72rem;color:var(--muted);font-weight:500;min-width:5rem;text-align:right;">
+            <?= count($contacts) ?> / <?= count($contacts) ?>
+        </span>
+    </div>
+    <p id="oz-cards-search-empty"
+       style="display:none;font-style:italic;color:var(--muted);text-align:center;
+              padding:1.5rem;background:rgba(0,0,0,0.02);border-radius:6px;margin:0.5rem 0;">
+        Žádný kontakt v této záložce neodpovídá hledanému výrazu.
+    </p>
+    <?php } ?>
+
     <!-- ── Kontakty ── -->
     <?php if ($contacts === []) { ?>
         <p class="oz-empty">
@@ -813,7 +842,20 @@ $renewalsForOz = $renewalsForOz ?? [];
             default        => 'badge--' . strtolower($ozStav),
         };
     ?>
-    <div class="oz-contact <?= $stavClass ?>" id="c-<?= $cId ?>">
+    <?php
+    // Data atributy pro klient-side search (filtrace karet bez reloadu).
+    // Pole: firma, telefon (jen číslice), email, IČO (jen číslice), ID.
+    $_searchFirma = mb_strtolower((string)($c['firma']    ?? ''));
+    $_searchTel   = preg_replace('/\D+/', '', (string)($c['telefon'] ?? '')) ?? '';
+    $_searchMail  = mb_strtolower((string)($c['email']    ?? ''));
+    $_searchIco   = preg_replace('/\D+/', '', (string)($c['ico']     ?? '')) ?? '';
+    ?>
+    <div class="oz-contact <?= $stavClass ?>" id="c-<?= $cId ?>"
+         data-search-firma="<?= crm_h($_searchFirma) ?>"
+         data-search-tel="<?= crm_h($_searchTel) ?>"
+         data-search-mail="<?= crm_h($_searchMail) ?>"
+         data-search-ico="<?= crm_h($_searchIco) ?>"
+         data-search-id="<?= $cId ?>">
 
         <!-- Pořadové číslo karty (orientace v dlouhém seznamu) -->
         <span class="oz-card-index" title="Pořadí v této záložce">
@@ -2612,6 +2654,71 @@ window._ozBoUrlBase = <?= json_encode(crm_url('/oz/leads?tab=bo_vraceno#c-')) ?>
 
 </div><!-- /.oz-layout -->
 </section>
+
+<!-- ── Klient-side search v aktivním tabu ────────────────────────────── -->
+<script>
+(function () {
+    'use strict';
+    var input = document.getElementById('oz-cards-search');
+    var clearBtn = document.getElementById('oz-cards-search-clear');
+    var countEl = document.getElementById('oz-cards-search-count');
+    var emptyMsg = document.getElementById('oz-cards-search-empty');
+    if (!input) return;
+
+    function digitsOnly(s) { return (s || '').replace(/\D+/g, ''); }
+
+    function filterCards() {
+        var q = (input.value || '').toLowerCase().trim();
+        var qDigits = digitsOnly(q);
+        var cards = document.querySelectorAll('.oz-contact[data-search-firma]');
+        var total = cards.length;
+        var visible = 0;
+
+        cards.forEach(function (card) {
+            var show = !q;
+            if (q) {
+                var firma = card.dataset.searchFirma || '';
+                var mail  = card.dataset.searchMail  || '';
+                var tel   = card.dataset.searchTel   || '';
+                var ico   = card.dataset.searchIco   || '';
+                var id    = card.dataset.searchId    || '';
+
+                if (firma.indexOf(q) !== -1) show = true;
+                else if (mail.indexOf(q) !== -1) show = true;
+                else if (qDigits.length >= 3 && tel.indexOf(qDigits) !== -1) show = true;
+                else if (qDigits.length >= 3 && ico.indexOf(qDigits) !== -1) show = true;
+                else if (qDigits === id) show = true;
+            }
+            card.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+
+        if (countEl) countEl.textContent = visible + ' / ' + total;
+        if (clearBtn) clearBtn.style.display = q ? '' : 'none';
+        if (emptyMsg) emptyMsg.style.display = (q && visible === 0) ? '' : 'none';
+    }
+
+    var debounceTimer = null;
+    input.addEventListener('input', function () {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(filterCards, 80);
+    });
+    // ESC vyčistí
+    input.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            input.value = '';
+            filterCards();
+        }
+    });
+
+    // Globální helper pro tlačítko ✗ Zrušit
+    window.ozCardsSearchClear = function () {
+        input.value = '';
+        filterCards();
+        input.focus();
+    };
+})();
+</script>
 
 <!-- Backdrop + globální popup — mimo section, na úrovni body -->
 <div class="oz-pending-backdrop" id="oz-pending-backdrop" onclick="ozCloseAllPops()"></div>
