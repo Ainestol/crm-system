@@ -752,10 +752,11 @@
             }
             if (!search) return true;
 
-            // Textová shoda v plain polích
+            // Textová shoda v plain polích (vč. IČO jako text — kdyby měl mezery / vodicí nuly)
             const haystack = (
                 (r.firma || '') + ' ' +
                 (r.email || '') + ' ' +
+                (r.ico || '') + ' ' +
                 (r.region || '') + ' ' +
                 regionLabel(r.region) + ' ' +  // i v lidsky čitelném názvu kraje
                 (r.oz_name || '') + ' ' +
@@ -768,6 +769,12 @@
             if (sDigits.length >= 3) {
                 const phoneDigits = (r.telefon || '').replace(/\D/g, '');
                 if (phoneDigits.includes(sDigits)) return true;
+            }
+
+            // IČO — taky jen digits, aby fungovalo i s vodicími nulami nebo mezerami
+            if (sDigits.length >= 3) {
+                const icoDigits = (r.ico || '').toString().replace(/\D/g, '');
+                if (icoDigits && icoDigits.includes(sDigits)) return true;
             }
 
             // ID match (při hledání čísla zkus i ID)

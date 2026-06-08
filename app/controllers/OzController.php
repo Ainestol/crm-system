@@ -156,7 +156,7 @@ final class OzController
                 LEFT JOIN contact_oz_flags f
                        ON f.contact_id = c.id AND f.oz_id = :ozid2
                 WHERE c.assigned_sales_id = :ozid3
-                  AND c.stav = 'CALLED_OK'
+                  AND c.stav IN ('CALLED_OK', 'RESCUE_REQUESTED')
                   AND {$tabWhere}
                 {$orderBy}";
 
@@ -296,7 +296,7 @@ final class OzController
                 SUM(CASE WHEN w.stav = 'REKLAMACE'                                           THEN 1 ELSE 0 END) AS reklamace
              FROM contacts c
              LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
-             WHERE c.assigned_sales_id = :ozid2 AND c.stav = 'CALLED_OK'"
+             WHERE c.assigned_sales_id = :ozid2 AND c.stav IN ('CALLED_OK', 'RESCUE_REQUESTED')"
         );
         $countStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'doneY' => $doneYear, 'doneM' => $doneMonth]);
         $tabCounts = $countStmt->fetch(PDO::FETCH_ASSOC)
@@ -577,7 +577,7 @@ final class OzController
                  FROM contacts c
                  LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
                  WHERE c.assigned_sales_id = :ozid2
-                   AND c.stav = 'CALLED_OK'
+                   AND c.stav IN ('CALLED_OK', 'RESCUE_REQUESTED')
                    AND ({$tabWhereBase})
                  GROUP BY c.region"
             );

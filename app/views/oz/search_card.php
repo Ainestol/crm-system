@@ -218,6 +218,37 @@ declare(strict_types=1);
         </div>
     </div>
 
+    <?php
+    // ── Poznámka od navolávačky — kritický kontext pro OZ ──
+    // Když si OZ chce převzít kontakt, musí vědět, co s ním navolávačka řešila
+    // (zájem, kterou službu chce, co odmítl). Zobrazujeme c.poznamka (= caller_poznamka v leads.php).
+    $callerPoznamka = trim((string) ($contact['poznamka'] ?? ''));
+    $callerJmeno    = trim((string) ($contact['caller_name'] ?? ''));
+    ?>
+    <?php if ($callerPoznamka !== '' || $callerJmeno !== '') { ?>
+    <div style="background:#fef9c3;border:1px solid #fde047;border-left:5px solid #ca8a04;
+                border-radius:0 8px 8px 0;padding:0.95rem 1.2rem;margin-bottom:1.5rem;">
+        <div style="font-size:0.75rem;color:#854d0e;text-transform:uppercase;
+                    letter-spacing:0.04em;font-weight:700;margin-bottom:0.35rem;">
+            📞 Poznámka od navolávačky
+            <?php if ($callerJmeno !== '') { ?>
+                <span style="font-weight:500;text-transform:none;letter-spacing:0;margin-left:0.3rem;">
+                    — <?= crm_h($callerJmeno) ?>
+                </span>
+            <?php } ?>
+        </div>
+        <?php if ($callerPoznamka !== '') { ?>
+            <div style="font-size:0.92rem;color:#422006;line-height:1.5;white-space:pre-wrap;">
+                <?= crm_h($callerPoznamka) ?>
+            </div>
+        <?php } else { ?>
+            <div style="font-size:0.85rem;color:#854d0e;font-style:italic;">
+                Navolávačka neuložila žádnou poznámku.
+            </div>
+        <?php } ?>
+    </div>
+    <?php } ?>
+
         <!-- Edit mode: tlačítka Uložit / Zrušit (skryté v read mode) -->
         <div id="oz-card-edit-actions" style="display:none;margin-bottom:1.5rem;
              padding:0.8rem 1rem;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;
