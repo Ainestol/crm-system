@@ -227,7 +227,7 @@ declare(strict_types=1);
     ?>
     <?php if ($callerPoznamka !== '' || $callerJmeno !== '') { ?>
     <div style="background:#fef9c3;border:1px solid #fde047;border-left:5px solid #ca8a04;
-                border-radius:0 8px 8px 0;padding:0.95rem 1.2rem;margin-bottom:1.5rem;">
+                border-radius:0 8px 8px 0;padding:0.95rem 1.2rem;margin-bottom:0.9rem;">
         <div style="font-size:0.75rem;color:#854d0e;text-transform:uppercase;
                     letter-spacing:0.04em;font-weight:700;margin-bottom:0.35rem;">
             📞 Poznámka od navolávačky
@@ -246,6 +246,52 @@ declare(strict_types=1);
                 Navolávačka neuložila žádnou poznámku.
             </div>
         <?php } ?>
+    </div>
+    <?php } ?>
+
+    <?php
+    // ── Poznámky OZ — vše co předchozí OZ se zákazníkem řešili ──
+    // Klíčový kontext pro nového převzímatele. Zobrazujeme TYRKYSOVÝ box
+    // jako paralelu k žlutému boxu od navolávačky.
+    /** @var list<array<string,mixed>> $ozNotesAll */
+    $ozNotesAll = $ozNotesAll ?? [];
+    ?>
+    <?php if ($ozNotesAll !== []) { ?>
+    <div style="background:#ecfeff;border:1px solid #a5f3fc;border-left:5px solid #0e7490;
+                border-radius:0 8px 8px 0;padding:0.95rem 1.2rem;margin-bottom:1.5rem;">
+        <div style="font-size:0.75rem;color:#155e75;text-transform:uppercase;
+                    letter-spacing:0.04em;font-weight:700;margin-bottom:0.6rem;
+                    display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+            <span>💼 Poznámky od OZ</span>
+            <span style="background:#0e7490;color:#fff;font-weight:700;
+                         padding:0.1rem 0.5rem;border-radius:10px;font-size:0.7rem;letter-spacing:0;">
+                <?= count($ozNotesAll) ?>
+            </span>
+            <span style="font-weight:500;text-transform:none;letter-spacing:0;
+                         color:#155e75;font-size:0.7rem;font-style:italic;">
+                — co předchozí OZ se zákazníkem řešili (max 20, nejnovější nahoře)
+            </span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.45rem;">
+            <?php foreach ($ozNotesAll as $on) {
+                $onWhen = (string) ($on['created_at'] ?? '');
+                $onWhenFmt = $onWhen !== '' ? date('j. n. Y H:i', strtotime($onWhen)) : '—';
+                $onOz   = (string) ($on['oz_jmeno'] ?? '?');
+                $onMsg  = (string) ($on['note'] ?? '');
+            ?>
+            <div style="background:#fff;border:1px solid rgba(14, 116, 144, 0.18);
+                        border-radius:5px;padding:0.45rem 0.7rem;">
+                <div style="font-size:0.68rem;color:#155e75;margin-bottom:0.15rem;
+                            display:flex;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;">
+                    <strong><?= crm_h($onOz) ?></strong>
+                    <span style="color:#6b7280;"><?= crm_h($onWhenFmt) ?></span>
+                </div>
+                <div style="font-size:0.88rem;color:#1f2937;line-height:1.4;white-space:pre-wrap;">
+                    <?= crm_h($onMsg) ?>
+                </div>
+            </div>
+            <?php } ?>
+        </div>
     </div>
     <?php } ?>
 

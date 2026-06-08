@@ -69,6 +69,25 @@ final class OzSearchController
         $timeline = $this->loadTimeline($cid);
         $statusLabel = $this->statusBadge($contact);
 
+        // ── OZ poznámky pro prominentní box pod poznámkou navolávačky ──
+        // Posledních 20 z oz_contact_notes — co OZ se zákazníkem reálně řešili.
+        // Klíčový kontext pro nového převzímatele: hned vidí co řešili předchozí
+        // OZ (změny stavu, povinné poznámky, reakce zákazníka).
+        $ozNotesAll = [];
+        try {
+            $st = $this->pdo->prepare(
+                "SELECT n.note, n.created_at,
+                        COALESCE(u.jmeno, '?') AS oz_jmeno
+                 FROM oz_contact_notes n
+                 LEFT JOIN users u ON u.id = n.oz_id
+                 WHERE n.contact_id = ?
+                 ORDER BY n.created_at DESC
+                 LIMIT 20"
+            );
+            $st->execute([$cid]);
+            $ozNotesAll = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $_) {}
+
         $flash = crm_flash_take();
         $csrf  = crm_csrf_token();
         $ozId  = (int) $user['id'];
