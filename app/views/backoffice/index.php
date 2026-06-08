@@ -523,7 +523,8 @@ if (!function_exists('boElapsed')) {
                                 </div>
                                 <?php foreach ($contactNotes as $note) {
                                     $noteAuthor = (string) ($note['author_name'] ?? '—');
-                                    $noteText   = (string) ($note['note'] ?? '');
+                                    // Strippneme legacy role-prefix "[OZ: jmeno] " — autor je v hlavičce
+                                    $noteText   = crm_strip_note_prefix((string) ($note['note'] ?? ''));
                                     $noteAt     = (string) ($note['created_at'] ?? '');
                                     $noteAtFmt  = $noteAt !== '' ? date('d.m.Y H:i', strtotime($noteAt)) : '';
                                 ?>

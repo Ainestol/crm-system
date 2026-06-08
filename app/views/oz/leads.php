@@ -1411,10 +1411,40 @@ $renewalsForOz = $renewalsForOz ?? [];
                 <?php if ($contactNotes !== []) { ?>
                 <div class="oz-notes-history">
                     <div class="oz-notes-history__label">Moje poznámky</div>
-                    <?php foreach ($contactNotes as $note) { ?>
+                    <?php
+                    // Mapování role → barevný badge, ať OZ hned vidí když poznámka NE-je od něj
+                    // (typicky admin nebo BO doplnil informaci přes datagrid).
+                    $_noteRoleColors = [
+                        'obchodak'   => ['', '', ''],                                 // OZ sám — bez badge (default)
+                        'majitel'    => ['Majitel',     '#fce7f3', '#9f1239'],
+                        'superadmin' => ['Admin',       '#fce7f3', '#9f1239'],
+                        'backoffice' => ['BO',          '#ede9fe', '#5b21b6'],
+                        'navolavacka'=> ['Navolávačka', '#fef3c7', '#92400e'],
+                    ];
+                    $_myOzName = (string) ($user['jmeno'] ?? '');
+                    foreach ($contactNotes as $note) {
+                        $_author = (string) ($note['author_name'] ?? '');
+                        $_role   = (string) ($note['author_role'] ?? '');
+                        $_showAuthor = ($_author !== '' && $_author !== '—' && $_author !== $_myOzName);
+                        [$_roleLbl, $_roleBg, $_roleFg] = $_noteRoleColors[$_role] ?? ['', '', ''];
+                    ?>
                     <div class="oz-note-item">
-                        <div class="oz-note-item__time"><?= crm_h(date('d.m.Y H:i', strtotime((string)$note['created_at']))) ?></div>
-                        <div class="oz-note-item__text"><?= crm_h((string)$note['note']) ?></div>
+                        <div class="oz-note-item__time">
+                            <?= crm_h(date('d.m.Y H:i', strtotime((string)$note['created_at']))) ?>
+                            <?php if ($_showAuthor) { ?>
+                                <?php if ($_roleLbl !== '') { ?>
+                                    <span style="background:<?= $_roleBg ?>;color:<?= $_roleFg ?>;
+                                                 padding:0.05rem 0.4rem;border-radius:8px;
+                                                 font-weight:700;font-size:0.65rem;margin-left:0.35rem;">
+                                        <?= crm_h($_roleLbl) ?>
+                                    </span>
+                                <?php } ?>
+                                <span style="margin-left:0.25rem;font-style:italic;opacity:0.75;">
+                                    <?= crm_h($_author) ?>
+                                </span>
+                            <?php } ?>
+                        </div>
+                        <div class="oz-note-item__text"><?= crm_h(crm_strip_note_prefix((string)$note['note'])) ?></div>
                     </div>
                     <?php } ?>
                 </div>

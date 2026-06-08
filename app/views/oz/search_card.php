@@ -277,7 +277,8 @@ declare(strict_types=1);
                 $onWhen = (string) ($on['created_at'] ?? '');
                 $onWhenFmt = $onWhen !== '' ? date('j. n. Y H:i', strtotime($onWhen)) : '—';
                 $onOz   = (string) ($on['oz_jmeno'] ?? '?');
-                $onMsg  = (string) ($on['note'] ?? '');
+                // Strippneme legacy prefix "[OZ: jmeno] " — autor je už v hlavičce karty
+                $onMsg  = crm_strip_note_prefix((string) ($on['note'] ?? ''));
             ?>
             <div style="background:#fff;border:1px solid rgba(14, 116, 144, 0.18);
                         border-radius:5px;padding:0.45rem 0.7rem;">
@@ -477,7 +478,7 @@ declare(strict_types=1);
                                 border-left:3px solid <?= crm_h($color) ?>;border-radius:0 5px 5px 0;font-size:0.82rem;">
                         <span style="font-size:1.1rem;line-height:1;"><?= $icon ?></span>
                         <div style="flex:1;">
-                            <div style="color:#1f2937;line-height:1.4;"><?= crm_h((string)$ev['msg']) ?></div>
+                            <div style="color:#1f2937;line-height:1.4;"><?= crm_h(crm_strip_note_prefix((string)$ev['msg'])) ?></div>
                             <small style="color:#9ca3af;display:flex;gap:0.4rem;align-items:center;margin-top:0.15rem;">
                                 <?php if ($roleLbl !== '') { ?>
                                     <span style="background:<?= $roleBg ?>;color:<?= $roleFg ?>;

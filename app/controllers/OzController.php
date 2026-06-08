@@ -198,11 +198,16 @@ final class OzController
             $nStmt = $this->pdo->prepare(
                 // Seskupení per kontakt (contact_id ASC) — uvnitř per kontakt
                 // chronologicky DESC, aby nejnovější poznámka byla nahoře.
-                'SELECT cn.contact_id, cn.note, cn.created_at
+                // JOIN na autora přes COALESCE(author_user_id, oz_id) — pro display
+                // role-badge i jméno admin/BO autora (ne jen vlastníka kontaktu).
+                "SELECT cn.contact_id, cn.note, cn.created_at,
+                        COALESCE(au.jmeno, '—') AS author_name,
+                        COALESCE(au.role,  '')  AS author_role
                  FROM oz_contact_notes cn
                  INNER JOIN contacts c ON c.id = cn.contact_id
+                 LEFT JOIN users au ON au.id = COALESCE(cn.author_user_id, cn.oz_id)
                  WHERE cn.oz_id = :ozid AND c.assigned_sales_id = :ozid2
-                 ORDER BY cn.contact_id ASC, cn.created_at DESC'
+                 ORDER BY cn.contact_id ASC, cn.created_at DESC"
             );
             $nStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
             foreach ($nStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $n) {
@@ -720,12 +725,13 @@ final class OzController
             crm_redirect('/oz/leads?tab=' . $tab . '#c-' . $contactId);
         }
 
-        // Uložit poznámku do historie (jen pokud něco je — prázdnou nezakládáme)
+        // Uložit poznámku do historie (jen pokud něco je — prázdnou nezakládáme).
+        // OZ je sám autorem i vlastníkem → oz_id == author_user_id.
         if ($poznamka !== '') {
             $this->pdo->prepare(
-                'INSERT INTO oz_contact_notes (contact_id, oz_id, note)
-                 VALUES (:cid, :oid, :note)'
-            )->execute(['cid' => $contactId, 'oid' => $ozId, 'note' => $poznamka]);
+                'INSERT INTO oz_contact_notes (contact_id, oz_id, author_user_id, note)
+                 VALUES (:cid, :oid, :aid, :note)'
+            )->execute(['cid' => $contactId, 'oid' => $ozId, 'aid' => $ozId, 'note' => $poznamka]);
         }
 
         // ── NOTE_ONLY: jen poznámka, stav beze změny ─────────────────
@@ -1048,11 +1054,12 @@ final class OzController
         }
         $firma = (string) ($contact['firma'] ?? '');
 
-        // 1. Uložit poznámku do historie
+        // 1. Uložit poznámku do historie (reklamace = OZ sám hlásí chybný lead).
+        //    Prefix [REKLAMACE] zachováme — je to typ akce, ne autor.
         $this->pdo->prepare(
-            'INSERT INTO oz_contact_notes (contact_id, oz_id, note)
-             VALUES (:cid, :oid, :note)'
-        )->execute(['cid' => $contactId, 'oid' => $ozId, 'note' => '[REKLAMACE] ' . $reason]);
+            'INSERT INTO oz_contact_notes (contact_id, oz_id, author_user_id, note)
+             VALUES (:cid, :oid, :aid, :note)'
+        )->execute(['cid' => $contactId, 'oid' => $ozId, 'aid' => $ozId, 'note' => '[REKLAMACE] ' . $reason]);
 
         // Načti starý stav PŘED UPDATE pro audit log
         $oldStavStmt = $this->pdo->prepare(
@@ -3405,12 +3412,12 @@ final class OzController
             }
         }
 
-        // Uložit poznámku do historie (pokud něco je)
+        // Uložit poznámku do historie (pokud něco je). OZ je sám autorem.
         if ($poznamka !== '') {
             $this->pdo->prepare(
-                'INSERT INTO oz_contact_notes (contact_id, oz_id, note)
-                 VALUES (:cid, :oid, :note)'
-            )->execute(['cid' => $contactId, 'oid' => $ozId, 'note' => $poznamka]);
+                'INSERT INTO oz_contact_notes (contact_id, oz_id, author_user_id, note)
+                 VALUES (:cid, :oid, :aid, :note)'
+            )->execute(['cid' => $contactId, 'oid' => $ozId, 'aid' => $ozId, 'note' => $poznamka]);
         }
 
         // NOTE_ONLY: jen poznámka, stav beze změny (zůstane ZPRACOVAVA)

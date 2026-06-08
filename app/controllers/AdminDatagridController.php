@@ -1170,10 +1170,9 @@ final class AdminDatagridController
             return;
         }
 
-        $adminName = (string) ($actor['jmeno'] ?? 'admin');
         $adminId   = (int) $actor['id'];
-        // Prefix pro snadnou identifikaci v UI ostatních rolí
-        $fullNote = '[ADMIN: ' . $adminName . '] ' . $noteText;
+        // Žádný prefix v textu — autor je v user_id (contact_notes) resp.
+        // author_user_id (oz_contact_notes), UI ho ukáže přes JOIN + role-badge.
 
         // Zjisti, kdo má přiřazeného OZ — pokud má, poznámka půjde i do oz_contact_notes,
         // aby ji OZ viděl v leads view (OZ čte z oz_contact_notes, ne z contact_notes).
@@ -1186,19 +1185,22 @@ final class AdminDatagridController
 
         try {
             // 1) Globální timeline (contact_notes) — vidí admin/historie
+            //    user_id = autor (admin)
             $this->pdo->prepare(
                 "INSERT INTO contact_notes (contact_id, user_id, note, created_at)
                  VALUES (?, ?, ?, NOW(3))"
-            )->execute([$contactId, $adminId, $fullNote]);
+            )->execute([$contactId, $adminId, $noteText]);
 
             // 2) OZ-specifická timeline (oz_contact_notes) — vidí OZ ve své pracovní ploše.
             //    Bez tohohle by admin poznámka pro OZ nebyla viditelná (#44).
+            //    oz_id          = vlastník kontaktu (Šáša) — pro filtr v jeho views
+            //    author_user_id = skutečný autor (admin) — pro display v UI
             if ($ozId > 0) {
                 try {
                     $this->pdo->prepare(
-                        "INSERT INTO oz_contact_notes (contact_id, oz_id, note, created_at)
-                         VALUES (?, ?, ?, NOW(3))"
-                    )->execute([$contactId, $ozId, $fullNote]);
+                        "INSERT INTO oz_contact_notes (contact_id, oz_id, author_user_id, note, created_at)
+                         VALUES (?, ?, ?, ?, NOW(3))"
+                    )->execute([$contactId, $ozId, $adminId, $noteText]);
                 } catch (\Throwable $_) {
                     // tabulka nemusí existovat ve starší DB — selhání ignorovat (hlavní zápis prošel)
                 }

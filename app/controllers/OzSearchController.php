@@ -75,11 +75,14 @@ final class OzSearchController
         // OZ (změny stavu, povinné poznámky, reakce zákazníka).
         $ozNotesAll = [];
         try {
+            // JOIN přes COALESCE(author_user_id, oz_id) — pro nová data autor,
+            // pro stará data (před migrací 028) fallback na vlastníka.
             $st = $this->pdo->prepare(
                 "SELECT n.note, n.created_at,
-                        COALESCE(u.jmeno, '?') AS oz_jmeno
+                        COALESCE(u.jmeno, '?') AS oz_jmeno,
+                        COALESCE(u.role,  '')  AS role
                  FROM oz_contact_notes n
-                 LEFT JOIN users u ON u.id = n.oz_id
+                 LEFT JOIN users u ON u.id = COALESCE(n.author_user_id, n.oz_id)
                  WHERE n.contact_id = ?
                  ORDER BY n.created_at DESC
                  LIMIT 20"
@@ -124,16 +127,15 @@ final class OzSearchController
         }
 
         $ozId   = (int) $user['id'];
-        $ozName = (string) ($user['jmeno'] ?? 'OZ');
-        // Prefix podle role, aby ostatní viděli kdo to napsal
-        $prefixed = '[OZ: ' . $ozName . '] ' . $noteText;
 
+        // Žádný prefix — autor (jméno + role) je v JOIN na users přes user_id/oz_id.
+        // UI v search kartě i timeline ho vykresluje vedle textu jako role-badge.
         try {
             // Global timeline (vidí všichni v datagridu)
             $this->pdo->prepare(
                 "INSERT INTO contact_notes (contact_id, user_id, note, created_at)
                  VALUES (?, ?, ?, NOW(3))"
-            )->execute([$cid, $ozId, $prefixed]);
+            )->execute([$cid, $ozId, $noteText]);
 
             // OZ-specifická timeline (vidí OZ na kartě leadu) — jen pokud má OZ assigned
             $cs = $this->pdo->prepare(
@@ -143,10 +145,12 @@ final class OzSearchController
             $assignedOz = (int) ($cs->fetchColumn() ?: 0);
             if ($assignedOz > 0) {
                 try {
+                    // oz_id = vlastník kontaktu (kdo to bude vidět ve svém leads)
+                    // author_user_id = ozId (= aktuální user, který poznámku píše)
                     $this->pdo->prepare(
-                        "INSERT INTO oz_contact_notes (contact_id, oz_id, note, created_at)
-                         VALUES (?, ?, ?, NOW(3))"
-                    )->execute([$cid, $assignedOz, $prefixed]);
+                        "INSERT INTO oz_contact_notes (contact_id, oz_id, author_user_id, note, created_at)
+                         VALUES (?, ?, ?, ?, NOW(3))"
+                    )->execute([$cid, $assignedOz, $ozId, $noteText]);
                 } catch (\Throwable $_) {}
             }
         } catch (\Throwable $e) {
@@ -462,17 +466,16 @@ final class OzSearchController
             }
         } catch (\Throwable $_) {}
 
-        // 2) OZ-specifické notes — co OZ psal na své pracovní ploše /oz/leads
-        //    (povinná poznámka při změně stavu, auto-log z workflow).
-        //    Tohle je DŮLEŽITÉ pro nového převzímatele: bez toho by neviděl,
-        //    co předchozí OZ se zákazníkem řešil.
+        // 2) OZ-specifické notes — co OZ / admin / BO psali přes různá místa.
+        //    JOIN na COALESCE(author_user_id, oz_id) — pro nová data autor,
+        //    pro stará data fallback na vlastníka (před migrací 028).
         try {
             $st = $this->pdo->prepare(
                 "SELECT ocn.note AS msg, ocn.created_at,
                         COALESCE(u.jmeno, '?') AS who,
                         COALESCE(u.role,  '')  AS role
                  FROM oz_contact_notes ocn
-                 LEFT JOIN users u ON u.id = ocn.oz_id
+                 LEFT JOIN users u ON u.id = COALESCE(ocn.author_user_id, ocn.oz_id)
                  WHERE ocn.contact_id = ? ORDER BY ocn.created_at DESC LIMIT 50"
             );
             $st->execute([$cid]);

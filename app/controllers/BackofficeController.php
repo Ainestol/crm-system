@@ -129,12 +129,17 @@ final class BackofficeController
             $nStmt = $this->pdo->query(
                 // Seskupení per kontakt (contact_id ASC) — uvnitř per kontakt
                 // chronologicky DESC, aby nejnovější poznámka byla nahoře.
+                // JOIN přes COALESCE(author_user_id, oz_id) — autor (admin/OZ/BO),
+                // ne jen vlastník kontaktu. Pro stará data je author_user_id NULL,
+                // takže COALESCE padá zpátky na oz_id (vlastník) = stejný display
+                // jako před migrací 028.
                 "SELECT n.contact_id, n.note, n.created_at,
-                        COALESCE(u.jmeno, '—') AS author_name
+                        COALESCE(u.jmeno, '—') AS author_name,
+                        COALESCE(u.role,  '')  AS author_role
                  FROM oz_contact_notes n
                  INNER JOIN contacts c ON c.id = n.contact_id
                  INNER JOIN oz_contact_workflow w ON w.contact_id = c.id
-                 LEFT JOIN users u ON u.id = n.oz_id
+                 LEFT JOIN users u ON u.id = COALESCE(n.author_user_id, n.oz_id)
                  WHERE w.stav IN ('SMLOUVA','BO_PREDANO','BO_VPRACI','BO_VRACENO','UZAVRENO')
                  ORDER BY n.contact_id ASC, n.created_at DESC"
             );

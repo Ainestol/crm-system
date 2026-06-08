@@ -25,6 +25,35 @@ if (!function_exists('crm_db_log_error')) {
     }
 }
 
+if (!function_exists('crm_strip_note_prefix')) {
+    /**
+     * Strippne legacy role-prefixy z poznámek pro display.
+     *
+     * Aplikace dříve do contact_notes / oz_contact_notes přidávala prefix typu
+     *   "[OZ: Šáša] zk."
+     *   "[Caller: Evička] zájem o internet"
+     *   "[Premium] zájem 3x telefon"
+     *   "[admin: jméno] překlik na NABIDKA"
+     *
+     * V novém UI ukazujeme autora vedle (role-badge + jméno), takže prefix je
+     * redundantní a působí zmateně. Helper ho odstraní pro zobrazení; v DB
+     * zůstává původní text kvůli auditu.
+     *
+     * Konzervativní regex — strippne jen "[Slovo: ...] " na samém začátku
+     * (ne uvnitř textu, ať nezničíme legitimní hranaté závorky).
+     */
+    function crm_strip_note_prefix(?string $note): string
+    {
+        $s = (string) ($note ?? '');
+        if ($s === '') return '';
+        // [OZ: Jan]  [Caller: Evička]  [ADMIN: kdokoli]  [BO: ...]
+        $s = preg_replace('/^\s*\[(OZ|Caller|CALLER|admin|Admin|ADMIN|BO|Majitel|MAJITEL|Superadmin|SUPERADMIN)\s*:\s*[^\]]+\]\s*/u', '', $s) ?? $s;
+        // [Premium]  [Záchrana]  [Záchrana: …]  (bez dvojtečky)
+        $s = preg_replace('/^\s*\[(Premium|Záchrana|Zachrana|Rescue)(\s*:\s*[^\]]+)?\]\s*/u', '', $s) ?? $s;
+        return $s;
+    }
+}
+
 if (!function_exists('crm_audit_log')) {
     /**
      * @param array<string, mixed>|null $details
