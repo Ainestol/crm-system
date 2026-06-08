@@ -396,29 +396,51 @@ declare(strict_types=1);
             </p>
         <?php } else { ?>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
-                <?php foreach ($timeline as $ev) {
+                <?php
+                // Mapování role na lidský label + barvu badge (rychlý vizuální klíč:
+                // hned vidíš "tahle poznámka je od navolávačky / OZ / BO / admina")
+                $roleLabels = [
+                    'navolavacka' => ['Navolávačka', '#fef3c7', '#92400e'],
+                    'cisticka'    => ['Čistička',    '#e0e7ff', '#3730a3'],
+                    'obchodak'    => ['OZ',          '#cffafe', '#155e75'],
+                    'backoffice'  => ['BO',          '#ede9fe', '#5b21b6'],
+                    'majitel'     => ['Majitel',     '#fce7f3', '#9f1239'],
+                    'superadmin'  => ['Admin',       '#fce7f3', '#9f1239'],
+                ];
+                foreach ($timeline as $ev) {
                     $icon = match ($ev['type']) {
                         'note'     => '📝',
+                        'oz_note'  => '💼',  // poznámka OZ z jeho pracovní plochy
                         'workflow' => '🔄',
                         'action'   => '📊',
                         default    => '•',
                     };
                     $color = match ($ev['type']) {
                         'note'     => '#16a34a',
-                        'workflow' => '#0e7490',
+                        'oz_note'  => '#0e7490',
+                        'workflow' => '#7c3aed',
                         'action'   => '#ea580c',
                         default    => '#6b7280',
                     };
                     $when = (string)($ev['when'] ?? '');
                     $whenFmt = $when !== '' ? date('j. n. Y H:i', strtotime($when)) : '—';
+                    $role = (string) ($ev['role'] ?? '');
+                    [$roleLbl, $roleBg, $roleFg] = $roleLabels[$role] ?? ['', '#f3f4f6', '#6b7280'];
                 ?>
                     <div style="display:flex;gap:0.7rem;padding:0.5rem 0.7rem;background:#fff;
                                 border-left:3px solid <?= crm_h($color) ?>;border-radius:0 5px 5px 0;font-size:0.82rem;">
                         <span style="font-size:1.1rem;line-height:1;"><?= $icon ?></span>
                         <div style="flex:1;">
                             <div style="color:#1f2937;line-height:1.4;"><?= crm_h((string)$ev['msg']) ?></div>
-                            <small style="color:#9ca3af;">
-                                <?= crm_h((string)$ev['who']) ?> · <?= crm_h($whenFmt) ?>
+                            <small style="color:#9ca3af;display:flex;gap:0.4rem;align-items:center;margin-top:0.15rem;">
+                                <?php if ($roleLbl !== '') { ?>
+                                    <span style="background:<?= $roleBg ?>;color:<?= $roleFg ?>;
+                                                 padding:0.05rem 0.4rem;border-radius:8px;
+                                                 font-weight:700;font-size:0.7rem;">
+                                        <?= crm_h($roleLbl) ?>
+                                    </span>
+                                <?php } ?>
+                                <span><?= crm_h((string)$ev['who']) ?> · <?= crm_h($whenFmt) ?></span>
                             </small>
                         </div>
                     </div>

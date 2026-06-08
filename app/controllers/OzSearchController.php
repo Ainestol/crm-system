@@ -405,29 +405,75 @@ final class OzSearchController
         }
     }
 
-    /** Timeline: contact_notes + workflow_log + oz_contact_actions chronologicky. */
+    /**
+     * Timeline: kompletní historie kontaktu — vidí to každý, kdo otevře search kartu.
+     *
+     * Zahrnuje 4 zdroje (dohromady ukázáno chronologicky DESC, max 80 položek):
+     *   1) contact_notes      — globální (navolávačka, admin datagrid, rescue, premium)
+     *   2) oz_contact_notes   — OZ-specifické poznámky z /oz/leads (povinné při změně stavu)
+     *   3) workflow_log       — historie změn stavů (OZ + BO + rescue + admin)
+     *   4) oz_contact_actions — sdílený pracovní deník OZ ↔ BO
+     *
+     * U každé položky se ukazuje "kdo + role + co" — nový převzímatel hned vidí
+     * kontext (např. "[OZ: Šáša] zákazník chce 3× SIM" nebo "[Caller: Evička] …").
+     */
     private function loadTimeline(int $cid): array
     {
         $events = [];
 
-        // Notes (vidí všichni)
+        // 1) Globální notes (navolávačka, admin, rescue, premium, search-karta)
         try {
             $st = $this->pdo->prepare(
-                "SELECT cn.note AS msg, cn.created_at, COALESCE(u.jmeno, '?') AS who
+                "SELECT cn.note AS msg, cn.created_at,
+                        COALESCE(u.jmeno, '?') AS who,
+                        COALESCE(u.role,  '')  AS role
                  FROM contact_notes cn
                  LEFT JOIN users u ON u.id = cn.user_id
                  WHERE cn.contact_id = ? ORDER BY cn.created_at DESC LIMIT 50"
             );
             $st->execute([$cid]);
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
-                $events[] = ['type' => 'note', 'when' => $r['created_at'], 'msg' => $r['msg'], 'who' => $r['who']];
+                $events[] = [
+                    'type' => 'note',
+                    'when' => $r['created_at'],
+                    'msg'  => $r['msg'],
+                    'who'  => $r['who'],
+                    'role' => (string) ($r['role'] ?? ''),
+                ];
             }
         } catch (\Throwable $_) {}
 
-        // Workflow log
+        // 2) OZ-specifické notes — co OZ psal na své pracovní ploše /oz/leads
+        //    (povinná poznámka při změně stavu, auto-log z workflow).
+        //    Tohle je DŮLEŽITÉ pro nového převzímatele: bez toho by neviděl,
+        //    co předchozí OZ se zákazníkem řešil.
         try {
             $st = $this->pdo->prepare(
-                "SELECT wl.old_status, wl.new_status, wl.note, wl.created_at, COALESCE(u.jmeno, '?') AS who
+                "SELECT ocn.note AS msg, ocn.created_at,
+                        COALESCE(u.jmeno, '?') AS who,
+                        COALESCE(u.role,  '')  AS role
+                 FROM oz_contact_notes ocn
+                 LEFT JOIN users u ON u.id = ocn.oz_id
+                 WHERE ocn.contact_id = ? ORDER BY ocn.created_at DESC LIMIT 50"
+            );
+            $st->execute([$cid]);
+            foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+                $events[] = [
+                    'type' => 'oz_note',
+                    'when' => $r['created_at'],
+                    'msg'  => $r['msg'],
+                    'who'  => $r['who'],
+                    'role' => (string) ($r['role'] ?? ''),
+                ];
+            }
+        } catch (\Throwable $_) {}
+
+        // 3) Workflow log — změny stavů (OZ, BO, rescue, admin)
+        try {
+            $st = $this->pdo->prepare(
+                "SELECT wl.old_status, wl.new_status, wl.note, wl.created_at,
+                        COALESCE(u.jmeno, '?') AS who,
+                        COALESCE(u.role,  '')  AS role
                  FROM workflow_log wl
                  LEFT JOIN users u ON u.id = wl.user_id
                  WHERE wl.contact_id = ? ORDER BY wl.created_at DESC LIMIT 50"
@@ -436,27 +482,41 @@ final class OzSearchController
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
                 $msg = ($r['old_status'] ?: '—') . ' → ' . ($r['new_status'] ?: '—');
                 if (!empty($r['note'])) $msg .= ' · ' . $r['note'];
-                $events[] = ['type' => 'workflow', 'when' => $r['created_at'], 'msg' => $msg, 'who' => $r['who']];
+                $events[] = [
+                    'type' => 'workflow',
+                    'when' => $r['created_at'],
+                    'msg'  => $msg,
+                    'who'  => $r['who'],
+                    'role' => (string) ($r['role'] ?? ''),
+                ];
             }
         } catch (\Throwable $_) {}
 
-        // Actions (sdílený deník OZ/BO)
+        // 4) Actions (sdílený deník OZ/BO)
         try {
             $st = $this->pdo->prepare(
-                "SELECT a.action_text AS msg, a.created_at, COALESCE(u.jmeno, '?') AS who
+                "SELECT a.action_text AS msg, a.created_at,
+                        COALESCE(u.jmeno, '?') AS who,
+                        COALESCE(u.role,  '')  AS role
                  FROM oz_contact_actions a
                  LEFT JOIN users u ON u.id = a.oz_id
                  WHERE a.contact_id = ? ORDER BY a.created_at DESC LIMIT 50"
             );
             $st->execute([$cid]);
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
-                $events[] = ['type' => 'action', 'when' => $r['created_at'], 'msg' => $r['msg'], 'who' => $r['who']];
+                $events[] = [
+                    'type' => 'action',
+                    'when' => $r['created_at'],
+                    'msg'  => $r['msg'],
+                    'who'  => $r['who'],
+                    'role' => (string) ($r['role'] ?? ''),
+                ];
             }
         } catch (\Throwable $_) {}
 
-        // Sort by date DESC
+        // Sort by date DESC, vrátit max 100 (zvětšeno z 80 — máme teď 4 zdroje)
         usort($events, static fn($a, $b) => strcmp((string) $b['when'], (string) $a['when']));
-        return array_slice($events, 0, 80);
+        return array_slice($events, 0, 100);
     }
 
     /** Kdo s kontaktem pracuje? Vrátí ['label', 'color', 'icon']. */
