@@ -257,19 +257,30 @@ declare(strict_types=1);
     $ozNotesAll = $ozNotesAll ?? [];
     ?>
     <?php if ($ozNotesAll !== []) { ?>
+    <?php
+    // Mapování role → label + barvy badge (stejné jako v Historii kontaktu)
+    $_searchCardRoleBadges = [
+        'obchodak'   => ['OZ',          '#cffafe', '#155e75'],
+        'majitel'    => ['Majitel',     '#fce7f3', '#9f1239'],
+        'superadmin' => ['Admin',       '#fce7f3', '#9f1239'],
+        'backoffice' => ['BO',          '#ede9fe', '#5b21b6'],
+        'navolavacka'=> ['Navolávačka', '#fef3c7', '#92400e'],
+        'cisticka'   => ['Čistička',    '#e0e7ff', '#3730a3'],
+    ];
+    ?>
     <div style="background:#ecfeff;border:1px solid #a5f3fc;border-left:5px solid #0e7490;
                 border-radius:0 8px 8px 0;padding:0.95rem 1.2rem;margin-bottom:1.5rem;">
         <div style="font-size:0.75rem;color:#155e75;text-transform:uppercase;
                     letter-spacing:0.04em;font-weight:700;margin-bottom:0.6rem;
                     display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-            <span>💼 Poznámky od OZ</span>
+            <span>💼 Pracovní poznámky</span>
             <span style="background:#0e7490;color:#fff;font-weight:700;
                          padding:0.1rem 0.5rem;border-radius:10px;font-size:0.7rem;letter-spacing:0;">
                 <?= count($ozNotesAll) ?>
             </span>
             <span style="font-weight:500;text-transform:none;letter-spacing:0;
                          color:#155e75;font-size:0.7rem;font-style:italic;">
-                — co předchozí OZ se zákazníkem řešili (max 20, nejnovější nahoře)
+                — od OZ, admina nebo BO (max 20, nejnovější nahoře)
             </span>
         </div>
         <div style="display:flex;flex-direction:column;gap:0.45rem;">
@@ -277,14 +288,25 @@ declare(strict_types=1);
                 $onWhen = (string) ($on['created_at'] ?? '');
                 $onWhenFmt = $onWhen !== '' ? date('j. n. Y H:i', strtotime($onWhen)) : '—';
                 $onOz   = (string) ($on['oz_jmeno'] ?? '?');
-                // Strippneme legacy prefix "[OZ: jmeno] " — autor je už v hlavičce karty
+                $onRole = (string) ($on['role'] ?? '');
+                // Strippneme legacy prefix "[OZ: jmeno] / [ADMIN: ...]" — autor je už v hlavičce karty
                 $onMsg  = crm_strip_note_prefix((string) ($on['note'] ?? ''));
+                [$_rLbl, $_rBg, $_rFg] = $_searchCardRoleBadges[$onRole] ?? ['', '#f3f4f6', '#6b7280'];
             ?>
             <div style="background:#fff;border:1px solid rgba(14, 116, 144, 0.18);
                         border-radius:5px;padding:0.45rem 0.7rem;">
                 <div style="font-size:0.68rem;color:#155e75;margin-bottom:0.15rem;
-                            display:flex;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;">
-                    <strong><?= crm_h($onOz) ?></strong>
+                            display:flex;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+                    <span style="display:flex;align-items:center;gap:0.35rem;">
+                        <?php if ($_rLbl !== '') { ?>
+                            <span style="background:<?= $_rBg ?>;color:<?= $_rFg ?>;
+                                         padding:0.06rem 0.45rem;border-radius:8px;
+                                         font-weight:700;font-size:0.65rem;letter-spacing:0.02em;">
+                                <?= crm_h($_rLbl) ?>
+                            </span>
+                        <?php } ?>
+                        <strong style="color:#155e75;"><?= crm_h($onOz) ?></strong>
+                    </span>
                     <span style="color:#6b7280;"><?= crm_h($onWhenFmt) ?></span>
                 </div>
                 <div style="font-size:0.88rem;color:#1f2937;line-height:1.4;white-space:pre-wrap;">

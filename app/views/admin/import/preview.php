@@ -22,6 +22,10 @@ $dupDbShown      = (int) ($counts['duplicates_in_db_shown']   ?? $dupDb);
 $dncCount        = (int) ($counts['dnc']                      ?? 0);
 $dncShown        = (int) ($counts['dnc_shown']                ?? $dncCount);
 $dupsTruncated   = (bool) ($counts['dups_truncated']          ?? false);
+// Chráněné kontakty (UZAVRENO / DNC / recent NEZAJEM) — hard-skip
+$protectedTotal     = (int)   ($counts['protected_total']     ?? 0);
+$protectedByReason  = (array) ($counts['protected_by_reason']  ?? []);
+$protectedSamples   = (array) ($analysis['protected_samples'] ?? []);
 
 // Per-typ breakdown (kolik shod podle IČO / Tel / Email zvlášť) — pro UI
 $dupFileByMatch = (array) ($counts['duplicates_in_file_by_match'] ?? ['ico' => 0, 'telefon' => 0, 'email' => 0]);
@@ -407,6 +411,46 @@ function renderSnap(array $snap): string {
         <form method="post" action="<?= crm_h(crm_url('/admin/import/commit')) ?>" id="commit-form">
             <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
             <input type="hidden" name="import_id" value="<?= crm_h($importId) ?>">
+            <!-- ── Chráněné kontakty — vždy skipnuté ── -->
+            <?php if ($protectedTotal > 0) { ?>
+            <div style="background:#fef3c7;border:1px solid #fbbf24;border-left:5px solid #d97706;
+                        border-radius:0 8px 8px 0;padding:0.9rem 1.1rem;margin-bottom:1rem;">
+                <div style="font-size:0.85rem;font-weight:700;color:#92400e;margin-bottom:0.4rem;
+                            display:flex;align-items:center;gap:0.4rem;">
+                    🛡 Chráněné kontakty — VŽDY přeskočeny: <span style="color:#7c2d12;"><?= number_format($protectedTotal, 0, ',', ' ') ?></span>
+                </div>
+                <div style="font-size:0.82rem;color:#7c2d12;line-height:1.5;">
+                    Tyto kontakty <strong>se nikdy nepřepíší importem</strong> — bez ohledu na zvolenou
+                    strategii níže. Důvody: aktivní zákazník, DNC list, nedávný NEZAJEM.
+                    <?php if (!empty($protectedByReason)) { ?>
+                        <ul style="margin:0.4rem 0 0;padding-left:1.4rem;">
+                            <?php foreach ($protectedByReason as $reason => $cnt) {
+                                if ((int) $cnt > 0) { ?>
+                                <li><strong><?= (int) $cnt ?>×</strong> <?= crm_h((string) $reason) ?></li>
+                            <?php } } ?>
+                        </ul>
+                    <?php } ?>
+                    <?php if (!empty($protectedSamples)) { ?>
+                        <details style="margin-top:0.5rem;">
+                            <summary style="cursor:pointer;color:#92400e;font-weight:600;">
+                                Ukázat seznam (prvních <?= count($protectedSamples) ?>)
+                            </summary>
+                            <div style="margin-top:0.4rem;font-size:0.75rem;background:rgba(0,0,0,0.04);
+                                        border-radius:5px;padding:0.4rem 0.6rem;max-height:200px;overflow:auto;">
+                                <?php foreach ($protectedSamples as $ps) { ?>
+                                    <div style="padding:0.15rem 0;border-bottom:1px dashed rgba(0,0,0,0.05);">
+                                        Řádek <strong><?= (int) ($ps['row'] ?? 0) ?></strong> ·
+                                        <em><?= crm_h((string) ($ps['firma'] ?? '—')) ?></em>
+                                        — <span style="color:#7c2d12;"><?= crm_h((string) ($ps['reason'] ?? '—')) ?></span>
+                                    </div>
+                                <?php } ?>
+                            </div>
+                        </details>
+                    <?php } ?>
+                </div>
+            </div>
+            <?php } ?>
+
             <!-- Globální dup_action pro DB duplicity (default skip — bezpečné). -->
             <input type="hidden" name="dup_action" id="hid-dup-action" value="skip">
 

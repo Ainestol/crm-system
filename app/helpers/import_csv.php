@@ -549,3 +549,93 @@ if (!function_exists('crm_import_row_duplicate_in_db')) {
         return false;
     }
 }
+
+if (!function_exists('crm_import_is_protected_contact')) {
+    /**
+     * Vrátí (true, "důvod") pokud kontakt by se NEMĚL nikdy přepsat importem.
+     *
+     * Pravidla (any of):
+     *   1. Má uzavřenou smlouvu (oz_contact_workflow.stav = 'UZAVRENO')
+     *      nebo contacts.stav = 'DONE' / 'UZAVRENO'  → aktivní zákazník, ruce pryč
+     *   2. dnc_flag = 1 (zákazník výslovně nechce být kontaktován)
+     *   3. NEZAJEM v posledních 180 dnech (před 6 měsíci nás odmítl —
+     *      reimportovat by ho dostalo zpátky do volání, což je trapas)
+     *
+     * @return array{0:bool, 1:string}  [chráněný?, "důvod pro display"]
+     */
+    function crm_import_is_protected_contact(array $existing): array
+    {
+        $stav    = strtoupper(trim((string) ($existing['stav']     ?? '')));
+        $dnc     = (int)   ($existing['dnc_flag']     ?? 0);
+        $wfStav  = strtoupper(trim((string) ($existing['wf_stav']  ?? '')));
+        $stavAt  = (string) ($existing['stav_changed_at'] ?? $existing['updated_at'] ?? '');
+
+        // 1) Aktivní smlouva — nikdy nepřepisovat
+        if ($stav === 'DONE' || $stav === 'UZAVRENO' || $wfStav === 'UZAVRENO') {
+            return [true, 'Aktivní zákazník (UZAVRENO)'];
+        }
+        // 2) DNC list
+        if ($dnc === 1) {
+            return [true, 'Na DNC listu (zákaz volat)'];
+        }
+        // 3) Recent NEZAJEM (180 dní)
+        if ($stav === 'NEZAJEM' || $stav === 'CALLED_BAD') {
+            if ($stavAt !== '') {
+                $ts = strtotime($stavAt);
+                if ($ts !== false && (time() - $ts) < 86400 * 180) {
+                    return [true, 'Nedávný NEZAJEM (< 180 dní)'];
+                }
+            }
+        }
+        return [false, ''];
+    }
+}
+
+if (!function_exists('crm_import_smart_field')) {
+    /**
+     * Chytré sloučení jednoho textového pole — preferuje delší / vyplněnější verzi.
+     *
+     * Pravidla:
+     *   - Pokud nové pole je prázdné  → vrátí existující (COALESCE-like, fallback)
+     *   - Pokud existující pole je prázdné → vrátí nové
+     *   - Pokud nové pole je DELŠÍ (víc info) → vrátí nové
+     *   - Pokud existující je delší nebo stejně dlouhé → zachová existující
+     *
+     * Tj. „delší vyhrává" — chrání před přepsáním „Jan Novák" na „J. N." z importu.
+     */
+    function crm_import_smart_field(?string $existing, ?string $incoming): ?string
+    {
+        $e = trim((string) ($existing ?? ''));
+        $n = trim((string) ($incoming ?? ''));
+        if ($n === '') return $existing;          // bez nového → zachovat staré
+        if ($e === '') return $incoming;          // bez starého → nové
+        // Stejný text (po normalizaci) → vrátit existující (žádný change)
+        if (mb_strtolower($e, 'UTF-8') === mb_strtolower($n, 'UTF-8')) return $existing;
+        // Delší vyhrává
+        return mb_strlen($n, 'UTF-8') > mb_strlen($e, 'UTF-8') ? $incoming : $existing;
+    }
+}
+
+if (!function_exists('crm_import_merge_phone')) {
+    /**
+     * Merge telefonů — zachová existující + přidá nový pokud se liší.
+     *
+     * Formát: "777111222, 602333444" (pokud existují dva různé telefony,
+     * uloží se oba oddělené čárkou). Maxi 50 znaků = 2-3 telefony.
+     */
+    function crm_import_merge_phone(?string $existing, ?string $incoming): ?string
+    {
+        $e = trim((string) ($existing ?? ''));
+        $n = trim((string) ($incoming ?? ''));
+        if ($n === '') return $existing;
+        if ($e === '') return $incoming;
+        // Porovnání jen digits
+        $eDigits = preg_replace('/\D+/', '', $e) ?? '';
+        $nDigits = preg_replace('/\D+/', '', $n) ?? '';
+        if ($eDigits === $nDigits) return $existing; // stejné číslo (jen jiný formát)
+        // Jsou různá — připojit + uvozenkami
+        $merged = $e . ', ' . $n;
+        if (mb_strlen($merged, 'UTF-8') > 50) return $existing; // limit
+        return $merged;
+    }
+}

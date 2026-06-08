@@ -638,6 +638,9 @@ final class AdminImportController
         // ── Předem načti DNC a existující contacts hashe (pro dedupe) ──
         [$dncIco, $dncPhone, $dncEmail] = $this->loadDncHashes();
         [$dbIco, $dbPhone, $dbEmail]    = $this->loadExistingContactHashes();
+        // Mapu chráněných kontaktů (UZAVRENO / DNC / recent NEZAJEM) — hard-skip
+        // bez ohledu na admin's volbu. Bezpečnost > pohodlí.
+        $protectedDb = $this->loadProtectedContacts();
         // Mapa email → user_id pro validaci oz_email v uzavřených smlouvách
         $usersByEmail   = $this->loadUsersByEmail();
         // Mapa email → user_id pro validaci caller_email (přiřazení navolávačky)
@@ -651,6 +654,14 @@ final class AdminImportController
         $duplicatesFileTotal = 0;
         $duplicatesDbTotal   = 0;
         $dncTotal            = 0;
+
+        // Chráněné DB kontakty, na které import narazil (UZAVRENO / DNC / recent NEZAJEM)
+        // Tyto se VŽDY skipnou, bez ohledu na admin's volbu strategie.
+        $protectedTotal = 0;
+        $protectedSamples = [];   // max 50 pro preview
+        $protectedByReason = ['Aktivní zákazník (UZAVRENO)' => 0,
+                              'Na DNC listu (zákaz volat)' => 0,
+                              'Nedávný NEZAJEM (< 180 dní)' => 0];
 
         // Per-typ breakdown counters (kolik je shod podle IČO / Tel / Email zvlášť).
         // Slouží jen pro UI breakdown v preview — nezahrnuje sample cap.
@@ -850,6 +861,26 @@ final class AdminImportController
             elseif ($pd   !== '' && isset($dbPhone[$pd]))  { $dbDupId = $dbPhone[$pd];   $dbDupOn = 'telefon'; $dbDupVal = $pd;   }
 
             if ($dbDupId !== null) {
+                // ── HARD SKIP pro chráněné kontakty ──
+                // UZAVRENO / DNC / recent NEZAJEM se NIKDY nepřepíše importem,
+                // bez ohledu na admin's volbu strategie. Bezpečnostní pojistka.
+                if (isset($protectedDb[$dbDupId])) {
+                    $protectedTotal++;
+                    $reason = (string) ($protectedDb[$dbDupId]['reason'] ?? '—');
+                    if (isset($protectedByReason[$reason])) $protectedByReason[$reason]++;
+                    if (count($protectedSamples) < 50) {
+                        $protectedSamples[] = [
+                            'row'         => $rowNum,
+                            'existing_id' => $dbDupId,
+                            'match'       => $dbDupOn,
+                            'firma'       => $firma,
+                            'reason'      => $reason,
+                        ];
+                    }
+                    $okRows++;
+                    continue;
+                }
+
                 $duplicatesDbTotal++;
                 if (isset($dupDbByMatch[$dbDupOn])) $dupDbByMatch[$dbDupOn]++;
                 if (count($duplicatesDb) < self::MAX_DUPS_KEPT) {
@@ -886,6 +917,8 @@ final class AdminImportController
             'duplicates_in_file'  => $duplicatesFile,
             'duplicates_in_db'    => $duplicatesDb,
             'dnc'                 => $dnc,
+            // Chráněné kontakty (UZAVRENO / DNC / recent NEZAJEM) — hard-skip
+            'protected_samples'   => $protectedSamples,
             'counts'              => [
                 'errors'                       => count($errors),
                 'duplicates_in_file'           => $duplicatesFileTotal,
@@ -897,6 +930,8 @@ final class AdminImportController
                 'dnc'                          => $dncTotal,
                 'dnc_shown'                    => count($dnc),
                 'dnc_by_match'                 => $dncByMatch,
+                'protected_total'              => $protectedTotal,
+                'protected_by_reason'          => $protectedByReason,
                 'dups_truncated'               => ($duplicatesFileTotal > self::MAX_DUPS_KEPT)
                                                   || ($duplicatesDbTotal > self::MAX_DUPS_KEPT),
             ],
@@ -955,6 +990,9 @@ final class AdminImportController
 
         [$dncIco, $dncPhone, $dncEmail] = $this->loadDncHashes();
         [$dbIco, $dbPhone, $dbEmail]    = $this->loadExistingContactHashes();
+        // Chráněné kontakty (UZAVRENO / DNC / recent NEZAJEM) — hard-skip
+        // bez ohledu na admin's volbu strategie.
+        $protectedDb     = $this->loadProtectedContacts();
         $usersByEmail    = $this->loadUsersByEmail();
         $callersByEmail  = $this->loadCallersByEmail();
 
@@ -1014,6 +1052,9 @@ final class AdminImportController
             $navolavacka  = $this->cell($row, $map, 'navolavacka_name');
             // caller_email = email navolávačky → skutečné PŘIŘAZENÍ kontaktu
             $callerEmailRaw = $this->cell($row, $map, 'caller_email');
+            // BMSL + cislo_smlouvy — info do oz_contact_workflow (smlouvy/rozjednané)
+            $bmslRaw       = $this->cell($row, $map, 'bmsl');
+            $cisloSmlouvy  = $this->cell($row, $map, 'cislo_smlouvy');
 
             if ($firma === '' || $region === '') {
                 $stats['errors']++;
@@ -1083,6 +1124,14 @@ final class AdminImportController
                     $salePrice = (float) $clean;
                 }
             }
+            // BMSL: pozitivní integer (0 = neuvedeno)
+            $bmslInt = null;
+            if (trim($bmslRaw) !== '') {
+                $bmslClean = preg_replace('/\D+/', '', $bmslRaw) ?? '';
+                if ($bmslClean !== '') $bmslInt = (int) $bmslClean;
+            }
+            $cisloSmlouvyClean = trim($cisloSmlouvy);
+            if (mb_strlen($cisloSmlouvyClean) > 100) $cisloSmlouvyClean = mb_substr($cisloSmlouvyClean, 0, 100);
 
             $icoN = crm_import_normalize_ico($ico);
             $emN  = crm_import_normalize_email($email);
@@ -1129,6 +1178,16 @@ final class AdminImportController
             elseif ($emN  !== '' && isset($dbEmail[$emN]))    $dbId = $dbEmail[$emN];
             elseif ($pd   !== '' && isset($dbPhone[$pd]))     $dbId = $dbPhone[$pd];
 
+            // ── HARD SKIP pro chráněné kontakty ──
+            // UZAVRENO / DNC / recent NEZAJEM se NIKDY nepřepíše importem,
+            // bez ohledu na admin's volbu strategie. Bezpečnostní pojistka,
+            // aby aktivní zákazník Honzy neskončil v navolávačce kvůli omylem
+            // nahranému CSV.
+            if ($dbId !== null && isset($protectedDb[$dbId])) {
+                $stats['skipped_protected'] = ($stats['skipped_protected'] ?? 0) + 1;
+                continue;
+            }
+
             $rowData = [
                 'ico'      => $icoN === '' ? null : $icoN,
                 'firma'    => $firma,
@@ -1150,6 +1209,9 @@ final class AdminImportController
                 'datum_volani' => $datumVolaniParsed,  // null nebo Y-m-d
                 // Přiřazení konkrétní navolávačky (pokud zadán caller_email)
                 'caller_user_id' => $callerUserId,     // null pokud sloupec prázdný
+                // BMSL + cislo_smlouvy — pro oz_contact_workflow při uzavřené smlouvě
+                'bmsl'          => $bmslInt,           // int nebo null
+                'cislo_smlouvy' => $cisloSmlouvyClean === '' ? null : $cisloSmlouvyClean,
             ];
 
             if ($dbId !== null) {
@@ -1271,6 +1333,41 @@ final class AdminImportController
             crm_db_log_error($e, __METHOD__);
         }
         return [$ico, $phone, $email];
+    }
+
+    /**
+     * Vrátí mapu contact_id => protected_info pro VŠECHNY kontakty, které jsou
+     * chráněné (UZAVRENO / DNC / recent NEZAJEM). Použito pro hard-skip
+     * při importu — bez ohledu na admin's volbu duplicit.
+     *
+     * Returns: [contact_id => ['reason' => string]]
+     */
+    private function loadProtectedContacts(): array
+    {
+        $protected = [];
+        try {
+            $sql = "SELECT c.id, c.stav, c.dnc_flag, c.stav_changed_at, c.updated_at,
+                           (SELECT w.stav FROM oz_contact_workflow w
+                              WHERE w.contact_id = c.id
+                              ORDER BY w.updated_at DESC LIMIT 1) AS wf_stav
+                    FROM contacts c
+                    WHERE c.stav IN ('DONE','UZAVRENO','NEZAJEM','CALLED_BAD')
+                       OR c.dnc_flag = 1
+                       OR EXISTS (SELECT 1 FROM oz_contact_workflow w2
+                                  WHERE w2.contact_id = c.id AND w2.stav = 'UZAVRENO')";
+            $st = $this->pdo->query($sql);
+            if ($st) {
+                while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
+                    [$isProtected, $reason] = crm_import_is_protected_contact($row);
+                    if ($isProtected) {
+                        $protected[(int) $row['id']] = ['reason' => $reason];
+                    }
+                }
+            }
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__);
+        }
+        return $protected;
     }
 
     /**
@@ -1577,6 +1674,9 @@ final class AdminImportController
                         'id'             => $firstId + $i,
                         'datum_uzavreni' => (string) $r['datum_uzavreni'],
                         'oz_user_id'     => (int) ($r['oz_user_id'] ?? $adminId),
+                        // Volitelné — z importu (mohou být NULL)
+                        'bmsl'           => $r['bmsl']          ?? null,
+                        'cislo_smlouvy'  => $r['cislo_smlouvy'] ?? null,
                     ];
                 } elseif (in_array($stavMapped, $workflowStages, true) && !empty($r['oz_user_id'])) {
                     // Rozjednaný kontakt — vytvoříme workflow s konkrétním stavem
@@ -1585,6 +1685,9 @@ final class AdminImportController
                         'oz_user_id'   => (int) $r['oz_user_id'],
                         'wf_stav'      => $stavMapped, // bulkInsertActiveWorkflow ho použije
                         'started_at'   => !empty($r['datum_volani']) ? ((string) $r['datum_volani']) . ' 00:00:00' : null,
+                        // Volitelné — pokud OZ už zná BMSL nebo má číslo objednávky
+                        'bmsl'          => $r['bmsl']          ?? null,
+                        'cislo_smlouvy' => $r['cislo_smlouvy'] ?? null,
                     ];
                 }
             }
@@ -1619,7 +1722,7 @@ final class AdminImportController
             $changedSql = $r['started_at'] !== null ? ":sb{$p}" : 'NOW(3)';
             $updatedSql = $r['started_at'] !== null ? ":sc{$p}" : 'NOW(3)';
 
-            $placeholders[] = "(:cid{$p},:uid{$p},:stav{$p},{$startedSql},{$changedSql},{$updatedSql})";
+            $placeholders[] = "(:cid{$p},:uid{$p},:stav{$p},{$startedSql},{$changedSql},{$updatedSql},:bmsl{$p},:cis{$p})";
             $values["cid{$p}"]  = $r['id'];
             $values["uid{$p}"]  = $r['oz_user_id'];
             // Pokud admin specifikoval workflow stav (NOVE/ZPRACOVAVA/...), použij ho
@@ -1634,9 +1737,12 @@ final class AdminImportController
                 $values["sb{$p}"] = $r['started_at'];
                 $values["sc{$p}"] = $r['started_at'];
             }
+            // BMSL + číslo objednávky (volitelné z importu)
+            $values["bmsl{$p}"] = isset($r['bmsl']) && $r['bmsl'] !== null ? (int) $r['bmsl'] : null;
+            $values["cis{$p}"]  = $r['cislo_smlouvy'] ?? null;
         }
         $sql = "INSERT INTO oz_contact_workflow
-                  (contact_id, oz_id, stav, started_at, stav_changed_at, updated_at)
+                  (contact_id, oz_id, stav, started_at, stav_changed_at, updated_at, bmsl, cislo_smlouvy)
                 VALUES " . implode(',', $placeholders);
         try {
             $this->pdo->prepare($sql)->execute($values);
@@ -1667,7 +1773,10 @@ final class AdminImportController
             // Fallback na adminId jen pokud něco prošlo bez oz_email (nemělo by se stát,
             // analyzeFile + commitFile to validuje, ale pojistka pro DB integritu).
             $ozId = (int) ($r['oz_user_id'] ?? $adminId);
-            $placeholders[] = "(:cid{$p},:uid{$p},'UZAVRENO',:du{$p},3,1,:dudt{$p},:uid2{$p},:dudt2{$p},:dudt3{$p},:dudt4{$p},NOW(3))";
+            // BMSL + cislo_smlouvy z importu (volitelné)
+            $bmslVal = isset($r['bmsl']) && $r['bmsl'] !== null ? (int) $r['bmsl'] : null;
+            $cisloVal = isset($r['cislo_smlouvy']) ? $r['cislo_smlouvy'] : null;
+            $placeholders[] = "(:cid{$p},:uid{$p},'UZAVRENO',:du{$p},3,1,:dudt{$p},:uid2{$p},:dudt2{$p},:dudt3{$p},:dudt4{$p},NOW(3),:bmsl{$p},:cis{$p})";
             $values["cid{$p}"]   = $r['id'];
             $values["uid{$p}"]   = $ozId;       // OZ co smlouvu uzavřel
             $values["uid2{$p}"]  = $ozId;       // podpis_potvrzen_by — také OZ
@@ -1677,12 +1786,15 @@ final class AdminImportController
             $values["dudt2{$p}"] = $r['datum_uzavreni'] . ' 00:00:00';
             $values["dudt3{$p}"] = $r['datum_uzavreni'] . ' 00:00:00';
             $values["dudt4{$p}"] = $r['datum_uzavreni'] . ' 00:00:00';
+            $values["bmsl{$p}"]  = $bmslVal;
+            $values["cis{$p}"]   = $cisloVal;
         }
         $sql = "INSERT INTO oz_contact_workflow
                   (contact_id, oz_id, stav,
                    datum_uzavreni, smlouva_trvani_roky,
                    podpis_potvrzen, podpis_potvrzen_at, podpis_potvrzen_by,
-                   started_at, closed_at, stav_changed_at, updated_at)
+                   started_at, closed_at, stav_changed_at, updated_at,
+                   bmsl, cislo_smlouvy)
                 VALUES " . implode(',', $placeholders);
         try {
             $this->pdo->prepare($sql)->execute($values);
@@ -1691,49 +1803,87 @@ final class AdminImportController
         }
     }
 
-    /** @param list<array{id:int, data:array<string,mixed>}> $batch */
+    /**
+     * @param list<array{id:int, data:array<string,mixed>}> $batch
+     *
+     * SMART UPDATE — delší vyhrává.
+     *
+     * Místo COALESCE(:new, existing) — což přepíše vše neprázdné — používáme
+     * helper `crm_import_smart_field()` který v PHP porovná existující a nové
+     * pole a vybere "lepší":
+     *   - prázdné → vyhraje neprázdné
+     *   - oba vyplněné a stejný text → zachováno existující (žádná změna)
+     *   - oba vyplněné a různé → vyhraje DELŠÍ (víc info)
+     *
+     * Pro telefony používáme `crm_import_merge_phone()` který spojí dva různé
+     * telefony čárkou.
+     *
+     * Výhoda: existující data se neztratí, když import obsahuje zkrácenou
+     * verzi (např. "J. Novák" se nepřepíše na "Jan Novák").
+     */
     private function flushUpdates(array $batch, int $adminId, string $origName): int
     {
         if ($batch === []) return 0;
-        // Bezpečný UPDATE per-row v jedné transakci.
-        // (Bulk UPDATE přes CASE WHEN by byl rychlejší, ale složitější — pro 300k rows
-        //  se reálně updatuje jen pár tisíc; per-row je dostatečně rychlé.)
+
+        // Načti existující pole pro každé contact_id v batch — potřebujeme
+        // je pro chytré porovnání před UPDATEm.
+        $ids = array_map(static fn($b) => (int) $b['id'], $batch);
+        $idsPh = implode(',', array_fill(0, count($ids), '?'));
+        $existing = [];
+        try {
+            $est = $this->pdo->prepare(
+                "SELECT id, firma, ico, adresa, telefon, email, operator, prilez,
+                        poznamka, narozeniny_majitele, vyrocni_smlouvy
+                 FROM contacts WHERE id IN ({$idsPh})"
+            );
+            $est->execute($ids);
+            foreach ($est->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $existing[(int) $row['id']] = $row;
+            }
+        } catch (\PDOException $e) {
+            crm_db_log_error($e, __METHOD__ . '/load');
+        }
+
         $sql = 'UPDATE contacts SET
                   firma                = :firma,
-                  ico                  = COALESCE(:ico, ico),
-                  adresa               = COALESCE(:adr, adresa),
-                  telefon              = COALESCE(:tel, telefon),
-                  email                = COALESCE(:em, email),
-                  operator             = COALESCE(:op, operator),
-                  prilez               = COALESCE(:prilez, prilez),
+                  ico                  = :ico,
+                  adresa               = :adr,
+                  telefon              = :tel,
+                  email                = :em,
+                  operator             = :op,
+                  prilez               = :prilez,
                   region               = :reg,
-                  poznamka             = COALESCE(:poz, poznamka),
-                  narozeniny_majitele  = COALESCE(:naroz, narozeniny_majitele),
-                  vyrocni_smlouvy      = COALESCE(:vyroci, vyrocni_smlouvy),
+                  poznamka             = :poz,
+                  narozeniny_majitele  = :naroz,
+                  vyrocni_smlouvy      = :vyroci,
                   updated_at           = NOW(3)
                 WHERE id = :id';
         $stmt = $this->pdo->prepare($sql);
         $updated = 0;
-        $note = 'Import update: ' . mb_substr($origName, 0, 200);
+        $note = 'Import update (smart merge): ' . mb_substr($origName, 0, 200);
         $wfStmt = $this->pdo->prepare(
             "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
              VALUES (:cid, :uid, NULL, 'UPDATED_BY_IMPORT', :note, NOW(3))"
         );
         foreach ($batch as $b) {
-            $r = $b['data'];
+            $r  = $b['data'];
+            $ex = $existing[$b['id']] ?? [];
             try {
                 $stmt->execute([
-                    'firma'  => $r['firma'],
-                    'ico'    => $r['ico'],
-                    'adr'    => $r['adr'],
-                    'tel'    => $r['tel'],
-                    'em'     => $r['em'],
-                    'op'     => $r['operator'],
-                    'prilez' => $r['prilez'],
+                    // firma: pokud nová delší/lepší → použít, jinak zachovat starou
+                    'firma'  => crm_import_smart_field((string) ($ex['firma'] ?? ''), (string) $r['firma']) ?: $r['firma'],
+                    // ico: pokud nový vyplněný → použij; jinak starý
+                    'ico'    => crm_import_smart_field((string) ($ex['ico'] ?? ''), (string) ($r['ico'] ?? '')),
+                    'adr'    => crm_import_smart_field((string) ($ex['adresa'] ?? ''), (string) ($r['adr'] ?? '')),
+                    // telefon: merge (dva různé telefony → "777111, 602222")
+                    'tel'    => crm_import_merge_phone((string) ($ex['telefon'] ?? ''), (string) ($r['tel'] ?? '')),
+                    'em'     => crm_import_smart_field((string) ($ex['email'] ?? ''), (string) ($r['em'] ?? '')),
+                    'op'     => crm_import_smart_field((string) ($ex['operator'] ?? ''), (string) ($r['operator'] ?? '')),
+                    'prilez' => crm_import_smart_field((string) ($ex['prilez'] ?? ''), (string) ($r['prilez'] ?? '')),
                     'reg'    => $r['reg'],
-                    'poz'    => $r['poz'],
-                    'naroz'  => $r['naroz'],
-                    'vyroci' => $r['vyroci'],
+                    'poz'    => crm_import_smart_field((string) ($ex['poznamka'] ?? ''), (string) ($r['poz'] ?? '')),
+                    'naroz'  => $r['naroz'] !== null ? $r['naroz'] : ($ex['narozeniny_majitele'] ?? null),
+                    'vyroci' => $r['vyroci'] !== null ? $r['vyroci'] : ($ex['vyrocni_smlouvy'] ?? null),
                     'id'     => $b['id'],
                 ]);
                 if ($stmt->rowCount() > 0) {
@@ -1813,6 +1963,17 @@ final class AdminImportController
             'sale_price' => 'sale_price', 'cena' => 'sale_price',
             'cena_smlouvy' => 'sale_price', 'cena smlouvy' => 'sale_price',
             'price' => 'sale_price', 'castka' => 'sale_price',
+            // BMSL — Báze Měsíčních Smluvních Linek (objem smlouvy v jednotkách)
+            'bmsl' => 'bmsl', 'b_m_s_l' => 'bmsl', 'pocet_linek' => 'bmsl',
+            'pocet_smluv' => 'bmsl', 'units' => 'bmsl',
+            // Číslo objednávky / smlouvy (= referenční číslo z OT)
+            'cislo_smlouvy'    => 'cislo_smlouvy',
+            'cislo_objednavky' => 'cislo_smlouvy',
+            'cislo_objednavk'  => 'cislo_smlouvy',
+            'cislo_ot'         => 'cislo_smlouvy',
+            'cislo'            => 'cislo_smlouvy',
+            'contract_number'  => 'cislo_smlouvy',
+            'order_number'     => 'cislo_smlouvy',
             // Anglické / alternativní názvy pro existující sloupce
             'mobile' => 'telefon',
             'subject_name' => 'firma', 'subject' => 'firma',
