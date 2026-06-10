@@ -1947,7 +1947,10 @@ final class AdminImportController
             'mobil' => 'telefon', 'mobile' => 'telefon', 'tel' => 'telefon', 'tel_' => 'telefon',
             'telefonni_cislo' => 'telefon', 'telefonni cislo' => 'telefon', 'phone' => 'telefon',
             'e_mail' => 'email', 'mail' => 'email', 'email' => 'email',
-            'mesto' => 'mesto', 'ulice' => 'adresa', 'adresa' => 'adresa', 'okres' => 'adresa',
+            'mesto' => 'mesto', 'ulice' => 'adresa', 'adresa' => 'adresa',
+            // 'okres' — primárně se použije pro auto-detekci kraje (jako mesto),
+            // sekundárně jako součást adresy (pokud sloupec adresa neexistuje).
+            'okres' => 'mesto', 'okresy' => 'mesto', 'district' => 'mesto',
             'kraj' => 'kraj', 'region' => 'region',
             'poznamka' => 'poznamka', 'poznamky' => 'poznamka', 'note' => 'poznamka',
             'operator' => 'operator', 'operator_site' => 'operator', 'operator site' => 'operator',

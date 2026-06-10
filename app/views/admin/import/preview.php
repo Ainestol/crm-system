@@ -603,6 +603,65 @@ function renderSnap(array $snap): string {
                     Duplicity v souboru: <?= count($dupsFile) ?>
                     <span class="dup-block__hint">každou můžeš ručně upravit níže</span>
                 </div>
+
+                <!-- ── Info box: vysvětlení defaultů ── -->
+                <div style="background:#dbeafe;border:1px solid #93c5fd;border-left:4px solid #2563eb;
+                            border-radius:0 8px 8px 0;padding:0.7rem 1rem;margin-bottom:0.8rem;
+                            font-size:0.82rem;color:#1e3a8a;line-height:1.55;">
+                    💡 <strong>Nemusíš klikat — defaulty jsou už nastavené:</strong>
+                    <ul style="margin:0.35rem 0 0;padding-left:1.4rem;">
+                        <?php if (($dupFileByMatch['ico'] ?? 0) > 0) { ?>
+                            <li><strong>🏢 IČO (<?= (int) $dupFileByMatch['ico'] ?>)</strong> →
+                                <em>Sloučit</em> (stejná firma = 1 záznam)</li>
+                        <?php } ?>
+                        <?php if (($dupFileByMatch['telefon'] ?? 0) > 0) { ?>
+                            <li><strong>📞 Telefon (<?= (int) $dupFileByMatch['telefon'] ?>)</strong> →
+                                <em>Ponechat odděleně</em> (sdílený telefon = rodina / společný office)</li>
+                        <?php } ?>
+                        <?php if (($dupFileByMatch['email'] ?? 0) > 0) { ?>
+                            <li><strong>✉ Email (<?= (int) $dupFileByMatch['email'] ?>)</strong> →
+                                <em>Ponechat odděleně</em> (sdílený email = info@firma, kontakt na ZÚ)</li>
+                        <?php } ?>
+                    </ul>
+                    <div style="margin-top:0.45rem;font-size:0.78rem;color:#1e40af;">
+                        Pokud ti to vyhovuje, jen klikni <strong>„Spustit import"</strong> dole.
+                        Měnit dropdowny musíš jen pokud chceš konkrétní řádek řešit jinak.
+                    </div>
+                </div>
+
+                <!-- ── Bulk akce: rychlá změna všech duplicit jednoho typu ── -->
+                <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;
+                            margin-bottom:0.6rem;padding:0.5rem 0.7rem;
+                            background:rgba(0,0,0,0.03);border-radius:6px;font-size:0.78rem;">
+                    <span style="font-weight:600;color:var(--text);">⚡ Hromadná akce:</span>
+                    <select id="bulk-file-match" style="font-size:0.78rem;padding:0.25rem 0.4rem;
+                                                          border:1px solid rgba(0,0,0,0.15);border-radius:5px;">
+                        <option value="all">Všechny (<?= count($dupsFile) ?>)</option>
+                        <?php if (($dupFileByMatch['ico'] ?? 0) > 0) { ?>
+                            <option value="ico">🏢 jen IČO (<?= (int) $dupFileByMatch['ico'] ?>)</option>
+                        <?php } ?>
+                        <?php if (($dupFileByMatch['telefon'] ?? 0) > 0) { ?>
+                            <option value="telefon">📞 jen Telefon (<?= (int) $dupFileByMatch['telefon'] ?>)</option>
+                        <?php } ?>
+                        <?php if (($dupFileByMatch['email'] ?? 0) > 0) { ?>
+                            <option value="email">✉ jen Email (<?= (int) $dupFileByMatch['email'] ?>)</option>
+                        <?php } ?>
+                    </select>
+                    <span style="color:var(--muted);">→</span>
+                    <select id="bulk-file-action" style="font-size:0.78rem;padding:0.25rem 0.4rem;
+                                                          border:1px solid rgba(0,0,0,0.15);border-radius:5px;">
+                        <option value="add">➕ Ponechat odděleně</option>
+                        <option value="merge">🔀 Sloučit</option>
+                        <option value="skip">⏭ Přeskočit</option>
+                    </select>
+                    <button type="button" onclick="applyBulkFileAction()"
+                            style="background:#0e7490;color:#fff;border:0;border-radius:5px;
+                                   padding:0.3rem 0.85rem;cursor:pointer;font-size:0.78rem;font-weight:600;">
+                        Použít
+                    </button>
+                    <span id="bulk-file-status" style="font-size:0.72rem;color:#16a34a;font-style:italic;"></span>
+                </div>
+
                 <!-- Filter tlačítka — uživatel si vybere jen typ duplicit který chce vidět -->
                 <div class="dup-filter" data-filter-target="file" style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.5rem;">
                     <button type="button" class="dup-filter__btn is-active" data-match="all">Vše (<?= count($dupsFile) ?>)</button>
@@ -843,6 +902,42 @@ function flashSelect(select) {
     select.style.transition = 'background 0.4s';
     select.style.background = 'rgba(46,204,113,0.18)';
     setTimeout(() => { select.style.background = 'var(--bg)'; }, 500);
+}
+
+/**
+ * Bulk akce: změnit volbu pro všechny duplicity jednoho typu shody najednou.
+ * Šetří klikání — 109 emailů jednou volbou místo 109 dropdownů.
+ */
+function applyBulkFileAction() {
+    const matchSel = document.getElementById('bulk-file-match');
+    const actionSel = document.getElementById('bulk-file-action');
+    const status = document.getElementById('bulk-file-status');
+    if (!matchSel || !actionSel) return;
+
+    const match = matchSel.value;       // 'all' | 'ico' | 'telefon' | 'email'
+    const action = actionSel.value;     // 'add' | 'merge' | 'skip'
+    let changed = 0;
+
+    document.querySelectorAll('tr.dup-row[data-dup-type="file"]').forEach(row => {
+        const rowMatch = row.dataset.match || '';
+        if (match !== 'all' && match !== rowMatch) return;
+        const select = row.querySelector('select.dup-select');
+        if (!select) return;
+        if (select.value !== action) {
+            select.value = action;
+            flashSelect(select);
+            changed++;
+        }
+    });
+
+    if (status) {
+        const actionLbl = actionSel.options[actionSel.selectedIndex].text;
+        status.textContent = changed === 0
+            ? '✓ Nic neměněno (už nastaveno)'
+            : `✓ Změněno ${changed} řádků na „${actionLbl}"`;
+        setTimeout(() => { status.textContent = ''; }, 4000);
+    }
+    if (typeof refreshLiveImportCount === 'function') refreshLiveImportCount();
 }
 
 function applyFileStrategy(mode) {
