@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'helpers' . DIRECTORY_SEPARATOR . 'audit.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'helpers' . DIRECTORY_SEPARATOR . 'contact_phones.php';
 
 /**
  * Obrazovka čističky:
@@ -326,24 +327,21 @@ final class CistickaController
         // outer query pak filtruje jen verify-like řádky. Bez tohoto fixu se NEW=undo řádky
         // ignorovaly v subquery a stats stále počítaly původní READY → po refreshi se počet
         // navyšoval bez ohledu na undo.
+        // Today stats — počítáme PER TELEFON (z contact_phones), ne per kontakt.
+        // Důvod: kontakt s 5 telefony = 5 ověření do faktury, badge "Dnes ověřeno"
+        // musí ukazovat stejné číslo, jinak je to matoucí.
         $statsStmt = $this->pdo->prepare(
             "SELECT
-                SUM(CASE WHEN wl.new_status = 'READY'          THEN 1 ELSE 0 END) AS ready_count,
-                SUM(CASE WHEN wl.new_status = 'VF_SKIP'        THEN 1 ELSE 0 END) AS vf_count,
-                SUM(CASE WHEN wl.new_status = 'CHYBNY_KONTAKT' THEN 1 ELSE 0 END) AS chybny_count,
-                COUNT(*)                                                            AS total_today
-             FROM workflow_log wl
-             INNER JOIN (
-                 SELECT contact_id, MAX(id) AS last_id
-                 FROM workflow_log
-                 WHERE user_id = :uid1
-                   AND DATE(created_at) = CURDATE()
-                 GROUP BY contact_id
-             ) last_per_contact ON last_per_contact.last_id = wl.id
-             WHERE wl.user_id = :uid2
-               AND wl.new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')"
+                SUM(CASE WHEN cp.operator IN ('TM','O2') THEN 1 ELSE 0 END) AS ready_count,
+                SUM(CASE WHEN cp.operator = 'VF'         THEN 1 ELSE 0 END) AS vf_count,
+                SUM(CASE WHEN cp.operator = 'CHYBNY'     THEN 1 ELSE 0 END) AS chybny_count,
+                COUNT(*)                                                     AS total_today
+             FROM contact_phones cp
+             WHERE cp.verified_by = :uid
+               AND cp.verified_at IS NOT NULL
+               AND DATE(cp.verified_at) = CURDATE()"
         );
-        $statsStmt->execute(['uid1' => $cistickaId, 'uid2' => $cistickaId]);
+        $statsStmt->execute(['uid' => $cistickaId]);
         $todayStats = $statsStmt->fetch(PDO::FETCH_ASSOC)
             ?: ['ready_count' => 0, 'vf_count' => 0, 'chybny_count' => 0, 'total_today' => 0];
 
@@ -393,22 +391,26 @@ final class CistickaController
         $cwMonth    = max(1,    min(12,   (int) ($_GET['cw_month'] ?? $cwCurMonth)));
         $cwIsCurrent = ($cwYear === $cwCurYear && $cwMonth === $cwCurMonth);
 
-        // Počet ověření této čističky za vybraný měsíc — DISTINCT contact_id
-        // (kdyby čistička stejný kontakt ověřila víckrát, počítá se 1×).
-        // Bere READY i VF_SKIP — obě se proplácí.
+        // Počet ověření za vybraný měsíc — PER TELEFON (ne per kontakt).
+        // Kontakt s 5 telefony = 5 ověření (čistička klikne 5×, dostane 5×).
+        // Single-phone kontakty se počítají taky (postVerify aktualizuje contact_phones).
+        //
+        // Pokud kontakt byl CHYBNY (= špatný telefon), platí se taky — čistička
+        // odvedla práci ověření, i kdyby výsledek byl "nepoužitelný".
         $cwCntStmt = $this->pdo->prepare(
             "SELECT
-                COUNT(DISTINCT contact_id)                                            AS total,
-                COUNT(DISTINCT CASE WHEN new_status = 'READY'   THEN contact_id END)  AS ready_count,
-                COUNT(DISTINCT CASE WHEN new_status = 'VF_SKIP' THEN contact_id END)  AS vf_count
-             FROM workflow_log
-             WHERE user_id = :uid
-               AND new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')
-               AND YEAR(created_at)  = :y
-               AND MONTH(created_at) = :m"
+                COUNT(*)                                                       AS total,
+                SUM(CASE WHEN cp.operator IN ('TM','O2') THEN 1 ELSE 0 END)    AS ready_count,
+                SUM(CASE WHEN cp.operator = 'VF'         THEN 1 ELSE 0 END)    AS vf_count,
+                SUM(CASE WHEN cp.operator = 'CHYBNY'     THEN 1 ELSE 0 END)    AS chybny_count
+             FROM contact_phones cp
+             WHERE cp.verified_by = :uid
+               AND cp.verified_at IS NOT NULL
+               AND YEAR(cp.verified_at)  = :y
+               AND MONTH(cp.verified_at) = :m"
         );
         $cwCntStmt->execute(['uid' => $cistickaId, 'y' => $cwYear, 'm' => $cwMonth]);
-        $cwCounts = $cwCntStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'ready_count' => 0, 'vf_count' => 0];
+        $cwCounts = $cwCntStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'ready_count' => 0, 'vf_count' => 0, 'chybny_count' => 0];
         $cwTotalCount = (int) ($cwCounts['total'] ?? 0);
         $cwReadyCount = (int) ($cwCounts['ready_count'] ?? 0);
         $cwVfCount    = (int) ($cwCounts['vf_count']    ?? 0);
@@ -416,6 +418,28 @@ final class CistickaController
         // Sazba — current rate (může být null pokud žádná aktivní)
         $cwRate         = $this->currentRewardRate();
         $cwEarnings     = ($cwRate !== null) ? round($cwTotalCount * $cwRate, 2) : 0.0;
+
+        // ── Načíst telefony per-contact pro view (po migraci 029) ──
+        // Pro každý kontakt v seznamu vytáhneme jeho telefony z contact_phones.
+        // Pokud kontakt ještě nemá řádky (čerstvý import před migrací), ensureFor
+        // je vyrobí z contacts.telefon (lazy backfill).
+        $phonesByContact = [];
+        try {
+            foreach ($contacts as $c) {
+                $cid = (int) ($c['id'] ?? 0);
+                if ($cid <= 0) continue;
+                // Lazy ensure (idempotentní — udělá nic pokud už řádky jsou)
+                crm_phone_ensure_for_contact(
+                    $this->pdo, $cid,
+                    (string) ($c['telefon'] ?? ''),
+                    (string) ($c['stav']    ?? ''),
+                    (string) ($c['operator']?? '')
+                );
+                $phonesByContact[$cid] = crm_phones_for_contact($this->pdo, $cid);
+            }
+        } catch (\Throwable $e) {
+            if (function_exists('crm_db_log_error')) crm_db_log_error($e, __METHOD__ . '/phones');
+        }
 
         $title = 'Ověřování kontaktů';
         ob_start();
@@ -448,8 +472,9 @@ final class CistickaController
 
         // Ověř existenci kontaktu ve stavu NEW
         // FETCH region — potřebujeme pro hook bet_assign_lead (sázky)
+        // FETCH telefon — potřebujeme pro contact_phones sync
         $check = $this->pdo->prepare(
-            'SELECT id, stav, operator, region FROM contacts WHERE id = :id AND stav = \'NEW\' LIMIT 1'
+            'SELECT id, stav, operator, region, telefon FROM contacts WHERE id = :id AND stav = \'NEW\' LIMIT 1'
         );
         $check->execute([':id' => $contactId]);
         $contact = $check->fetch(PDO::FETCH_ASSOC);
@@ -478,6 +503,31 @@ final class CistickaController
              SET stav = :stav, operator = :op, updated_at = NOW(3)
              WHERE id = :id'
         )->execute([':stav' => $newStatus, ':op' => $operatorVal, ':id' => $contactId]);
+
+        // Sync do contact_phones — aby fakturní query mohla počítat z jednoho zdroje
+        // (per-phone). Pro single-phone kontakt by zde měl být 1 řádek — aktualizujeme ho.
+        // Pokud žádné řádky nejsou, lazy ensure je vytvoří.
+        try {
+            // Ujistíme se že řádek existuje
+            crm_phone_ensure_for_contact(
+                $this->pdo, $contactId,
+                (string) ($contact['telefon'] ?? ''),
+                'NEW', // kontakt JE NEW v tuto chvíli — nepředat operator
+                ''
+            );
+            // Operator nastavit pro VŠECHNY phones (single-phone má 1 řádek; pokud někdo
+            // má víc telefonů ale klikl single-phone flow, znamená to že je všechny jednou
+            // operátorem — to je legacy chování)
+            $action_label = $action === 'vf_skip' ? 'VF'
+                          : ($action === 'chybny' ? 'CHYBNY' : strtoupper($action));
+            $this->pdo->prepare(
+                'UPDATE contact_phones
+                 SET operator = :op, verified_at = NOW(3), verified_by = :uid
+                 WHERE contact_id = :cid'
+            )->execute(['op' => $action_label, 'uid' => $cistickaId, 'cid' => $contactId]);
+        } catch (\Throwable $e) {
+            if (function_exists('crm_db_log_error')) crm_db_log_error(new \PDOException($e->getMessage()), __METHOD__ . '/sync');
+        }
 
         // Workflow log
         $this->pdo->prepare(
@@ -525,6 +575,161 @@ final class CistickaController
         }
 
         crm_redirect('/cisticka');
+    }
+
+    /**
+     * POST /cisticka/verify-phone – ověřit jeden konkrétní telefon kontaktu.
+     *
+     * Logika:
+     *   - Aktualizuje contact_phones.operator + verified_at + verified_by
+     *   - Vyhodnotí ostatní telefony — pokud VŠECHNY ověřené, posune contacts.stav
+     *     (READY / VF_SKIP / CHYBNY_KONTAKT) + workflow_log + hook na sázky
+     *   - Pokud zbývají neověřené telefony, kontakt zůstává NEW (jen vrátí progres)
+     *
+     * Request:
+     *   contact_id, phone_id, action (tm | o2 | vf | chybny)
+     *
+     * Response (JSON):
+     *   {ok, decision: 'pending'|'READY'|'VF_SKIP'|'CHYBNY_KONTAKT',
+     *    verified_count, total_count, operator_set, bet?}
+     */
+    public function postVerifyPhone(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['cisticka', 'majitel', 'superadmin']);
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            $this->jsonResponse(['ok' => false, 'error' => 'Neplatný CSRF token.']);
+        }
+
+        $cistickaId = (int) $user['id'];
+        $contactId  = (int) ($_POST['contact_id'] ?? 0);
+        $phoneId    = (int) ($_POST['phone_id'] ?? 0);
+        $action     = (string) ($_POST['action'] ?? ''); // tm | o2 | vf | chybny
+
+        if ($contactId <= 0 || $phoneId <= 0 || !in_array($action, ['tm', 'o2', 'vf', 'chybny'], true)) {
+            $this->jsonResponse(['ok' => false, 'error' => 'Neplatný požadavek.']);
+        }
+
+        // Ověř existenci kontaktu — pro reklasifikaci je povolený i non-NEW stav
+        $check = $this->pdo->prepare(
+            "SELECT id, stav, region FROM contacts WHERE id = :id LIMIT 1"
+        );
+        $check->execute(['id' => $contactId]);
+        $contact = $check->fetch(PDO::FETCH_ASSOC);
+        if (!$contact) {
+            $this->jsonResponse(['ok' => false, 'error' => 'Kontakt nenalezen.']);
+        }
+        // Reklasifikace = kontakt už není NEW (= byl ověřen dříve)
+        $isReclassify = ((string) $contact['stav'] !== 'NEW');
+
+        // Ověř že telefon patří tomu kontaktu
+        $checkP = $this->pdo->prepare(
+            'SELECT id, phone FROM contact_phones WHERE id = :pid AND contact_id = :cid LIMIT 1'
+        );
+        $checkP->execute(['pid' => $phoneId, 'cid' => $contactId]);
+        $phoneRow = $checkP->fetch(PDO::FETCH_ASSOC);
+        if (!$phoneRow) {
+            $this->jsonResponse(['ok' => false, 'error' => 'Telefon nepatří tomuto kontaktu.']);
+        }
+
+        // Mapování action → operator string v contact_phones
+        $opUpper = match ($action) {
+            'tm'     => 'TM',
+            'o2'     => 'O2',
+            'vf'     => 'VF',
+            'chybny' => 'CHYBNY',
+        };
+
+        // Uložit ověření 1 telefonu
+        $this->pdo->prepare(
+            'UPDATE contact_phones
+             SET operator = :op, verified_at = NOW(3), verified_by = :uid
+             WHERE id = :pid'
+        )->execute(['op' => $opUpper, 'uid' => $cistickaId, 'pid' => $phoneId]);
+
+        // Vyhodnotit stav kontaktu po tomto ověření
+        $eval = crm_phone_evaluate_contact_status($this->pdo, $contactId);
+
+        // Pokud ne všechny telefony ověřené → kontakt zůstává NEW
+        if ($eval['decision'] === 'pending') {
+            $this->jsonResponse([
+                'ok'             => true,
+                'decision'       => 'pending',
+                'verified_count' => $eval['verified_count'],
+                'total_count'    => $eval['total_count'],
+                'operator_set'   => $opUpper,
+                'reclassify'     => $isReclassify,
+            ]);
+        }
+
+        // Všechny telefony ověřené → finální vyhodnocení + posun stavu
+        $newStatus = (string) $eval['decision'];   // READY / VF_SKIP / CHYBNY_KONTAKT
+        $operatorVal = (string) $eval['operator']; // TM / O2 / VF / ''
+        $oldStav = (string) ($contact['stav'] ?? 'NEW');
+        $label = match ($newStatus) {
+            'READY'           => $operatorVal . ' – připraveno pro navolávačku (multi-phone)',
+            'VF_SKIP'         => 'Všechny telefony VF – přeskočeno',
+            'CHYBNY_KONTAKT'  => 'Všechny telefony chybné',
+            default           => 'Vyhodnoceno: ' . $newStatus,
+        };
+        if ($isReclassify) {
+            $label = 'Reklasifikace: ' . $label;
+        }
+
+        // Update contacts.stav + operator (jen pokud se mění)
+        if ($newStatus !== $oldStav || (string) ($contact['operator'] ?? '') !== $operatorVal) {
+            $this->pdo->prepare(
+                'UPDATE contacts
+                 SET stav = :stav, operator = :op, updated_at = NOW(3)
+                 WHERE id = :id'
+            )->execute(['stav' => $newStatus, 'op' => $operatorVal, 'id' => $contactId]);
+        }
+
+        // Workflow log (pro reklasifikaci s explicitním old → new)
+        $this->pdo->prepare(
+            "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
+             VALUES (:cid, :uid, :old, :new, :note, NOW(3))"
+        )->execute([
+            'cid'  => $contactId,
+            'uid'  => $cistickaId,
+            'old'  => $oldStav,
+            'new'  => $newStatus,
+            'note' => 'Čistička: ' . $label,
+        ]);
+
+        // Hook na sázky (jen pokud READY a původně NEW — nepřiřazujem znova z reklasifikace)
+        $betResult = null;
+        if ($newStatus === 'READY' && !$isReclassify) {
+            try {
+                $region = (string) ($contact['region'] ?? '');
+                if ($region !== '' && function_exists('bet_assign_lead')) {
+                    $betResult = bet_assign_lead($this->pdo, $contactId, $cistickaId, $region);
+                }
+            } catch (\Throwable $e) {
+                if (function_exists('crm_db_log_error')) crm_db_log_error($e, __METHOD__);
+            }
+        }
+
+        $this->jsonResponse([
+            'ok'             => true,
+            'decision'       => $newStatus,
+            'operator'       => $operatorVal,
+            'verified_count' => $eval['verified_count'],
+            'total_count'    => $eval['total_count'],
+            'operator_set'   => $opUpper,
+            'reclassify'     => $isReclassify,
+            'bet'            => $betResult,
+        ]);
+    }
+
+    /** Helper pro JSON response — vyčistí output buffer a vypíše JSON. */
+    private function jsonResponse(array $data): void
+    {
+        while (ob_get_level() > 0) { ob_end_clean(); }
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($data);
+        exit;
     }
 
     /** POST /cisticka/verify-batch – zpracování celé stránky najednou (bulk) */

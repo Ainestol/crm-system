@@ -89,10 +89,16 @@ declare(strict_types=1);
             <div>
                 <label style="font-weight:600;display:block;margin-bottom:0.4rem;">Kraj</label>
                 <div class="chk-grid">
-                    <?php foreach ($regionChoices as $code => $name) { ?>
+                    <?php foreach ($regionChoices as $code) {
+                        // crm_region_choices() vrací list of strings (kódy krajů),
+                        // ne asociativní pole. Hodnota checkboxu = kód kraje.
+                        $label = function_exists('crm_region_label')
+                            ? crm_region_label((string) $code)
+                            : (string) $code;
+                    ?>
                         <label>
-                            <input type="checkbox" name="region[]" value="<?= crm_h((string)$code) ?>">
-                            <span><?= crm_h((string)$name) ?></span>
+                            <input type="checkbox" name="region[]" value="<?= crm_h((string) $code) ?>">
+                            <span><?= crm_h($label) ?></span>
                         </label>
                     <?php } ?>
                 </div>

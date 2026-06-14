@@ -594,6 +594,30 @@ final class CallerController
             $contacts = $this->enrichSharedPhoneInfo($contacts);
         }
 
+        // ── Obohatit o per-telefon info (po migraci 029) ──
+        // Pro každý kontakt načteme všechny telefony + jejich operátora — view
+        // pak u každého telefonu zobrazí badge (TM/O2/VF) takže navolávačka ví,
+        // na jakého operátora číslo padá.
+        $phonesByContact = [];
+        if ($contacts !== []) {
+            require_once dirname(__DIR__) . '/helpers/contact_phones.php';
+            try {
+                $cIds2 = array_map(fn($c) => (int) $c['id'], $contacts);
+                $ph2 = implode(',', array_fill(0, count($cIds2), '?'));
+                $st = $this->pdo->prepare(
+                    'SELECT contact_id, id, phone, phone_digits, operator,
+                            verified_at, position
+                     FROM contact_phones
+                     WHERE contact_id IN (' . $ph2 . ')
+                     ORDER BY contact_id, position ASC, id ASC'
+                );
+                $st->execute($cIds2);
+                foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+                    $phonesByContact[(int) $r['contact_id']][] = $r;
+                }
+            } catch (\Throwable $_) {}
+        }
+
         // ── Bet info: kontakty, které patří do sázky (= OZ je fixně přiřazen) ────────
         // Map: contact_id => { oz_id, oz_name, campaign_id, campaign_name, position }
         // Použito ve view k zobrazení readonly OZ badge místo dropdownu.

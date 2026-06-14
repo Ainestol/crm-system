@@ -429,6 +429,22 @@ final class Router
                 'roles' => ['cisticka', 'majitel', 'superadmin'],
                 'handler' => [CistickaController::class, 'postVerify'],
             ],
+            // Per-telefon ověření (nový — kontakt s víc telefony)
+            [
+                'method' => 'POST',
+                'path' => '/cisticka/verify-phone',
+                'auth' => true,
+                'roles' => ['cisticka', 'majitel', 'superadmin'],
+                'handler' => [CistickaController::class, 'postVerifyPhone'],
+            ],
+            // Jednorázový resync contact_phones (bezpečný — zachová operátory)
+            [
+                'method' => 'POST',
+                'path' => '/admin/maintenance/resync-phones',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminDatagridController::class, 'postResyncPhones'],
+            ],
             [
                 'method' => 'POST',
                 'path' => '/cisticka/verify-batch',

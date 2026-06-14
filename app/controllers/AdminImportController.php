@@ -1656,6 +1656,47 @@ final class AdminImportController
                 crm_db_log_error($e, __METHOD__);
             }
 
+            // ── Rozparsovat telefony "777111, 602222" do contact_phones (po migraci 029) ──
+            // Pro každý kontakt v batchi vezmeme řetězec telefonu a vytvoříme řádky
+            // v contact_phones. Pokud kontakt je NEW (čerstvý), operator se nechá NULL
+            // a čistička je doplní. Pokud je z importu už ověřený (FOR_SALES/DONE),
+            // primární telefon dostane importovaný operator.
+            require_once dirname(__DIR__) . '/helpers/contact_phones.php';
+            try {
+                $phoneIns = $this->pdo->prepare(
+                    'INSERT INTO contact_phones (contact_id, phone, phone_digits, operator,
+                                                  verified_at, position, created_at)
+                     VALUES (:cid, :phone, :digits, :op, :vat, :pos, NOW(3))'
+                );
+                foreach ($batch as $i => $r) {
+                    $cId = $firstId + $i;
+                    $rawTel = (string) ($r['tel'] ?? '');
+                    if ($rawTel === '') continue;
+                    $phones = crm_parse_phones($rawTel);
+                    if ($phones === []) continue;
+                    $importOp = strtoupper(trim((string) ($r['operator'] ?? '')));
+                    $stavMapped = (string) ($r['stav_mapped'] ?? 'NEW');
+                    $alreadyVerified = !in_array($stavMapped, ['NEW', '__INVALID__'], true);
+                    foreach ($phones as $idx => $p) {
+                        // Primární telefon (idx=0) — pokud má kontakt už operator z importu
+                        // a stav není NEW, považujeme za ověřený.
+                        $isPrimary = ($idx === 0);
+                        $opVal     = ($isPrimary && $alreadyVerified && $importOp !== '') ? $importOp : null;
+                        $vatVal    = ($opVal !== null) ? date('Y-m-d H:i:s') : null;
+                        $phoneIns->execute([
+                            'cid'    => $cId,
+                            'phone'  => $p,
+                            'digits' => crm_phone_digits($p),
+                            'op'     => $opVal,
+                            'vat'    => $vatVal,
+                            'pos'    => $idx,
+                        ]);
+                    }
+                }
+            } catch (\Throwable $e) {
+                crm_db_log_error(new \PDOException($e->getMessage()), __METHOD__ . '/phones');
+            }
+
             // ── BONUS: Pro řádky s datum_uzavreni vytvořit i řádek v oz_contact_workflow ──
             // Tím se kontakt rovnou objeví v BO/UZAVRENO tabu a v dashboardu výročí.
             //

@@ -23,6 +23,74 @@ final class AdminDatagridController
 
     public function __construct(private PDO $pdo) {}
 
+    /**
+     * POST /admin/maintenance/resync-phones — jednorázový resync contact_phones.
+     *
+     * Projde všechny kontakty s vícero telefony (čárka / středník) a zavolá
+     * smart-sync — chybějící řádky přidá, existující (s operátorem) zachová,
+     * staré (které už nejsou v contacts.telefon) smaže.
+     *
+     * Bezpečné — žádné existující ověřené operátory se neztratí.
+     * Vrací JSON: {ok, contacts_processed, phones_before, phones_after}.
+     */
+    public function postResyncPhones(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['majitel', 'superadmin']);
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            while (ob_get_level() > 0) { ob_end_clean(); }
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok' => false, 'error' => 'Neplatný CSRF token.']);
+            exit;
+        }
+
+        require_once dirname(__DIR__) . '/helpers/contact_phones.php';
+
+        $beforeCount = (int) $this->pdo->query('SELECT COUNT(*) FROM contact_phones')->fetchColumn();
+
+        // Vybereme jen kontakty s vícero telefony — single-telefon jsou OK
+        $stmt = $this->pdo->query(
+            "SELECT id, telefon, stav, operator
+             FROM contacts
+             WHERE telefon IS NOT NULL
+               AND (telefon LIKE '%,%' OR telefon LIKE '%;%' OR telefon LIKE '%\\n%')"
+        );
+        $processed = 0;
+        $errors = 0;
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            try {
+                crm_phone_ensure_for_contact(
+                    $this->pdo,
+                    (int) $row['id'],
+                    (string) $row['telefon'],
+                    (string) ($row['stav'] ?? ''),
+                    (string) ($row['operator'] ?? '')
+                );
+                $processed++;
+            } catch (\Throwable $e) {
+                $errors++;
+                if (function_exists('crm_db_log_error')) {
+                    crm_db_log_error(new \PDOException($e->getMessage()), __METHOD__);
+                }
+            }
+        }
+
+        $afterCount = (int) $this->pdo->query('SELECT COUNT(*) FROM contact_phones')->fetchColumn();
+
+        while (ob_get_level() > 0) { ob_end_clean(); }
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'ok'                 => true,
+            'contacts_processed' => $processed,
+            'errors'             => $errors,
+            'phones_before'      => $beforeCount,
+            'phones_after'       => $afterCount,
+            'phones_added'       => $afterCount - $beforeCount,
+        ]);
+        exit;
+    }
+
     public function getIndex(): void
     {
         $actor = crm_require_user($this->pdo);
@@ -528,6 +596,22 @@ final class AdminDatagridController
                 "UPDATE contacts SET `$field` = :v, updated_at = NOW(3) WHERE id = :id"
             );
             $upd->execute(['v' => $sqlValue, 'id' => $contactId]);
+
+            // 1b) Při změně telefonu — synchronizovat contact_phones.
+            //     Pokud admin přidá 5 telefonů "777, 602, 555, ...", funkce
+            //     rozparsuje a vytvoří chybějící řádky. Existující řádky
+            //     se stejným digits zachová (i s operátorem).
+            if ($field === 'telefon') {
+                require_once dirname(__DIR__) . '/helpers/contact_phones.php';
+                try {
+                    crm_phone_ensure_for_contact(
+                        $this->pdo, $contactId,
+                        (string) $sqlValue,
+                        (string) ($before['stav']     ?? ''),
+                        (string) ($before['operator'] ?? '')
+                    );
+                } catch (\Throwable $_) {}
+            }
 
             // 2) workflow_log entry (audit) — pro stav nebo owner změny
             if (in_array($field, ['stav', 'assigned_sales_id', 'assigned_caller_id'], true)) {

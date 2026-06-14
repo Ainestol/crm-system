@@ -628,32 +628,117 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
                     $opClass   = match ($currentOp) {
                         'VF' => 'op-vf', 'TM' => 'op-tm', 'O2' => 'op-o2', default => 'op-unknown',
                     };
+                    // ── Per-telefon UI (nový po migraci 029) ──
+                    // Pokud má kontakt řádky v contact_phones, zobrazíme každý telefon
+                    // se samostatnou řadou tlačítek (TM / O2 / VF / Chybný). Kontakt
+                    // se vyhodnotí (READY/VF_SKIP/CHYBNY) až po ověření VŠECH telefonů.
+                    /** @var array<int,list<array<string,mixed>>> $phonesByContact */
+                    $phones = $phonesByContact[$cId] ?? [];
+                    $hasMultiPhones = count($phones) > 1;
                 ?>
                     <div class="cist-row" id="cist-row-<?= $cId ?>" data-region="<?= crm_h((string) ($c['region'] ?? '')) ?>" data-cid="<?= $cId ?>">
                         <div class="cist-info">
                             <span class="cist-firma"><?= crm_h((string) ($c['firma'] ?? '—')) ?></span>
-                            <span class="cist-phone cist-copy"
-                                  data-copy="<?= crm_h((string) ($c['telefon'] ?? '')) ?>"
-                                  data-copy-label="Telefon"
-                                  title="Klikni — zkopíruje telefon do schránky (Ctrl+V kamkoliv)"><?= crm_h((string) ($c['telefon'] ?? '—')) ?></span>
-                            <span class="cist-op-badge <?= $opClass ?>"><?= $currentOp !== '' ? crm_h($currentOp) : '?' ?></span>
+                            <?php if (!$hasMultiPhones) { ?>
+                                <span class="cist-phone cist-copy"
+                                      data-copy="<?= crm_h((string) ($c['telefon'] ?? '')) ?>"
+                                      data-copy-label="Telefon"
+                                      title="Klikni — zkopíruje telefon do schránky (Ctrl+V kamkoliv)"><?= crm_h((string) ($c['telefon'] ?? '—')) ?></span>
+                                <span class="cist-op-badge <?= $opClass ?>"><?= $currentOp !== '' ? crm_h($currentOp) : '?' ?></span>
+                            <?php } else { ?>
+                                <span class="cist-phone" style="font-style:italic;color:var(--muted);">
+                                    📱 <?= count($phones) ?> telefonů
+                                </span>
+                            <?php } ?>
                             <span class="cist-region muted"><?= crm_h(crm_region_label_short((string) ($c['region'] ?? ''))) ?></span>
                         </div>
-                        <div class="cist-actions">
-                            <button type="button" class="btn-cist-vf" onclick="cistVerify(<?= $cId ?>, 'vf_skip', this)" title="Klávesa: 1">
-                                🔴 VF<span class="cist-kbd-hint">1</span>
-                            </button>
-                            <button type="button" class="btn-cist-tm" onclick="cistVerify(<?= $cId ?>, 'tm', this)" title="Klávesa: 2">
-                                🌸 TM<span class="cist-kbd-hint">2</span>
-                            </button>
-                            <button type="button" class="btn-cist-o2" onclick="cistVerify(<?= $cId ?>, 'o2', this)" title="Klávesa: 3">
-                                🔵 O2<span class="cist-kbd-hint">3</span>
-                            </button>
-                            <button type="button" class="btn-cist-chybny" onclick="cistVerify(<?= $cId ?>, 'chybny', this)" title="Klávesa: 4 — chybné / zahraniční / nesmyslné číslo">
-                                🚫 Chybný<span class="cist-kbd-hint">4</span>
-                            </button>
-                        </div>
+                        <?php if (!$hasMultiPhones) { ?>
+                            <!-- Jeden telefon → klasická řada tlačítek (kompatibilita) -->
+                            <div class="cist-actions">
+                                <button type="button" class="btn-cist-vf" onclick="cistVerify(<?= $cId ?>, 'vf_skip', this)" title="Klávesa: 1">
+                                    🔴 VF<span class="cist-kbd-hint">1</span>
+                                </button>
+                                <button type="button" class="btn-cist-tm" onclick="cistVerify(<?= $cId ?>, 'tm', this)" title="Klávesa: 2">
+                                    🌸 TM<span class="cist-kbd-hint">2</span>
+                                </button>
+                                <button type="button" class="btn-cist-o2" onclick="cistVerify(<?= $cId ?>, 'o2', this)" title="Klávesa: 3">
+                                    🔵 O2<span class="cist-kbd-hint">3</span>
+                                </button>
+                                <button type="button" class="btn-cist-chybny" onclick="cistVerify(<?= $cId ?>, 'chybny', this)" title="Klávesa: 4 — chybné / zahraniční / nesmyslné číslo">
+                                    🚫 Chybný<span class="cist-kbd-hint">4</span>
+                                </button>
+                            </div>
+                        <?php } ?>
                     </div>
+                    <?php if ($hasMultiPhones) {
+                        // Multi-phone řádek — pro každý telefon vlastní subrow
+                        $verifiedCount = count(array_filter($phones, fn($p) => !empty($p['verified_at'])));
+                        $totalCountP   = count($phones);
+                    ?>
+                    <div class="cist-multiphone-wrap" id="cist-multi-<?= $cId ?>"
+                         data-cid="<?= $cId ?>"
+                         style="background:rgba(0,0,0,0.025);border-left:3px solid #0e7490;
+                                margin:0 0 0.4rem 1.5rem;padding:0.5rem 0.8rem;border-radius:0 6px 6px 0;">
+                        <div style="display:flex;align-items:center;gap:0.4rem;margin-bottom:0.4rem;
+                                    font-size:0.78rem;color:#155e75;font-weight:600;">
+                            <span>📞 Ověř každý telefon (multi-phone kontakt):</span>
+                            <span id="cist-multi-progress-<?= $cId ?>"
+                                  style="background:#0e7490;color:#fff;padding:0.08rem 0.45rem;
+                                         border-radius:10px;font-size:0.7rem;">
+                                <?= $verifiedCount ?>/<?= $totalCountP ?>
+                            </span>
+                        </div>
+                        <?php foreach ($phones as $p) {
+                            $pId       = (int) $p['id'];
+                            $pPhone    = (string) ($p['phone'] ?? '');
+                            $pOp       = strtoupper((string) ($p['operator'] ?? ''));
+                            $pVerifiedAt = (string) ($p['verified_at'] ?? '');
+                            $isVerified  = ($pVerifiedAt !== '' && $pOp !== '');
+                            $rowBg = match ($pOp) {
+                                'TM'     => 'rgba(236,72,153,0.06)',
+                                'O2'     => 'rgba(37,99,235,0.06)',
+                                'VF'     => 'rgba(220,38,38,0.06)',
+                                'CHYBNY' => 'rgba(107,114,128,0.08)',
+                                default  => '#fff',
+                            };
+                        ?>
+                        <div class="cist-phone-subrow"
+                             id="cist-phone-<?= $pId ?>"
+                             data-pid="<?= $pId ?>"
+                             data-cid="<?= $cId ?>"
+                             data-verified="<?= $isVerified ? '1' : '0' ?>"
+                             style="display:flex;align-items:center;gap:0.4rem;padding:0.35rem 0.4rem;
+                                    background:<?= $rowBg ?>;border:1px solid rgba(0,0,0,0.08);
+                                    border-radius:5px;margin-bottom:0.3rem;font-size:0.85rem;">
+                            <span class="cist-copy"
+                                  data-copy="<?= crm_h($pPhone) ?>"
+                                  data-copy-label="Telefon"
+                                  style="font-family:monospace;flex:1;cursor:pointer;"
+                                  title="Klikni — zkopíruje telefon"><?= crm_h($pPhone) ?></span>
+                            <?php if ($isVerified) { ?>
+                                <span style="background:<?= $pOp === 'CHYBNY' ? '#9ca3af' : ($pOp === 'VF' ? '#dc2626' : ($pOp === 'TM' ? '#ec4899' : '#2563eb')) ?>;
+                                             color:#fff;padding:0.12rem 0.5rem;border-radius:8px;
+                                             font-weight:700;font-size:0.72rem;">
+                                    ✓ <?= crm_h($pOp) ?>
+                                </span>
+                            <?php } else { ?>
+                                <button type="button" class="btn-cist-vf"
+                                        onclick="cistVerifyPhone(<?= $cId ?>, <?= $pId ?>, 'vf', this)"
+                                        style="padding:0.2rem 0.55rem;font-size:0.75rem;">🔴 VF</button>
+                                <button type="button" class="btn-cist-tm"
+                                        onclick="cistVerifyPhone(<?= $cId ?>, <?= $pId ?>, 'tm', this)"
+                                        style="padding:0.2rem 0.55rem;font-size:0.75rem;">🌸 TM</button>
+                                <button type="button" class="btn-cist-o2"
+                                        onclick="cistVerifyPhone(<?= $cId ?>, <?= $pId ?>, 'o2', this)"
+                                        style="padding:0.2rem 0.55rem;font-size:0.75rem;">🔵 O2</button>
+                                <button type="button" class="btn-cist-chybny"
+                                        onclick="cistVerifyPhone(<?= $cId ?>, <?= $pId ?>, 'chybny', this)"
+                                        style="padding:0.2rem 0.55rem;font-size:0.75rem;">🚫 Chybný</button>
+                            <?php } ?>
+                        </div>
+                        <?php } ?>
+                    </div>
+                    <?php } ?>
                 <?php } ?>
             </div>
 
@@ -685,14 +770,68 @@ function cistPagination(int $page, int $totalPages, string $tab, string $selecte
                     };
                     $verifiedAt = (string) ($c['verified_at'] ?? '');
                 ?>
+                    <?php
+                    // Per-phone rozpis pro multi-phone kontakty (zobrazí každý telefon zvlášť)
+                    $zPhones = $phonesByContact[$cId] ?? [];
+                    $hasMultiPhonesZ = count($zPhones) > 1;
+                    $opColorMap = [
+                        'TM'     => ['#ec4899', '#fff'],
+                        'O2'     => ['#2563eb', '#fff'],
+                        'VF'     => ['#dc2626', '#fff'],
+                        'CHYBNY' => ['#9ca3af', '#fff'],
+                    ];
+                    ?>
                     <div class="cist-row <?= $rowClass ?>" id="zkont-row-<?= $cId ?>">
-                        <div class="cist-info">
+                        <div class="cist-info" style="<?= $hasMultiPhonesZ ? 'align-items:flex-start;' : '' ?>">
                             <span class="cist-firma"><?= crm_h((string) ($c['firma'] ?? '—')) ?></span>
-                            <span class="cist-phone cist-copy"
-                                  data-copy="<?= crm_h((string) ($c['telefon'] ?? '')) ?>"
-                                  data-copy-label="Telefon"
-                                  title="Klikni — zkopíruje telefon do schránky (Ctrl+V kamkoliv)"><?= crm_h((string) ($c['telefon'] ?? '—')) ?></span>
-                            <span class="cist-op-badge <?= 'op-' . strtolower($op) ?>" id="zkont-badge-<?= $cId ?>"><?= crm_h($op !== '' ? $op : '?') ?></span>
+                            <?php if (!$hasMultiPhonesZ) { ?>
+                                <span class="cist-phone cist-copy"
+                                      data-copy="<?= crm_h((string) ($c['telefon'] ?? '')) ?>"
+                                      data-copy-label="Telefon"
+                                      title="Klikni — zkopíruje telefon do schránky (Ctrl+V kamkoliv)"><?= crm_h((string) ($c['telefon'] ?? '—')) ?></span>
+                                <span class="cist-op-badge <?= 'op-' . strtolower($op) ?>" id="zkont-badge-<?= $cId ?>"><?= crm_h($op !== '' ? $op : '?') ?></span>
+                            <?php } else { ?>
+                                <span style="display:flex;flex-direction:column;gap:0.25rem;flex:1;">
+                                    <?php foreach ($zPhones as $zp) {
+                                        $zpId    = (int) ($zp['id'] ?? 0);
+                                        $zpPhone = (string) ($zp['phone'] ?? '');
+                                        $zpOp    = strtoupper((string) ($zp['operator'] ?? ''));
+                                        [$zpBg, $zpFg] = $opColorMap[$zpOp] ?? ['#9ca3af', '#fff'];
+                                    ?>
+                                        <span class="cist-phone-row" id="zp-row-<?= $zpId ?>"
+                                              data-pid="<?= $zpId ?>" data-cid="<?= $cId ?>"
+                                              style="display:inline-flex;align-items:center;gap:0.4rem;font-size:0.85rem;
+                                                     position:relative;">
+                                            <span class="cist-copy" data-copy="<?= crm_h($zpPhone) ?>"
+                                                  data-copy-label="Telefon"
+                                                  style="font-family:monospace;cursor:pointer;"><?= crm_h($zpPhone) ?></span>
+                                            <?php if ($zpOp !== '') { ?>
+                                                <button type="button"
+                                                        onclick="cistPhonePopup(<?= $cId ?>, <?= $zpId ?>, '<?= $zpOp ?>', this)"
+                                                        title="Klikni pro změnu operátora"
+                                                        id="zp-badge-<?= $zpId ?>"
+                                                        style="background:<?= $zpBg ?>;color:<?= $zpFg ?>;
+                                                               font-size:0.64rem;font-weight:700;
+                                                               padding:0.06rem 0.5rem;border-radius:8px;
+                                                               border:0;cursor:pointer;font-family:inherit;
+                                                               display:inline-flex;align-items:center;gap:0.2rem;">
+                                                    <?= crm_h($zpOp) ?> <span style="opacity:0.7;font-size:0.6rem;">▾</span>
+                                                </button>
+                                            <?php } else { ?>
+                                                <button type="button"
+                                                        onclick="cistPhonePopup(<?= $cId ?>, <?= $zpId ?>, '', this)"
+                                                        id="zp-badge-<?= $zpId ?>"
+                                                        style="background:#9ca3af;color:#fff;
+                                                               font-size:0.64rem;font-weight:700;
+                                                               padding:0.06rem 0.5rem;border-radius:8px;
+                                                               border:0;cursor:pointer;font-family:inherit;">
+                                                    — ▾
+                                                </button>
+                                            <?php } ?>
+                                        </span>
+                                    <?php } ?>
+                                </span>
+                            <?php } ?>
                             <span class="cist-region muted"><?= crm_h(crm_region_label_short((string) ($c['region'] ?? ''))) ?></span>
                         </div>
                         <div class="cist-verified-info">
@@ -762,6 +901,250 @@ var CIST_RECLASSIFY_URL = <?= json_encode(crm_url('/cisticka/reclassify')) ?>;
 var CIST_IS_CURRENT_PERIOD = <?= json_encode((bool) $isCurrentPeriod) ?>;
 
 var UNDO_SECONDS = 5;
+
+/* ── Reklasifikace telefonu (Zkontrolováno tab) ────────────────────
+   Klik na badge → inline popup se 4 možnostmi. Klik na možnost
+   → reklasifikace přes /cisticka/verify-phone (s reclassify=1).
+   Server vyhodnotí kontakt znovu — pokud aspoň 1 telefon NE-VF
+   NE-CHYBNY → stav zůstává READY, jen se možná změní operator.
+─────────────────────────────────────────────────────────────────── */
+function cistPhonePopup(contactId, phoneId, currentOp, btn) {
+    // Pokud popup už existuje pro tento phone → zavřít
+    var existing = document.getElementById('zp-popup-' + phoneId);
+    if (existing) { existing.remove(); return; }
+    // Zavři všechny ostatní otevřené
+    document.querySelectorAll('[id^="zp-popup-"]').forEach(p => p.remove());
+
+    var pop = document.createElement('div');
+    pop.id = 'zp-popup-' + phoneId;
+    // position:fixed + appended na <body> → překrývá VŠECHNO včetně title tooltipů z okolních elementů
+    pop.style.cssText = 'position:fixed;z-index:99999;' +
+                        'background:#fff;border:1px solid #d1d5db;border-radius:6px;' +
+                        'box-shadow:0 8px 24px rgba(0,0,0,0.22);' +
+                        'padding:0.35rem;display:flex;flex-direction:column;gap:0.2rem;' +
+                        'min-width:130px;';
+
+    var ops = [
+        { code: 'tm',     label: '🌸 TM',      color: '#ec4899' },
+        { code: 'o2',     label: '🔵 O2',      color: '#2563eb' },
+        { code: 'vf',     label: '🔴 VF',      color: '#dc2626' },
+        { code: 'chybny', label: '🚫 Chybný',  color: '#6b7280' },
+    ];
+    ops.forEach(o => {
+        if (o.code.toUpperCase() === currentOp ||
+            (o.code === 'chybny' && currentOp === 'CHYBNY')) return; // aktuální skip
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.style.cssText = 'background:#fff;border:0;text-align:left;padding:0.4rem 0.65rem;' +
+                          'cursor:pointer;font-size:0.82rem;border-radius:4px;color:' + o.color + ';font-weight:600;';
+        b.textContent = o.label;
+        b.onmouseover = () => { b.style.background = 'rgba(0,0,0,0.06)'; };
+        b.onmouseout  = () => { b.style.background = '#fff'; };
+        b.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            pop.remove();
+            cistReclassifyPhone(contactId, phoneId, o.code);
+        };
+        pop.appendChild(b);
+    });
+
+    // Appendnout přímo na body — žádné překrývání s parent kontejnerem
+    document.body.appendChild(pop);
+
+    // Skrýt title tooltipy v okolí (aby browser nezobrazoval native tooltip přes popup).
+    // Backup title se obnoví při zavření.
+    var hiddenTitles = [];
+    document.querySelectorAll('[title]').forEach(el => {
+        if (el === btn) return;
+        var t = el.getAttribute('title');
+        if (t) {
+            hiddenTitles.push({ el: el, title: t });
+            el.removeAttribute('title');
+        }
+    });
+    // Backup pro restore — přidělíme do popupu jako data
+    pop._hiddenTitles = hiddenTitles;
+    var origRemove = pop.remove.bind(pop);
+    pop.remove = function () {
+        if (pop._hiddenTitles) {
+            pop._hiddenTitles.forEach(t => { t.el.setAttribute('title', t.title); });
+        }
+        origRemove();
+    };
+
+    // Vypočítat pozici hned pod badge (s ohledem na hranu okna)
+    var rect = btn.getBoundingClientRect();
+    var popH = pop.offsetHeight;
+    var popW = pop.offsetWidth;
+    var top = rect.bottom + 4;
+    var left = rect.left;
+    // Pokud popup spadne pod kraj viewportu → otevřít ho nad badge
+    if (top + popH > window.innerHeight - 8) {
+        top = rect.top - popH - 4;
+    }
+    // Pokud popup vyběhne za pravý kraj viewportu → posunout doleva
+    if (left + popW > window.innerWidth - 8) {
+        left = window.innerWidth - popW - 8;
+    }
+    pop.style.top  = top  + 'px';
+    pop.style.left = left + 'px';
+
+    // Klik mimo → zavřít. Pozdrženo o 50ms aby současný klik na badge nezavřel popup hned.
+    setTimeout(() => {
+        function closePop(ev) {
+            if (!pop.contains(ev.target) && ev.target !== btn) {
+                pop.remove();
+                document.removeEventListener('click', closePop, true);
+                window.removeEventListener('scroll', closePop, true);
+            }
+        }
+        document.addEventListener('click', closePop, true);
+        // Pokud uživatel rolluje stránkou, popup taky zavřít — pozice by jinak zůstala fixed na viewportu
+        window.addEventListener('scroll', () => { pop.remove(); }, { once: true, capture: true });
+    }, 50);
+}
+
+function cistReclassifyPhone(contactId, phoneId, action) {
+    var body = new URLSearchParams();
+    body.set('contact_id', String(contactId));
+    body.set('phone_id',   String(phoneId));
+    body.set('action',     action);
+    body.set(CIST_CSRF_FIELD, CIST_CSRF_TOKEN);
+
+    fetch('<?= crm_h(crm_url('/cisticka/verify-phone')) ?>', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json'
+        },
+        credentials: 'same-origin',
+        body: body.toString()
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (!d || !d.ok) {
+            if (window.crmAlert) crmAlert(d.error || 'Chyba při reklasifikaci.', { type: 'danger' });
+            else alert(d.error || 'Chyba při reklasifikaci.');
+            return;
+        }
+        // Update badge u tohoto telefonu
+        var badge = document.getElementById('zp-badge-' + phoneId);
+        if (badge) {
+            var newOp = (d.operator_set || action).toUpperCase();
+            var c = newOp === 'TM'     ? '#ec4899'
+                  : newOp === 'O2'     ? '#2563eb'
+                  : newOp === 'VF'     ? '#dc2626'
+                  : '#9ca3af';
+            badge.style.background = c;
+            badge.innerHTML = newOp + ' <span style="opacity:0.7;font-size:0.6rem;">▾</span>';
+            // Aktualizuj onclick aby předal nový currentOp
+            badge.setAttribute('onclick',
+                'cistPhonePopup(' + contactId + ', ' + phoneId + ', \'' + newOp + '\', this)');
+            badge.style.transition = 'background 0.3s';
+        }
+        if (typeof cistRefreshTodayStats === 'function') cistRefreshTodayStats();
+    })
+    .catch(err => {
+        console.error('cistReclassifyPhone error', err);
+        if (window.crmAlert) crmAlert('Síťová chyba: ' + err, { type: 'danger' });
+    });
+}
+
+/* ── Ověření jednoho TELEFONU (multi-phone kontakt) ────────────────
+   Po každém kliku se uloží operátor 1 telefonu. Kontakt zmizí ze
+   seznamu až po ověření VŠECH telefonů (server vrátí decision).
+─────────────────────────────────────────────────────────────────── */
+function cistVerifyPhone(contactId, phoneId, action, btn) {
+    var subrow = document.getElementById('cist-phone-' + phoneId);
+    if (!subrow || subrow.dataset.verified === '1') return;
+    subrow.dataset.verified = '1';
+
+    // Disable všechny tlačítka v subrow (zabránit double-clicku)
+    subrow.querySelectorAll('button').forEach(b => { b.disabled = true; b.style.opacity = '0.6'; });
+
+    var body = new URLSearchParams();
+    body.set('contact_id', String(contactId));
+    body.set('phone_id',   String(phoneId));
+    body.set('action',     action);
+    body.set(CIST_CSRF_FIELD, CIST_CSRF_TOKEN);
+
+    fetch('<?= crm_h(crm_url('/cisticka/verify-phone')) ?>', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json'
+        },
+        credentials: 'same-origin',
+        body: body.toString()
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (!d || !d.ok) {
+            // Vrátit disabled stav — uživatel zkusí znova
+            subrow.dataset.verified = '0';
+            subrow.querySelectorAll('button').forEach(b => { b.disabled = false; b.style.opacity = '1'; });
+            if (window.crmAlert) crmAlert(d.error || 'Chyba při ukládání.', { type: 'danger' });
+            else alert(d.error || 'Chyba při ukládání.');
+            return;
+        }
+
+        // Aktualizovat UI subrow — místo tlačítek ✓ badge operátora
+        var opUpper = (d.operator_set || action).toUpperCase();
+        var opColor = opUpper === 'CHYBNY' ? '#9ca3af'
+                    : opUpper === 'VF'     ? '#dc2626'
+                    : opUpper === 'TM'     ? '#ec4899'
+                    : '#2563eb';
+        var btnsWrap = subrow.querySelector('button');
+        if (btnsWrap) {
+            // Smazat všechny tlačítka, dát badge
+            subrow.querySelectorAll('button').forEach(b => b.remove());
+            var badge = document.createElement('span');
+            badge.style.cssText = 'background:' + opColor + ';color:#fff;padding:0.12rem 0.5rem;' +
+                                  'border-radius:8px;font-weight:700;font-size:0.72rem;';
+            badge.textContent = '✓ ' + opUpper;
+            subrow.appendChild(badge);
+        }
+        // Změnit barvu pozadí subrow podle operátora
+        var bg = opUpper === 'TM'     ? 'rgba(236,72,153,0.06)'
+               : opUpper === 'O2'     ? 'rgba(37,99,235,0.06)'
+               : opUpper === 'VF'     ? 'rgba(220,38,38,0.06)'
+               : opUpper === 'CHYBNY' ? 'rgba(107,114,128,0.08)'
+               : '#fff';
+        subrow.style.background = bg;
+
+        // Update progress badge X/Y
+        var progress = document.getElementById('cist-multi-progress-' + contactId);
+        if (progress && d.verified_count != null && d.total_count != null) {
+            progress.textContent = d.verified_count + '/' + d.total_count;
+        }
+
+        // Pokud rozhodnuto (všechny telefony ověřené) → animace + remove kontaktu
+        if (d.decision && d.decision !== 'pending') {
+            var row = document.getElementById('cist-row-' + contactId);
+            var wrap = document.getElementById('cist-multi-' + contactId);
+            // Flash animace podle decision
+            var flashClass = d.decision === 'VF_SKIP' ? 'cist-row--flash-vf'
+                          : d.decision === 'CHYBNY_KONTAKT' ? 'cist-row--flash-chybny'
+                          : 'cist-row--flash-' + (d.operator || 'tm').toLowerCase();
+            if (row) row.classList.add(flashClass);
+            setTimeout(function () {
+                if (row && row.parentNode) row.parentNode.removeChild(row);
+                if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+                // Refresh badge "Zkontrolováno" pokud existuje globální helper
+                if (typeof cistRefreshTodayStats === 'function') cistRefreshTodayStats();
+            }, 600);
+        }
+    })
+    .catch(err => {
+        subrow.dataset.verified = '0';
+        subrow.querySelectorAll('button').forEach(b => { b.disabled = false; b.style.opacity = '1'; });
+        console.error('cistVerifyPhone error', err);
+        if (window.crmAlert) crmAlert('Síťová chyba: ' + err, { type: 'danger' });
+    });
+}
 
 /* ── Ověření jednoho kontaktu ─────────────────────────────────────── */
 function cistVerify(contactId, action, btn) {

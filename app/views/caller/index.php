@@ -1033,17 +1033,52 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
 
                         <!-- Kontaktní údaje (vždy editovatelné) -->
                         <div class="contact-details">
-                            <span class="editable-group">
-                                <?php if (!empty($c['telefon'])) { ?>
-                                    <a href="tel:<?= crm_h((string) $c['telefon']) ?>"
-                                       class="contact-phone editable-val" id="val-telefon-<?= $cId ?>"><?= crm_h((string) $c['telefon']) ?></a>
-                                <?php } else { ?>
-                                    <span class="editable-val contact-muted" id="val-telefon-<?= $cId ?>">—</span>
-                                <?php } ?>
-                                <button type="button" class="btn-edit-field"
-                                        onclick="crmEdit(<?= $cId ?>, 'telefon', this)"
-                                        title="Upravit telefon">✎</button>
-                            </span>
+                            <?php
+                            /** @var array<int,list<array<string,mixed>>> $phonesByContact */
+                            $cPhones = $phonesByContact[$cId] ?? [];
+                            $opBadgeColors = [
+                                'TM' => ['#ec4899', '#fff'],   // růžová
+                                'O2' => ['#2563eb', '#fff'],   // modrá
+                                'VF' => ['#dc2626', '#fff'],   // červená
+                                'CHYBNY' => ['#9ca3af', '#fff'],
+                            ];
+                            ?>
+                            <?php if (count($cPhones) > 1) { ?>
+                                <!-- Multi-telefon kontakt — každý telefon vlastní řádek s badge operátora -->
+                                <span class="editable-group" style="flex-direction:column;align-items:flex-start;gap:0.2rem;">
+                                    <?php foreach ($cPhones as $cp) {
+                                        $cpPhone = (string) ($cp['phone'] ?? '');
+                                        $cpOp    = strtoupper((string) ($cp['operator'] ?? ''));
+                                        [$cpBg, $cpFg] = $opBadgeColors[$cpOp] ?? ['#9ca3af', '#fff'];
+                                    ?>
+                                        <span style="display:inline-flex;align-items:center;gap:0.3rem;">
+                                            <a href="tel:<?= crm_h($cpPhone) ?>" class="contact-phone editable-val"><?= crm_h($cpPhone) ?></a>
+                                            <?php if ($cpOp !== '') { ?>
+                                                <span style="background:<?= $cpBg ?>;color:<?= $cpFg ?>;
+                                                             font-size:0.62rem;font-weight:700;
+                                                             padding:0.05rem 0.35rem;border-radius:6px;">
+                                                    <?= crm_h($cpOp) ?>
+                                                </span>
+                                            <?php } ?>
+                                        </span>
+                                    <?php } ?>
+                                    <button type="button" class="btn-edit-field"
+                                            onclick="crmEdit(<?= $cId ?>, 'telefon', this)"
+                                            title="Upravit telefon">✎</button>
+                                </span>
+                            <?php } else { ?>
+                                <span class="editable-group">
+                                    <?php if (!empty($c['telefon'])) { ?>
+                                        <a href="tel:<?= crm_h((string) $c['telefon']) ?>"
+                                           class="contact-phone editable-val" id="val-telefon-<?= $cId ?>"><?= crm_h((string) $c['telefon']) ?></a>
+                                    <?php } else { ?>
+                                        <span class="editable-val contact-muted" id="val-telefon-<?= $cId ?>">—</span>
+                                    <?php } ?>
+                                    <button type="button" class="btn-edit-field"
+                                            onclick="crmEdit(<?= $cId ?>, 'telefon', this)"
+                                            title="Upravit telefon">✎</button>
+                                </span>
+                            <?php } ?>
 
                             <span class="editable-group">
                                 <span class="editable-val contact-email" id="val-email-<?= $cId ?>"><?= crm_h((string) ($c['email'] ?? '—')) ?></span>
