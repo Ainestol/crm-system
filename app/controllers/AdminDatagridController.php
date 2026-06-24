@@ -19,7 +19,11 @@ final class AdminDatagridController
     // Max řádků v jednom JSON payloadu pro client-side rendering.
     // 50k zvládne browser pohodlně; pro produkční 350k+ DB postavíme
     // server-side search/pagination až bude potřeba (přidáme ?q= endpoint).
-    private const MAX_ROWS = 50_000;
+    // POZOR: datagrid načítá řádky NARÁZ + ke každému 6 korelovaných poddotazů.
+    // Při desítkách tisíc kontaktů to server nestihl (timeout / paměť) → 500.
+    // Dočasný strop, než bude hotové serverové stránkování (load po stránkách).
+    // Řadí se od nejnovější aktivity, takže se ukáže nejnovějších N.
+    private const MAX_ROWS = 4_000;
 
     public function __construct(private PDO $pdo) {}
 
