@@ -4,16 +4,19 @@
 // Přístup: jen z localhostu nebo s heslem.
 declare(strict_types=1);
 
-// Základní ochrana: jen localhost nebo správné heslo
+// Základní ochrana: jen localhost, nebo klíč z .env (CRM_MIGRATE_KEY).
+// POZN.: Tento webový runner je deprecated — používej CLI `php bin/migrate.php`.
+// Klíč se NIKDY nepíše natvrdo do kódu (jinak skončí v gitu).
 $allowedIps = ['127.0.0.1', '::1'];
-$secret     = 'migrace2026'; // změňte nebo odstraňte na produkci
+$secret     = (string) (getenv('CRM_MIGRATE_KEY') ?: '');
 
 $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
 $pw = (string) ($_GET['key'] ?? '');
 
-if (!in_array($ip, $allowedIps, true) && $pw !== $secret) {
+$isLocal = in_array($ip, $allowedIps, true);
+if (!$isLocal && ($secret === '' || !hash_equals($secret, $pw))) {
     http_response_code(403);
-    exit('Přístup odepřen. Přidejte ?key=migrace2026 do URL.');
+    exit('Přístup odepřen.');
 }
 
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'config' . DIRECTORY_SEPARATOR . 'constants.php';

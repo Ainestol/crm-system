@@ -1491,7 +1491,8 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
                             <!-- Callback pole -->
                             <div class="callback-fields hidden">
                                 <label class="label-sm">Zavolat zpět:</label>
-                                <input type="datetime-local" name="callback_at" class="input-cb">
+                                <input type="datetime-local" name="callback_at" class="input-cb"
+                                       value="<?= crm_h(date('Y-m-d\TH:i', strtotime('tomorrow 09:00'))) ?>">
                                 <span class="label-sm" style="color:#aaa;">
                                     do 30 dní = jen tvůj, po 30 dnech = sdílený pro všechny
                                 </span>

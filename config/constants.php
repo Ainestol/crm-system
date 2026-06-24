@@ -74,9 +74,10 @@ if (!defined('CRM_APP_DEBUG')) {
     define('CRM_APP_DEBUG', filter_var(getenv('CRM_APP_DEBUG') ?: '0', FILTER_VALIDATE_BOOLEAN));
 }
 
-// Session: timeout 2 h neaktivity (sekundy)
+// Session: timeout nečinnosti (sekundy). Default 7 dní, ať se lidem
+// zařízení neodhlašuje pořád dokola. Lze přepsat přes .env CRM_SESSION_LIFETIME.
 if (!defined('CRM_SESSION_LIFETIME')) {
-    define('CRM_SESSION_LIFETIME', (int) (getenv('CRM_SESSION_LIFETIME') ?: 7200));
+    define('CRM_SESSION_LIFETIME', (int) (getenv('CRM_SESSION_LIFETIME') ?: 604800)); // 7 × 24 × 3600
 }
 
 if (!defined('CRM_SESSION_NAME')) {

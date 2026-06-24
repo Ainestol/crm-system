@@ -63,6 +63,10 @@ if (!function_exists('crm_session_start')) {
             );
         }
 
+        // Serverová pojistka: ať PHP negarbage-collectne session soubor dřív,
+        // než vyprší náš vlastní limit (jinak by default 24 min odhlašoval).
+        @ini_set('session.gc_maxlifetime', (string) CRM_SESSION_LIFETIME);
+
         session_name(CRM_SESSION_NAME);
         session_start();
         crm_session_touch();
