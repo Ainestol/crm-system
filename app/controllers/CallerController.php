@@ -589,6 +589,10 @@ final class CallerController
             // ani z ASSIGNED. Pokud má admin chyba (přiřadil OSVČ Eva s pref firma),
             // ten kontakt zmizí z její fronty (musí ho přiřadit jiné navolávačce).
             $regionExtraWhere = $selectedRegion !== '' ? 'AND c.region = :reg' : '';
+            // Stejný krajový filtr MUSÍ platit i pro přiřazené (ASSIGNED) kontakty,
+            // jinak prosakují pod každý kraj (BUG: Zlínský ASSIGNED se ukázal i pod Ústeckým).
+            // PDO bez emulated prepares neumí stejný :named param 2×, proto :reg_own.
+            $regionExtraOwn   = $selectedRegion !== '' ? 'AND c.region = :reg_own' : '';
             // POZOR: PDO bez emulated prepares nedovolí opakovat stejný :named
             // parametr dvakrát. Pro pool a ASSIGNED máme 2 zvlášť pojmenované.
             $subjExtraPool = '';
@@ -607,13 +611,14 @@ final class CallerController
                       AND (
                           (c.stav = 'READY' AND c.locked_by = :cid_pool AND c.locked_until > NOW(3)
                            AND c.assigned_caller_id IS NULL {$regionExtraWhere}{$subjExtraPool})
-                          OR (c.assigned_caller_id = :cid_own AND c.stav = 'ASSIGNED' {$subjExtraOwn})
+                          OR (c.assigned_caller_id = :cid_own AND c.stav = 'ASSIGNED' {$regionExtraOwn}{$subjExtraOwn})
                       )
                     ORDER BY is_pool ASC, c.created_at ASC";
 
             $mainParams = ['cid_pool' => $callerId, 'cid_own' => $callerId, 'tid' => $tid];
             if ($selectedRegion !== '') {
                 $mainParams['reg'] = $selectedRegion;
+                $mainParams['reg_own'] = $selectedRegion;
             }
             if ($subjExtraPool !== '') {
                 $mainParams['subj_pref_pool'] = $subjectPref;
