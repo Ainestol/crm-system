@@ -153,22 +153,29 @@ final class AdminTeamStatsController
         $placeholders = implode(',', array_fill(0, count($statusList), '?'));
 
         // Pro navolávačku vyloučit premium kontakty — ty jsou ve spodní premium sekci
+        // Multi-tenant: plp.tenant_id = wl.tenant_id (defence in depth)
         $premiumExclude = $role === 'navolavacka'
             ? "AND NOT EXISTS (
                    SELECT 1 FROM premium_lead_pool plp
                    WHERE plp.contact_id = wl.contact_id
+                     AND plp.tenant_id  = wl.tenant_id
                      AND plp.cleaning_status = 'tradeable'
                )"
             : '';
 
+        // Multi-tenant: users přes user_tenants, workflow_log per-tenant
+        $tid = crm_tenant_id();
         $sql = "SELECT
                     u.id                  AS user_id,
                     u.jmeno               AS jmeno,
                     wl.new_status         AS new_status,
                     COUNT(*)              AS cnt
                 FROM users u
+                INNER JOIN user_tenants ut
+                    ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
                 LEFT JOIN workflow_log wl
                     ON  wl.user_id      = u.id
+                    AND wl.tenant_id    = ?
                     AND YEAR(wl.created_at)  = ?
                     AND MONTH(wl.created_at) = ?
                     AND wl.new_status IN ({$placeholders})
@@ -177,7 +184,7 @@ final class AdminTeamStatsController
                 GROUP BY u.id, u.jmeno, wl.new_status
                 ORDER BY u.jmeno ASC";
 
-        $params = array_merge([$year, $month], $statusList, [$role]);
+        $params = array_merge([$tid, $tid, $year, $month], $statusList, [$role]);
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -204,17 +211,21 @@ final class AdminTeamStatsController
         // Doplnit DISTINCT contact_id per user (= z kolika kontaktů celkem pracoval(a) v měsíci)
         // To je smysluplnější metrika než suma akcí (NEDOVOLANO 3× = 1 kontakt, ne 3).
         // POZN: stejné premium vyloučení jako výše — nemůžeme dvakrát počítat.
+        // Multi-tenant: workflow_log per-tenant + users přes user_tenants
         $unqStmt = $this->pdo->prepare(
             "SELECT wl.user_id, COUNT(DISTINCT wl.contact_id) AS unique_contacts
              FROM workflow_log wl
              JOIN users u ON u.id = wl.user_id
+             INNER JOIN user_tenants ut
+                 ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
              WHERE u.role = ? AND u.aktivni = 1
+               AND wl.tenant_id = ?
                AND YEAR(wl.created_at) = ? AND MONTH(wl.created_at) = ?
                AND wl.new_status IN ({$placeholders})
                {$premiumExclude}
              GROUP BY wl.user_id"
         );
-        $unqStmt->execute(array_merge([$role, $year, $month], $statusList));
+        $unqStmt->execute(array_merge([$tid, $role, $tid, $year, $month], $statusList));
         foreach ($unqStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
             $uid = (int) $r['user_id'];
             if (isset($users[$uid])) {
@@ -222,12 +233,16 @@ final class AdminTeamStatsController
             }
         }
 
-        // Zahrnout uživatele bez záznamů v daném měsíci
+        // Zahrnout uživatele bez záznamů v daném měsíci — per tenant
         if ($rows === [] || count($users) === 0) {
             $empStmt = $this->pdo->prepare(
-                'SELECT id, jmeno FROM users WHERE role = ? AND aktivni = 1 ORDER BY jmeno ASC'
+                'SELECT u.id, u.jmeno FROM users u
+                 INNER JOIN user_tenants ut
+                     ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
+                 WHERE u.role = ? AND u.aktivni = 1
+                 ORDER BY u.jmeno ASC'
             );
-            $empStmt->execute([$role]);
+            $empStmt->execute([$tid, $role]);
             foreach ($empStmt->fetchAll(PDO::FETCH_ASSOC) as $u) {
                 $uid = (int) $u['id'];
                 if (!isset($users[$uid])) {
@@ -241,7 +256,7 @@ final class AdminTeamStatsController
         }
 
         // Pro OZ přidat speciální metriku "z navolaných" (= kolik mu navolávačka dohodila)
-        // a konverze "uzavřeno / navoláno" — v hlavní stat tabulce.
+        // a konverze "uzavřeno / navoláno" — v hlavní stat tabulce. Multi-tenant.
         if ($role === 'obchodak') {
             $ozStmt = $this->pdo->prepare(
                 "SELECT c.assigned_sales_id AS user_id,
@@ -249,11 +264,12 @@ final class AdminTeamStatsController
                  FROM contacts c
                  WHERE c.assigned_sales_id IS NOT NULL
                    AND c.datum_predani IS NOT NULL
+                   AND c.tenant_id = ?
                    AND YEAR(c.datum_predani)  = ?
                    AND MONTH(c.datum_predani) = ?
                  GROUP BY c.assigned_sales_id"
             );
-            $ozStmt->execute([$year, $month]);
+            $ozStmt->execute([$tid, $year, $month]);
             $handedMap = [];
             foreach ($ozStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
                 $handedMap[(int) $r['user_id']] = (int) $r['handed_to_oz'];
@@ -277,6 +293,8 @@ final class AdminTeamStatsController
     /** Speciální pivot pro čističky — potřebuje JOIN contacts pro TM/O2 rozlišení. */
     private function queryCistickaStats(int $year, int $month): array
     {
+        // Multi-tenant: users přes user_tenants, workflow/contacts/pool per-tenant
+        $tid = crm_tenant_id();
         // POZN: vyloučíme premium kontakty — ty mají vlastní statistiky v premium sekci dole.
         // Hlavní tabulka tak ukazuje JEN standardní (první) čištění, ne druhé čištění z premium objednávek.
         $stmt = $this->pdo->prepare(
@@ -287,30 +305,38 @@ final class AdminTeamStatsController
                 COALESCE(c.operator, '?')         AS operator,
                 COUNT(*)                          AS cnt
              FROM users u
+             INNER JOIN user_tenants ut
+                 ON ut.user_id = u.id AND ut.tenant_id = :tid_u AND ut.active = 1
              LEFT JOIN workflow_log wl
                  ON  wl.user_id      = u.id
+                 AND wl.tenant_id    = :tid_wl
                  AND YEAR(wl.created_at)  = :yr
                  AND MONTH(wl.created_at) = :mo
                  AND wl.new_status IN ('READY', 'VF_SKIP')
                  AND NOT EXISTS (
                      SELECT 1 FROM premium_lead_pool plp
                      WHERE plp.contact_id = wl.contact_id
+                       AND plp.tenant_id  = wl.tenant_id
                        AND plp.cleaning_status IN ('tradeable','non_tradeable')
                  )
-             LEFT JOIN contacts c ON c.id = wl.contact_id
+             LEFT JOIN contacts c ON c.id = wl.contact_id AND c.tenant_id = wl.tenant_id
              WHERE u.role = 'cisticka' AND u.aktivni = 1
              GROUP BY u.id, u.jmeno, wl.new_status, c.operator
              ORDER BY u.jmeno ASC"
         );
-        $stmt->execute(['yr' => $year, 'mo' => $month]);
+        $stmt->execute(['yr' => $year, 'mo' => $month, 'tid_u' => $tid, 'tid_wl' => $tid]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $users = [];
-        // Init: načti všechny čističky
+        // Init: načti všechny čističky — per tenant
         $empStmt = $this->pdo->prepare(
-            'SELECT id, jmeno FROM users WHERE role = \'cisticka\' AND aktivni = 1 ORDER BY jmeno ASC'
+            "SELECT u.id, u.jmeno FROM users u
+             INNER JOIN user_tenants ut
+                 ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
+             WHERE u.role = 'cisticka' AND u.aktivni = 1
+             ORDER BY u.jmeno ASC"
         );
-        $empStmt->execute();
+        $empStmt->execute([$tid]);
         foreach ($empStmt->fetchAll(PDO::FETCH_ASSOC) as $u) {
             $uid = (int) $u['id'];
             $users[$uid] = [
@@ -321,22 +347,26 @@ final class AdminTeamStatsController
         }
 
         // DISTINCT contact_id per čistička (z kolika kontaktů reálně pracovala — 1 lead 2× zpracovaný = 1)
-        // Stejný premium exclude jako výše — premium druhé čištění se počítá v premium sekci.
+        // Stejný premium exclude jako výše — premium druhé čištění se počítá v premium sekci. Multi-tenant.
         $unqStmt = $this->pdo->prepare(
             "SELECT wl.user_id, COUNT(DISTINCT wl.contact_id) AS unique_contacts
              FROM workflow_log wl
              JOIN users u ON u.id = wl.user_id
+             INNER JOIN user_tenants ut
+                 ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
              WHERE u.role = 'cisticka' AND u.aktivni = 1
+               AND wl.tenant_id = ?
                AND YEAR(wl.created_at) = ? AND MONTH(wl.created_at) = ?
                AND wl.new_status IN ('READY','VF_SKIP')
                AND NOT EXISTS (
                    SELECT 1 FROM premium_lead_pool plp
                    WHERE plp.contact_id = wl.contact_id
+                     AND plp.tenant_id  = wl.tenant_id
                      AND plp.cleaning_status IN ('tradeable','non_tradeable')
                )
              GROUP BY wl.user_id"
         );
-        $unqStmt->execute([$year, $month]);
+        $unqStmt->execute([$tid, $tid, $year, $month]);
         foreach ($unqStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
             $uid = (int) $r['user_id'];
             if (isset($users[$uid])) {
@@ -427,9 +457,9 @@ final class AdminTeamStatsController
     private function queryPremiumStats(string $role, int $year, int $month): array
     {
         try {
+            $tid = crm_tenant_id();
             if ($role === 'cisticka') {
-                // Per čistička: kolik vyčistila tradeable + non_tradeable + reklamace + Kč
-                // Plus konverze % = obchodovatelných / vyčištěných celkem
+                // Per čistička: kolik vyčistila tradeable + non_tradeable + reklamace + Kč. Multi-tenant.
                 $stmt = $this->pdo->prepare(
                     "SELECT u.id   AS user_id,
                             u.jmeno AS jmeno,
@@ -439,16 +469,19 @@ final class AdminTeamStatsController
                             SUM(CASE WHEN p.flagged_for_refund = 1 THEN 1 ELSE 0 END)            AS refund,
                             COALESCE(SUM(CASE WHEN p.flagged_for_refund = 0 THEN po.price_per_lead ELSE 0 END), 0) AS earned_czk
                      FROM users u
+                     INNER JOIN user_tenants ut
+                         ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
                      LEFT JOIN premium_lead_pool p ON p.cleaner_id = u.id
+                         AND p.tenant_id = ?
                          AND p.cleaning_status IN ('tradeable','non_tradeable')
                          AND YEAR(p.cleaned_at)  = ?
                          AND MONTH(p.cleaned_at) = ?
-                     LEFT JOIN premium_orders po ON po.id = p.order_id
+                     LEFT JOIN premium_orders po ON po.id = p.order_id AND po.tenant_id = p.tenant_id
                      WHERE u.role = 'cisticka' AND u.aktivni = 1
                      GROUP BY u.id, u.jmeno
                      ORDER BY u.jmeno ASC"
                 );
-                $stmt->execute([$year, $month]);
+                $stmt->execute([$tid, $tid, $year, $month]);
                 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
                 // Doplnit konverzi %
                 foreach ($rows as &$r) {
@@ -461,8 +494,7 @@ final class AdminTeamStatsController
             }
 
             if ($role === 'navolavacka') {
-                // Per navolávačka: kolik premium navoláno (success/failed) + bonus celkem.
-                // Konverze % = úspěšně / (úspěšně + neúspěšně) = úspěšnost premium hovorů.
+                // Per navolávačka: premium navoláno (success/failed) + bonus celkem. Multi-tenant.
                 $stmt = $this->pdo->prepare(
                     "SELECT u.id    AS user_id,
                             u.jmeno  AS jmeno,
@@ -471,16 +503,19 @@ final class AdminTeamStatsController
                             COALESCE(SUM(CASE WHEN p.call_status = 'success' AND p.flagged_for_refund = 0
                                               THEN po.caller_bonus_per_lead ELSE 0 END), 0) AS bonus_czk
                      FROM users u
+                     INNER JOIN user_tenants ut
+                         ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
                      LEFT JOIN premium_lead_pool p ON p.caller_id = u.id
+                         AND p.tenant_id = ?
                          AND p.cleaning_status = 'tradeable'
                          AND YEAR(p.called_at)  = ?
                          AND MONTH(p.called_at) = ?
-                     LEFT JOIN premium_orders po ON po.id = p.order_id
+                     LEFT JOIN premium_orders po ON po.id = p.order_id AND po.tenant_id = p.tenant_id
                      WHERE u.role = 'navolavacka' AND u.aktivni = 1
                      GROUP BY u.id, u.jmeno
                      ORDER BY u.jmeno ASC"
                 );
-                $stmt->execute([$year, $month]);
+                $stmt->execute([$tid, $tid, $year, $month]);
                 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
                 foreach ($rows as &$r) {
                     $s = (int) ($r['success_cnt'] ?? 0);
@@ -493,59 +528,79 @@ final class AdminTeamStatsController
             }
 
             if ($role === 'obchodak') {
-                // Per OZ: počet objednávek + počty pool, dluh čističce + dluh navolávačkám + jak úspěšně se navoláno
+                // Per OZ: počet objednávek + počty pool, dluh čističce + dluh navolávačkám.
+                // Multi-tenant: tenant filter v každém subquery + JOIN p.tenant_id = po.tenant_id (def-in-depth)
                 $stmt = $this->pdo->prepare(
                     "SELECT u.id   AS user_id,
                             u.jmeno AS jmeno,
                             (SELECT COUNT(*) FROM premium_orders po
                               WHERE po.oz_id = u.id
+                                AND po.tenant_id = ?
                                 AND YEAR(po.created_at)  = ?
                                 AND MONTH(po.created_at) = ?) AS orders_cnt,
                             (SELECT COUNT(*) FROM premium_lead_pool p
-                              JOIN premium_orders po ON po.id = p.order_id
+                              JOIN premium_orders po ON po.id = p.order_id AND po.tenant_id = p.tenant_id
                               WHERE po.oz_id = u.id
+                                AND p.tenant_id = ?
                                 AND p.cleaning_status IN ('tradeable','non_tradeable')
                                 AND YEAR(p.cleaned_at) = ?
                                 AND MONTH(p.cleaned_at) = ?) AS cleaned_cnt,
                             (SELECT COUNT(*) FROM premium_lead_pool p
-                              JOIN premium_orders po ON po.id = p.order_id
+                              JOIN premium_orders po ON po.id = p.order_id AND po.tenant_id = p.tenant_id
                               WHERE po.oz_id = u.id
+                                AND p.tenant_id = ?
                                 AND p.cleaning_status = 'tradeable'
                                 AND p.call_status = 'success'
                                 AND YEAR(p.called_at) = ?
                                 AND MONTH(p.called_at) = ?) AS called_success,
                             (SELECT COUNT(DISTINCT c.id) FROM premium_lead_pool p
-                              JOIN premium_orders po ON po.id = p.order_id
-                              JOIN contacts c ON c.id = p.contact_id
+                              JOIN premium_orders po ON po.id = p.order_id AND po.tenant_id = p.tenant_id
+                              JOIN contacts c ON c.id = p.contact_id AND c.tenant_id = p.tenant_id
                               WHERE po.oz_id = u.id
+                                AND p.tenant_id = ?
                                 AND p.cleaning_status = 'tradeable'
                                 AND p.call_status = 'success'
                                 AND c.stav IN ('DONE','ACTIVATED')) AS closed_cnt,
                             COALESCE((SELECT SUM(po.price_per_lead *
                                 (SELECT COUNT(*) FROM premium_lead_pool p
                                    WHERE p.order_id = po.id
+                                     AND p.tenant_id = po.tenant_id
                                      AND p.cleaning_status IN ('tradeable','non_tradeable')
                                      AND p.flagged_for_refund = 0))
                               FROM premium_orders po
                               WHERE po.oz_id = u.id
+                                AND po.tenant_id = ?
                                 AND YEAR(po.created_at)  = ?
                                 AND MONTH(po.created_at) = ?), 0) AS due_cleaner_czk,
                             COALESCE((SELECT SUM(po.caller_bonus_per_lead *
                                 (SELECT COUNT(*) FROM premium_lead_pool p
                                    WHERE p.order_id = po.id
+                                     AND p.tenant_id = po.tenant_id
                                      AND p.cleaning_status = 'tradeable'
                                      AND p.call_status = 'success'
                                      AND p.flagged_for_refund = 0))
                               FROM premium_orders po
                               WHERE po.oz_id = u.id
+                                AND po.tenant_id = ?
                                 AND YEAR(po.created_at)  = ?
                                 AND MONTH(po.created_at) = ?), 0) AS due_caller_czk
                      FROM users u
+                     INNER JOIN user_tenants ut
+                         ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
                      WHERE u.role = 'obchodak' AND u.aktivni = 1
                      GROUP BY u.id, u.jmeno
                      ORDER BY u.jmeno ASC"
                 );
-                $stmt->execute([$year, $month, $year, $month, $year, $month, $year, $month, $year, $month]);
+                // Pořadí: 6× per-subquery tid + 5× (year, month) páry + 1× outer user_tenants tid
+                $stmt->execute([
+                    $tid, $year, $month,   // orders_cnt
+                    $tid, $year, $month,   // cleaned_cnt
+                    $tid, $year, $month,   // called_success
+                    $tid,                  // closed_cnt (no time filter)
+                    $tid, $year, $month,   // due_cleaner_czk
+                    $tid, $year, $month,   // due_caller_czk
+                    $tid,                  // outer user_tenants
+                ]);
                 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
                 // OZ premium konverze:
                 //   conversion_pct = úspěšně navolaných / vyčištěných (kvalita pool → hovor)

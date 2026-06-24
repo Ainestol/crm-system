@@ -84,18 +84,25 @@ if (!function_exists('crm_detect_subject_type')) {
      */
     function crm_backfill_subject_type(PDO $pdo, ?int $limit = null): int
     {
-        $sql = "SELECT id, firma FROM contacts WHERE subject_type = 'unknown'";
+        // Multi-tenant: pracuje jen v rámci aktivního tenantu
+        $tid = crm_tenant_id();
+        $sql = "SELECT id, firma FROM contacts
+                WHERE subject_type = 'unknown' AND tenant_id = :tid";
         if ($limit !== null && $limit > 0) {
             $sql .= " LIMIT " . (int) $limit;
         }
-        $rows = $pdo->query($sql);
-        if (!$rows) return 0;
+        $sel = $pdo->prepare($sql);
+        $sel->execute(['tid' => $tid]);
+        $rows = $sel->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        if ($rows === []) return 0;
 
-        $upd = $pdo->prepare("UPDATE contacts SET subject_type = :t WHERE id = :id");
+        $upd = $pdo->prepare(
+            "UPDATE contacts SET subject_type = :t WHERE id = :id AND tenant_id = :tid"
+        );
         $updated = 0;
         foreach ($rows as $r) {
             $type = crm_detect_subject_type((string) ($r['firma'] ?? ''));
-            $upd->execute(['t' => $type, 'id' => (int) $r['id']]);
+            $upd->execute(['t' => $type, 'id' => (int) $r['id'], 'tid' => $tid]);
             $updated++;
         }
         return $updated;
@@ -110,14 +117,19 @@ if (!function_exists('crm_detect_subject_type')) {
      */
     function crm_reclassify_all_subject_types(PDO $pdo): array
     {
-        $rows = $pdo->query("SELECT id, firma, subject_type FROM contacts WHERE firma IS NOT NULL AND firma <> ''");
-        if (!$rows) return ['total' => 0, 'changed' => 0, 'firma' => 0, 'osvc' => 0];
+        // Multi-tenant: pracuje jen v rámci aktivního tenantu
+        $tid = crm_tenant_id();
+        $sel = $pdo->prepare(
+            "SELECT id, firma, subject_type FROM contacts
+             WHERE firma IS NOT NULL AND firma <> '' AND tenant_id = :tid"
+        );
+        $sel->execute(['tid' => $tid]);
 
         $changes = ['firma' => [], 'osvc' => []]; // batchy IDs per nový typ
         $total = 0;
         $changedCount = 0;
 
-        while ($r = $rows->fetch(PDO::FETCH_ASSOC)) {
+        while ($r = $sel->fetch(PDO::FETCH_ASSOC)) {
             $total++;
             $newType = crm_detect_subject_type((string) ($r['firma'] ?? ''));
             $oldType = (string) ($r['subject_type'] ?? '');
@@ -127,14 +139,17 @@ if (!function_exists('crm_detect_subject_type')) {
             }
         }
 
-        // Batch UPDATE po 500 pro každý typ
+        // Batch UPDATE po 500 pro každý typ — multi-tenant
         $byType = ['firma' => 0, 'osvc' => 0];
         foreach ($changes as $type => $ids) {
             if ($ids === []) continue;
             foreach (array_chunk($ids, 500) as $chunk) {
                 $ph = implode(',', array_fill(0, count($chunk), '?'));
-                $upd = $pdo->prepare("UPDATE contacts SET subject_type = ? WHERE id IN ($ph)");
-                $upd->execute(array_merge([$type], $chunk));
+                $upd = $pdo->prepare(
+                    "UPDATE contacts SET subject_type = ?
+                     WHERE id IN ($ph) AND tenant_id = ?"
+                );
+                $upd->execute(array_merge([$type], $chunk, [$tid]));
                 $byType[$type] += count($chunk);
             }
         }

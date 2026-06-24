@@ -29,13 +29,14 @@ final class AdminOzStagesController
 
         $this->ensureStagesTable();
 
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             'SELECT id, stage_number, label, target_bmsl
              FROM oz_team_stages
-             WHERE year = :y AND month = :m
+             WHERE year = :y AND month = :m AND tenant_id = :tid
              ORDER BY target_bmsl ASC'
         );
-        $stmt->execute(['y' => $year, 'm' => $month]);
+        $stmt->execute(['y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
         $stages = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $title = 'Správa OZ stage cílů';
@@ -77,12 +78,12 @@ final class AdminOzStagesController
 
         $targetVal = (int) round((float) $target);
 
-        // Zkontrolovat duplicitní hodnotu
+        // Zkontrolovat duplicitní hodnotu (per-tenant)
         $dupStmt = $this->pdo->prepare(
             'SELECT id FROM oz_team_stages
-             WHERE year = :y AND month = :m AND target_bmsl = :t'
+             WHERE year = :y AND month = :m AND target_bmsl = :t AND tenant_id = :tid'
         );
-        $dupStmt->execute(['y' => $year, 'm' => $month, 't' => $targetVal]);
+        $dupStmt->execute(['y' => $year, 'm' => $month, 't' => $targetVal, 'tid' => crm_tenant_id()]);
         if ($dupStmt->fetch()) {
             crm_flash_set('Stage s touto BMSL hodnotou již existuje pro daný měsíc.');
             crm_redirect('/admin/oz-stages?year=' . $year . '&month=' . $month);
@@ -123,9 +124,10 @@ final class AdminOzStagesController
         $month   = max(1,    min(12,   (int) ($_POST['month'] ?? date('n'))));
         $stageId = (int) ($_POST['stage_id'] ?? 0);
 
+        // Multi-tenant: smazat jen vlastní záznam
         $this->pdo->prepare(
-            'DELETE FROM oz_team_stages WHERE id = :id'
-        )->execute(['id' => $stageId]);
+            'DELETE FROM oz_team_stages WHERE id = :id AND tenant_id = :tid'
+        )->execute(['id' => $stageId, 'tid' => crm_tenant_id()]);
 
         $this->renumberStages($year, $month);
 
@@ -137,22 +139,23 @@ final class AdminOzStagesController
     //  Helpers
     // ────────────────────────────────────────────────────────────────
 
-    /** Přečísluje stages 1..N seřazené dle target_bmsl ASC. */
+    /** Přečísluje stages 1..N seřazené dle target_bmsl ASC. Multi-tenant. */
     private function renumberStages(int $year, int $month): void
     {
+        $tid = crm_tenant_id();
         $sStmt = $this->pdo->prepare(
             'SELECT id FROM oz_team_stages
-             WHERE year = :y AND month = :m
+             WHERE year = :y AND month = :m AND tenant_id = :tid
              ORDER BY target_bmsl ASC'
         );
-        $sStmt->execute(['y' => $year, 'm' => $month]);
+        $sStmt->execute(['y' => $year, 'm' => $month, 'tid' => $tid]);
         $ids = $sStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
 
         $upd = $this->pdo->prepare(
-            'UPDATE oz_team_stages SET stage_number = :n WHERE id = :id'
+            'UPDATE oz_team_stages SET stage_number = :n WHERE id = :id AND tenant_id = :tid'
         );
         foreach ($ids as $i => $id) {
-            $upd->execute(['n' => $i + 1, 'id' => $id]);
+            $upd->execute(['n' => $i + 1, 'id' => $id, 'tid' => $tid]);
         }
     }
 

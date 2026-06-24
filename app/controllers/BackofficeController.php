@@ -110,13 +110,15 @@ final class BackofficeController
                 INNER JOIN oz_contact_workflow w ON w.contact_id = c.id
                 LEFT JOIN users u_oz     ON u_oz.id     = c.assigned_sales_id
                 LEFT JOIN users u_caller ON u_caller.id = c.assigned_caller_id
-                WHERE {$tabWhere}
+                WHERE c.tenant_id = :tid AND ({$tabWhere})
                 {$orderClause}
                 LIMIT 500";
 
         $contacts = [];
         try {
-            $stmt = $this->pdo->query($sql);
+            // Multi-tenant filter
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute(['tid' => crm_tenant_id()]);
             $contacts = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
         } catch (\PDOException) {
             // Tabulka workflow ještě neexistuje (čerstvá DB) — necháme prázdné
@@ -126,13 +128,8 @@ final class BackofficeController
         // BO musí vidět, co OZ k zákazníkovi napsal (povinné poznámky při změně stavu).
         $notesByContact = [];
         try {
-            $nStmt = $this->pdo->query(
-                // Seskupení per kontakt (contact_id ASC) — uvnitř per kontakt
-                // chronologicky DESC, aby nejnovější poznámka byla nahoře.
-                // JOIN přes COALESCE(author_user_id, oz_id) — autor (admin/OZ/BO),
-                // ne jen vlastník kontaktu. Pro stará data je author_user_id NULL,
-                // takže COALESCE padá zpátky na oz_id (vlastník) = stejný display
-                // jako před migrací 028.
+            // Multi-tenant: per-tenant notes
+            $nStmtP = $this->pdo->prepare(
                 "SELECT n.contact_id, n.note, n.created_at,
                         COALESCE(u.jmeno, '—') AS author_name,
                         COALESCE(u.role,  '')  AS author_role
@@ -141,8 +138,11 @@ final class BackofficeController
                  INNER JOIN oz_contact_workflow w ON w.contact_id = c.id
                  LEFT JOIN users u ON u.id = COALESCE(n.author_user_id, n.oz_id)
                  WHERE w.stav IN ('SMLOUVA','BO_PREDANO','BO_VPRACI','BO_VRACENO','UZAVRENO')
+                   AND c.tenant_id = :tid
                  ORDER BY n.contact_id ASC, n.created_at DESC"
             );
+            $nStmtP->execute(['tid' => crm_tenant_id()]);
+            $nStmt = $nStmtP;
             if ($nStmt) {
                 foreach ($nStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $n) {
                     $notesByContact[(int) $n['contact_id']][] = $n;
@@ -155,7 +155,8 @@ final class BackofficeController
         // ── Pracovní deník akcí pro BO kontakty (sdílený s OZ) ────────
         $actionsByContact = [];
         try {
-            $aStmt = $this->pdo->query(
+            // Multi-tenant
+            $aStmtP = $this->pdo->prepare(
                 "SELECT a.id, a.contact_id, a.action_date, a.action_text, a.created_at,
                         a.oz_id                   AS author_id,
                         COALESCE(u.jmeno, '—')    AS author_name,
@@ -165,8 +166,11 @@ final class BackofficeController
                  INNER JOIN oz_contact_workflow w ON w.contact_id = c.id
                  LEFT JOIN users u ON u.id = a.oz_id
                  WHERE w.stav IN ('BO_PREDANO', 'BO_VPRACI', 'BO_VRACENO', 'UZAVRENO', 'NEZAJEM', 'SMLOUVA')
+                   AND c.tenant_id = :tid
                  ORDER BY a.contact_id ASC, a.action_date DESC, a.created_at DESC"
             );
+            $aStmtP->execute(['tid' => crm_tenant_id()]);
+            $aStmt = $aStmtP;
             if ($aStmt) {
                 foreach ($aStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $a) {
                     $actionsByContact[(int) $a['contact_id']][] = $a;
@@ -185,7 +189,8 @@ final class BackofficeController
             'nezajem_vse' => 0,
         ];
         try {
-            $cStmt = $this->pdo->query(
+            // Multi-tenant counts
+            $cStmtP = $this->pdo->prepare(
                 "SELECT
                     SUM(CASE WHEN w.stav IN ('BO_PREDANO','SMLOUVA') THEN 1 ELSE 0 END) AS k_priprave,
                     SUM(CASE WHEN w.stav = 'BO_VPRACI'               THEN 1 ELSE 0 END) AS v_praci,
@@ -193,8 +198,11 @@ final class BackofficeController
                     SUM(CASE WHEN w.stav = 'UZAVRENO'                THEN 1 ELSE 0 END) AS uzavreno,
                     SUM(CASE WHEN w.stav = 'NEZAJEM'                 THEN 1 ELSE 0 END) AS nezajem_vse
                  FROM contacts c
-                 INNER JOIN oz_contact_workflow w ON w.contact_id = c.id"
+                 INNER JOIN oz_contact_workflow w ON w.contact_id = c.id
+                 WHERE c.tenant_id = :tid"
             );
+            $cStmtP->execute(['tid' => crm_tenant_id()]);
+            $cStmt = $cStmtP;
             if ($cStmt) {
                 $row = $cStmt->fetch(PDO::FETCH_ASSOC);
                 if ($row) {
@@ -259,13 +267,15 @@ final class BackofficeController
         }
 
         // Ověřit, že kontakt je v BO ke zpracování (BO_PREDANO, BO_VPRACI, SMLOUVA)
+        // Multi-tenant
         $stmt = $this->pdo->prepare(
             "SELECT w.contact_id, w.oz_id, w.stav
              FROM oz_contact_workflow w
              WHERE w.contact_id = :cid AND w.stav IN ('BO_PREDANO','BO_VPRACI','SMLOUVA')
+               AND w.tenant_id = :tid
              LIMIT 1"
         );
-        $stmt->execute(['cid' => $contactId]);
+        $stmt->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             crm_flash_set('⚠ Kontakt není v BO ke zpracování.');
@@ -273,14 +283,14 @@ final class BackofficeController
         }
         $oldStav = (string) $row['stav'];
 
-        // Update workflow stav → BO_VRACENO (zaznamenat stav_changed_at)
+        // Update workflow stav → BO_VRACENO (multi-tenant)
         $this->pdo->prepare(
             "UPDATE oz_contact_workflow
              SET stav_changed_at = CASE WHEN stav <> 'BO_VRACENO' THEN NOW(3) ELSE stav_changed_at END,
                  stav = 'BO_VRACENO',
                  updated_at = NOW(3)
-             WHERE contact_id = :cid"
-        )->execute(['cid' => $contactId]);
+             WHERE contact_id = :cid AND tenant_id = :tid"
+        )->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
 
         // Audit log
         crm_log_workflow_change($this->pdo, $contactId, $bouserId, $oldStav, 'BO_VRACENO',
@@ -320,13 +330,15 @@ final class BackofficeController
         $tab       = (string) ($_POST['tab'] ?? 'k_priprave');
 
         // Načti starý stav před UPDATE (kvůli auditnímu logu)
+        // Multi-tenant
         $stmt = $this->pdo->prepare(
             "SELECT w.contact_id, w.stav
              FROM oz_contact_workflow w
              WHERE w.contact_id = :cid AND w.stav IN ('BO_PREDANO','SMLOUVA')
+               AND w.tenant_id = :tid
              LIMIT 1"
         );
-        $stmt->execute(['cid' => $contactId]);
+        $stmt->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
         $oldRow = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$oldRow) {
             crm_flash_set('⚠ Kontakt není v K přípravě.');
@@ -339,8 +351,8 @@ final class BackofficeController
              SET stav_changed_at = CASE WHEN stav <> 'BO_VPRACI' THEN NOW(3) ELSE stav_changed_at END,
                  stav = 'BO_VPRACI',
                  updated_at = NOW(3)
-             WHERE contact_id = :cid"
-        )->execute(['cid' => $contactId]);
+             WHERE contact_id = :cid AND tenant_id = :tid"
+        )->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
 
         // Audit log — kdo, kdy, odkud → kam
         crm_log_workflow_change($this->pdo, $contactId, $bouserId, $oldStav, 'BO_VPRACI', 'BO převzal — zpracování zahájeno');
@@ -378,13 +390,14 @@ final class BackofficeController
         $tab       = (string) ($_POST['tab'] ?? 'uzavreno');
         $reason    = trim((string) ($_POST['reason'] ?? ''));
 
+        // Multi-tenant
         $stmt = $this->pdo->prepare(
             "SELECT w.contact_id
              FROM oz_contact_workflow w
-             WHERE w.contact_id = :cid AND w.stav = 'UZAVRENO'
+             WHERE w.contact_id = :cid AND w.stav = 'UZAVRENO' AND w.tenant_id = :tid
              LIMIT 1"
         );
-        $stmt->execute(['cid' => $contactId]);
+        $stmt->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
         if (!$stmt->fetch(PDO::FETCH_ASSOC)) {
             crm_flash_set('⚠ Kontakt není uzavřen.');
             crm_redirect('/bo?tab=' . urlencode($tab));
@@ -396,8 +409,8 @@ final class BackofficeController
                  stav = 'BO_VPRACI',
                  closed_at = NULL,
                  updated_at = NOW(3)
-             WHERE contact_id = :cid"
-        )->execute(['cid' => $contactId]);
+             WHERE contact_id = :cid AND tenant_id = :tid"
+        )->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
 
         crm_log_workflow_change($this->pdo, $contactId, $bouserId, 'UZAVRENO', 'BO_VPRACI',
             'Znovu otevřeno z Uzavřeno' . ($reason !== '' ? ': ' . $reason : ''));
@@ -470,24 +483,27 @@ final class BackofficeController
         }
 
         // Anti-duplicita: stejné číslo smlouvy nesmí existovat na jiném kontaktu
+        // Multi-tenant: cislo_smlouvy unikátní per tenant
         $dupStmt = $this->pdo->prepare(
             "SELECT contact_id FROM oz_contact_workflow
-             WHERE cislo_smlouvy = :cn AND contact_id <> :cid LIMIT 1"
+             WHERE cislo_smlouvy = :cn AND contact_id <> :cid AND tenant_id = :tid LIMIT 1"
         );
-        $dupStmt->execute(['cn' => $cisloSml, 'cid' => $contactId]);
+        $dupStmt->execute(['cn' => $cisloSml, 'cid' => $contactId, 'tid' => crm_tenant_id()]);
         if ($dupStmt->fetch(PDO::FETCH_ASSOC)) {
             crm_flash_set('⚠ Číslo smlouvy „' . $cisloSml . '" již existuje u jiného kontaktu.');
             crm_redirect($redirectBack);
         }
 
         // ── Ověřit, že kontakt je v BO ke zpracování + zkontrolovat checkbox "Podpis potvrzen" ──
+        // Multi-tenant
         $stmt = $this->pdo->prepare(
             "SELECT w.contact_id, w.stav, COALESCE(w.podpis_potvrzen, 0) AS podpis
              FROM oz_contact_workflow w
              WHERE w.contact_id = :cid AND w.stav IN ('BO_PREDANO','BO_VPRACI','SMLOUVA')
+               AND w.tenant_id = :tid
              LIMIT 1"
         );
-        $stmt->execute(['cid' => $contactId]);
+        $stmt->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             crm_flash_set('⚠ Kontakt nelze uzavřít (není v BO).');
@@ -510,12 +526,13 @@ final class BackofficeController
                  smlouva_trvani_roky  = :tr,
                  closed_at            = NOW(3),
                  updated_at           = NOW(3)
-             WHERE contact_id = :cid"
+             WHERE contact_id = :cid AND tenant_id = :tid"
         )->execute([
             'cn'  => $cisloSml,
             'du'  => $datumUzav,
             'tr'  => $trvaniRoky,
             'cid' => $contactId,
+            'tid' => crm_tenant_id(),
         ]);
 
         // Audit log — uzavření smlouvy
@@ -529,11 +546,12 @@ final class BackofficeController
             "UPDATE contacts
              SET vyrocni_smlouvy = DATE_ADD(:du, INTERVAL :tr YEAR),
                  updated_at      = NOW(3)
-             WHERE id = :cid"
+             WHERE id = :cid AND tenant_id = :tid"
         )->execute([
             'du'  => $datumUzav,
             'tr'  => $trvaniRoky,
             'cid' => $contactId,
+            'tid' => crm_tenant_id(),
         ]);
 
         // ── Záznam do sdíleného deníku ──
@@ -578,13 +596,15 @@ final class BackofficeController
         $actionText = trim((string) ($_POST['action_text'] ?? ''));
 
         // Validace, že kontakt je v BO workspace stavu
+        // Multi-tenant
         $stmt = $this->pdo->prepare(
             "SELECT w.contact_id
              FROM oz_contact_workflow w
              WHERE w.contact_id = :cid AND w.stav IN ('BO_PREDANO','BO_VPRACI','BO_VRACENO','UZAVRENO','SMLOUVA')
+               AND w.tenant_id = :tid
              LIMIT 1"
         );
-        $stmt->execute(['cid' => $contactId]);
+        $stmt->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
         if (!$stmt->fetch(PDO::FETCH_ASSOC)) {
             crm_flash_set('⚠ Kontakt nenalezen.');
             crm_redirect('/bo?tab=' . urlencode($tab));
@@ -639,13 +659,14 @@ final class BackofficeController
         $tab      = (string) ($_POST['tab'] ?? 'v_praci');
 
         // Smazat lze JEN svůj záznam (autor = aktuální uživatel)
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             "SELECT a.contact_id
              FROM oz_contact_actions a
-             WHERE a.id = :aid AND a.oz_id = :uid
+             WHERE a.id = :aid AND a.oz_id = :uid AND a.tenant_id = :tid
              LIMIT 1"
         );
-        $stmt->execute(['aid' => $actionId, 'uid' => $bouserId]);
+        $stmt->execute(['aid' => $actionId, 'uid' => $bouserId, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             crm_flash_set('⚠ Záznam nenalezen nebo nelze smazat cizí.');
@@ -713,13 +734,15 @@ final class BackofficeController
         }
 
         // Ověřit existenci workflow řádku ve stavu kde má smysl progress
+        // Multi-tenant
         $check = $this->pdo->prepare(
             "SELECT w.id, w.stav
              FROM oz_contact_workflow w
              WHERE w.contact_id = :cid AND w.stav IN ('BO_PREDANO','BO_VPRACI','BO_VRACENO','SMLOUVA','UZAVRENO')
+               AND w.tenant_id = :tid
              LIMIT 1"
         );
-        $check->execute(['cid' => $contactId]);
+        $check->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
         if (!$check->fetch(PDO::FETCH_ASSOC)) {
             $jsonError('⚠ Kontakt není v BO ke zpracování.');
         }
@@ -733,8 +756,8 @@ final class BackofficeController
                          podpis_potvrzen_at = NOW(3),
                          podpis_potvrzen_by = :uid,
                          updated_at         = NOW(3)
-                     WHERE contact_id = :cid"
-                )->execute(['uid' => $bouserId, 'cid' => $contactId]);
+                     WHERE contact_id = :cid AND tenant_id = :tid"
+                )->execute(['uid' => $bouserId, 'cid' => $contactId, 'tid' => crm_tenant_id()]);
             } else {
                 $this->pdo->prepare(
                     "UPDATE oz_contact_workflow
@@ -742,16 +765,16 @@ final class BackofficeController
                          podpis_potvrzen_at = NULL,
                          podpis_potvrzen_by = NULL,
                          updated_at         = NOW(3)
-                     WHERE contact_id = :cid"
-                )->execute(['cid' => $contactId]);
+                     WHERE contact_id = :cid AND tenant_id = :tid"
+                )->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
             }
         } else {
             // Ostatní 3 sloupce — prosté toggle
             $this->pdo->prepare(
                 "UPDATE oz_contact_workflow
                  SET `$field` = :val, updated_at = NOW(3)
-                 WHERE contact_id = :cid"
-            )->execute(['val' => $checked ? 1 : 0, 'cid' => $contactId]);
+                 WHERE contact_id = :cid AND tenant_id = :tid"
+            )->execute(['val' => $checked ? 1 : 0, 'cid' => $contactId, 'tid' => crm_tenant_id()]);
         }
 
         if ($isAjax) {
@@ -809,8 +832,8 @@ final class BackofficeController
                  stav = 'NEZAJEM',
                  closed_at = NULL,
                  updated_at = NOW(3)
-             WHERE contact_id = :cid"
-        )->execute(['cid' => $contactId]);
+             WHERE contact_id = :cid AND tenant_id = :tid"
+        )->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
 
         // Audit log
         crm_log_workflow_change($this->pdo, $contactId, $bouserId, $oldStav, 'NEZAJEM',
@@ -893,7 +916,7 @@ final class BackofficeController
                  ico        = :ico,
                  adresa     = :adresa,
                  updated_at = NOW(3)
-             WHERE id = :cid"
+             WHERE id = :cid AND tenant_id = :tid"
         )->execute([
             'firma'   => $firma,
             'telefon' => $telefon === '' ? null : $telefon,
@@ -901,6 +924,7 @@ final class BackofficeController
             'ico'     => $ico     === '' ? null : $ico,
             'adresa'  => $adresa  === '' ? null : $adresa,
             'cid'     => $contactId,
+            'tid'     => crm_tenant_id(),
         ]);
 
         crm_flash_set('✓ Údaje kontaktu uloženy.');

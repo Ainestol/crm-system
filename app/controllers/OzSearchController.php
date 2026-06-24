@@ -83,11 +83,11 @@ final class OzSearchController
                         COALESCE(u.role,  '')  AS role
                  FROM oz_contact_notes n
                  LEFT JOIN users u ON u.id = COALESCE(n.author_user_id, n.oz_id)
-                 WHERE n.contact_id = ?
+                 WHERE n.contact_id = ? AND n.tenant_id = ?
                  ORDER BY n.created_at DESC
                  LIMIT 20"
             );
-            $st->execute([$cid]);
+            $st->execute([$cid, crm_tenant_id()]);
             $ozNotesAll = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\Throwable $_) {}
 
@@ -138,10 +138,11 @@ final class OzSearchController
             )->execute([$cid, $ozId, $noteText]);
 
             // OZ-specifická timeline (vidí OZ na kartě leadu) — jen pokud má OZ assigned
+            // Multi-tenant filter
             $cs = $this->pdo->prepare(
-                "SELECT assigned_sales_id FROM contacts WHERE id = ?"
+                "SELECT assigned_sales_id FROM contacts WHERE id = ? AND tenant_id = ?"
             );
-            $cs->execute([$cid]);
+            $cs->execute([$cid, crm_tenant_id()]);
             $assignedOz = (int) ($cs->fetchColumn() ?: 0);
             if ($assignedOz > 0) {
                 try {
@@ -184,16 +185,11 @@ final class OzSearchController
         $allowed = ['firma', 'ico', 'telefon', 'email', 'adresa', 'region', 'prilez', 'prilez_do', 'operator'];
         $regions = function_exists('crm_region_choices') ? crm_region_choices() : [];
 
-        // Příležitost: pokud checkbox "has_prilez" nezaškrtnut, smaž obě hodnoty.
-        // Pokud zaškrtnut ale text prázdný, uložíme sentinel "ano" (= "má, bez popisu").
-        $hasPrilez = !empty($_POST['has_prilez']);
-        if (!$hasPrilez) {
+        // Příležitost — jen volná poznámka + volitelný termín "do kdy".
+        // Vyplněná poznámka = má příležitost; prázdná poznámka = nemá (smaž i termín).
+        if (trim((string) ($_POST['prilez'] ?? '')) === '') {
             $_POST['prilez']    = '';
             $_POST['prilez_do'] = '';
-        } else {
-            if (trim((string) ($_POST['prilez'] ?? '')) === '') {
-                $_POST['prilez'] = 'ano';
-            }
         }
 
         $sets = [];
@@ -229,8 +225,11 @@ final class OzSearchController
         }
 
         $params[] = $cid;
+        $params[] = crm_tenant_id();
         try {
-            $sql = "UPDATE contacts SET " . implode(', ', $sets) . ", updated_at = NOW(3) WHERE id = ?";
+            // Multi-tenant filter v WHERE
+            $sql = "UPDATE contacts SET " . implode(', ', $sets) . ", updated_at = NOW(3)
+                    WHERE id = ? AND tenant_id = ?";
             $this->pdo->prepare($sql)->execute($params);
         } catch (\Throwable $e) {
             if (function_exists('crm_db_log_error')) crm_db_log_error($e, __METHOD__);
@@ -289,25 +288,29 @@ final class OzSearchController
 
         $this->pdo->beginTransaction();
         try {
+            // Multi-tenant filter
+            $tid = crm_tenant_id();
             // 1) Přiřaď OZ
             $this->pdo->prepare(
-                "UPDATE contacts SET assigned_sales_id = ?, updated_at = NOW(3) WHERE id = ?"
-            )->execute([$ozId, $cid]);
+                "UPDATE contacts SET assigned_sales_id = ?, updated_at = NOW(3)
+                 WHERE id = ? AND tenant_id = ?"
+            )->execute([$ozId, $cid, $tid]);
 
             // 2) Auto-promote: pokud byl v raw stavu → CALLED_OK
             if (in_array($oldStav, $rawStavs, true)) {
                 $this->pdo->prepare(
                     "UPDATE contacts SET stav = 'CALLED_OK',
                                           datum_predani = COALESCE(datum_predani, NOW(3))
-                     WHERE id = ?"
-                )->execute([$cid]);
+                     WHERE id = ? AND tenant_id = ?"
+                )->execute([$cid, $tid]);
             }
 
             // 3) Workflow row (NOVE), pokud neexistuje
             $wfCheck = $this->pdo->prepare(
-                "SELECT id FROM oz_contact_workflow WHERE contact_id = ? AND oz_id = ?"
+                "SELECT id FROM oz_contact_workflow
+                 WHERE contact_id = ? AND oz_id = ? AND tenant_id = ?"
             );
-            $wfCheck->execute([$cid, $ozId]);
+            $wfCheck->execute([$cid, $ozId, $tid]);
             if ($wfCheck->fetchColumn() === false) {
                 try {
                     $this->pdo->prepare(
@@ -375,6 +378,7 @@ final class OzSearchController
         $whereSql = '(' . implode(' OR ', $whereParts) . ')';
 
         try {
+            // Multi-tenant filter — search vrací jen z aktivního tenantu
             $stmt = $this->pdo->prepare(
                 "SELECT c.id, c.firma, c.ico, c.telefon, c.email, c.adresa, c.region,
                         c.prilez, c.operator,
@@ -387,11 +391,11 @@ final class OzSearchController
                  FROM contacts c
                  LEFT JOIN users usl ON usl.id = c.assigned_sales_id
                  LEFT JOIN users ucl ON ucl.id = c.assigned_caller_id
-                 WHERE $whereSql
+                 WHERE c.tenant_id = ? AND $whereSql
                  ORDER BY c.updated_at DESC
                  LIMIT " . self::MAX_RESULTS
             );
-            $stmt->execute($params);
+            $stmt->execute(array_merge([crm_tenant_id()], $params));
             return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\Throwable $e) {
             if (function_exists('crm_db_log_error')) crm_db_log_error($e, __METHOD__);
@@ -403,6 +407,7 @@ final class OzSearchController
     private function loadContact(int $cid): ?array
     {
         try {
+            // Multi-tenant filter
             $stmt = $this->pdo->prepare(
                 "SELECT c.*,
                         COALESCE(usl.jmeno, '') AS sales_name,
@@ -418,9 +423,9 @@ final class OzSearchController
                  FROM contacts c
                  LEFT JOIN users usl ON usl.id = c.assigned_sales_id
                  LEFT JOIN users ucl ON ucl.id = c.assigned_caller_id
-                 WHERE c.id = ? LIMIT 1"
+                 WHERE c.id = ? AND c.tenant_id = ? LIMIT 1"
             );
-            $stmt->execute([$cid]);
+            $stmt->execute([$cid, crm_tenant_id()]);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
             return $row ?: null;
         } catch (\Throwable $_) {
@@ -452,9 +457,10 @@ final class OzSearchController
                         COALESCE(u.role,  '')  AS role
                  FROM contact_notes cn
                  LEFT JOIN users u ON u.id = cn.user_id
-                 WHERE cn.contact_id = ? ORDER BY cn.created_at DESC LIMIT 50"
+                 WHERE cn.contact_id = ? AND cn.tenant_id = ?
+                 ORDER BY cn.created_at DESC LIMIT 50"
             );
-            $st->execute([$cid]);
+            $st->execute([$cid, crm_tenant_id()]);
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
                 $events[] = [
                     'type' => 'note',
@@ -476,9 +482,10 @@ final class OzSearchController
                         COALESCE(u.role,  '')  AS role
                  FROM oz_contact_notes ocn
                  LEFT JOIN users u ON u.id = COALESCE(ocn.author_user_id, ocn.oz_id)
-                 WHERE ocn.contact_id = ? ORDER BY ocn.created_at DESC LIMIT 50"
+                 WHERE ocn.contact_id = ? AND ocn.tenant_id = ?
+                 ORDER BY ocn.created_at DESC LIMIT 50"
             );
-            $st->execute([$cid]);
+            $st->execute([$cid, crm_tenant_id()]);
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
                 $events[] = [
                     'type' => 'oz_note',
@@ -498,9 +505,10 @@ final class OzSearchController
                         COALESCE(u.role,  '')  AS role
                  FROM workflow_log wl
                  LEFT JOIN users u ON u.id = wl.user_id
-                 WHERE wl.contact_id = ? ORDER BY wl.created_at DESC LIMIT 50"
+                 WHERE wl.contact_id = ? AND wl.tenant_id = ?
+                 ORDER BY wl.created_at DESC LIMIT 50"
             );
-            $st->execute([$cid]);
+            $st->execute([$cid, crm_tenant_id()]);
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
                 $msg = ($r['old_status'] ?: '—') . ' → ' . ($r['new_status'] ?: '—');
                 if (!empty($r['note'])) $msg .= ' · ' . $r['note'];
@@ -522,9 +530,10 @@ final class OzSearchController
                         COALESCE(u.role,  '')  AS role
                  FROM oz_contact_actions a
                  LEFT JOIN users u ON u.id = a.oz_id
-                 WHERE a.contact_id = ? ORDER BY a.created_at DESC LIMIT 50"
+                 WHERE a.contact_id = ? AND a.tenant_id = ?
+                 ORDER BY a.created_at DESC LIMIT 50"
             );
-            $st->execute([$cid]);
+            $st->execute([$cid, crm_tenant_id()]);
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
                 $events[] = [
                     'type' => 'action',

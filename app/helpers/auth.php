@@ -51,6 +51,23 @@ if (!function_exists('crm_pdo')) {
             $cfg['database'],
             $cfg['charset']
         );
+
+        // Multi-tenant: použij TenantAwarePDO wrapper, který:
+        //   - INSERT do business tabulek automaticky doplní tenant_id
+        //   - SELECT/UPDATE/DELETE bez tenant_id loguje v dev módu
+        //
+        // Wrapper extends PDO 1:1 (no breaking change pro existující kód).
+        $wrapperPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'lib'
+                     . DIRECTORY_SEPARATOR . 'TenantAwarePDO.php';
+        if (is_readable($wrapperPath)) {
+            require_once $wrapperPath;
+            if (class_exists('TenantAwarePDO')) {
+                $pdo = new TenantAwarePDO($dsn, $cfg['username'], $cfg['password'], $cfg['options']);
+                return $pdo;
+            }
+        }
+
+        // Fallback (wrapper není dostupný) → standard PDO
         $pdo = new PDO($dsn, $cfg['username'], $cfg['password'], $cfg['options']);
         return $pdo;
     }
@@ -296,18 +313,71 @@ if (!function_exists('crm_auth_cancel_two_factor')) {
 }
 
 if (!function_exists('crm_auth_finish_login')) {
-    /** Dokončí přihlášení: zruší 2FA pending, nastaví user_id, regeneruje session. */
-    function crm_auth_finish_login(PDO $pdo, int $userId): void
+    /** Dokončí přihlášení: zruší 2FA pending, nastaví user_id, regeneruje session.
+     *
+     *  Multi-tenant validation:
+     *    - Vyžaduje, aby user měl aktivní záznam v `user_tenants` pro aktuálně
+     *      resolved tenant_id (subdoména / dev fallback).
+     *    - Pokud nemá, login se zruší (nepřihlásíme do firmy, do které
+     *      uživatel nepatří, i kdyby zadal správné heslo).
+     *    - Super-admin status se uloží do session pro UI rozhraní.
+     *
+     *  Návratová hodnota:
+     *    true  = login úspěšně dokončen
+     *    false = user nemá přístup do aktuálního tenanta (přihlášení odmítnuto)
+     */
+    function crm_auth_finish_login(PDO $pdo, int $userId): bool
     {
         $user = crm_auth_user_by_id($pdo, $userId);
         if ($user === null) {
-            return;
+            return false;
         }
+
+        // ── Multi-tenant: ověř přístup do aktivního tenanta ──────────
+        // Pokud tenant_context není načten (legacy bootstrap), přeskočíme
+        // tuto kontrolu (graceful fallback pro testy / CLI).
+        $tenantOk = true;
+        $tenantId = 0;
+        $isSuper  = false;
+
+        if (function_exists('crm_tenant_resolve_from_request')) {
+            $tenantId = (int) crm_tenant_resolve_from_request($pdo);
+            if ($tenantId > 0) {
+                $isSuper = crm_tenant_user_is_super_admin($pdo, $userId);
+                $hasAccess = crm_tenant_user_has_access($pdo, $userId, $tenantId);
+
+                // Super-admin se může přihlásit do KAŽDÉ aktivní firmy
+                // (i bez záznamu v user_tenants — má root flag).
+                $tenantOk = $hasAccess || $isSuper;
+
+                if (!$tenantOk) {
+                    error_log(sprintf(
+                        '[Auth] Login odmítnut: user_id=%d nemá přístup do tenant_id=%d',
+                        $userId,
+                        $tenantId
+                    ));
+                    return false;
+                }
+            } else {
+                // Resolver nenašel tenanta (nedefinovaná subdoména, dev fallback failed)
+                // → login odmítneme, aby user neskončil v "tenant=0" stavu.
+                error_log('[Auth] Login odmítnut: nepodařilo se určit tenant_id pro request.');
+                return false;
+            }
+        }
+
         crm_session_start();
         crm_session_regenerate_id();
         unset($_SESSION[CRM_SESSION_2FA_UID]);
         $_SESSION[CRM_SESSION_USER_ID] = $userId;
+
+        // Ulož tenant_id + super-admin flag (pokud byl resolver dostupný)
+        if ($tenantId > 0 && function_exists('crm_tenant_set')) {
+            crm_tenant_set($tenantId, $isSuper);
+        }
+
         crm_session_touch();
+        return true;
     }
 }
 
@@ -344,7 +414,7 @@ if (!function_exists('crm_auth_try_password')) {
     /**
      * Krok 1: heslo. Vrací typ výsledku pro controller.
      *
-     * @return array{type:'locked'}|array{type:'bad_credentials'}|array{type:'twofa_required'}|array{type:'ok', user:array}
+     * @return array{type:'locked'}|array{type:'bad_credentials'}|array{type:'twofa_required'}|array{type:'no_tenant_access'}|array{type:'ok', user:array}
      */
     function crm_auth_try_password(PDO $pdo, string $email, string $password): array
     {
@@ -371,7 +441,9 @@ if (!function_exists('crm_auth_try_password')) {
             return ['type' => 'twofa_required'];
         }
 
-        crm_auth_finish_login($pdo, (int) $user['id']);
+        if (!crm_auth_finish_login($pdo, (int) $user['id'])) {
+            return ['type' => 'no_tenant_access'];
+        }
         $fresh = crm_auth_user_by_id($pdo, (int) $user['id']);
         return ['type' => 'ok', 'user' => crm_auth_strip_sensitive($fresh ?? $user)];
     }
@@ -381,7 +453,7 @@ if (!function_exists('crm_auth_try_two_factor')) {
     /**
      * Krok 2: TOTP nebo záložní kód.
      *
-     * @return array{type:'locked'}|array{type:'bad_code'}|array{type:'bad_session'}|array{type:'ok', user:array}
+     * @return array{type:'locked'}|array{type:'bad_code'}|array{type:'bad_session'}|array{type:'no_tenant_access'}|array{type:'ok', user:array}
      */
     function crm_auth_try_two_factor(PDO $pdo, string $code): array
     {
@@ -417,7 +489,9 @@ if (!function_exists('crm_auth_try_two_factor')) {
         }
 
         crm_auth_rate_clear($ip, 'twofa');
-        crm_auth_finish_login($pdo, $pending);
+        if (!crm_auth_finish_login($pdo, $pending)) {
+            return ['type' => 'no_tenant_access'];
+        }
         $out = crm_auth_user_by_id($pdo, $pending);
         return ['type' => 'ok', 'user' => crm_auth_strip_sensitive($out ?? [])];
     }
@@ -554,6 +628,10 @@ if (!function_exists('crm_auth_logout')) {
         crm_session_start();
         if (function_exists('crm_region_clear_session')) {
             crm_region_clear_session();
+        }
+        // Multi-tenant: vyčistit tenant_id + super-admin flag ze session
+        if (function_exists('crm_tenant_clear')) {
+            crm_tenant_clear();
         }
         unset(
             $_SESSION[CRM_SESSION_USER_ID],

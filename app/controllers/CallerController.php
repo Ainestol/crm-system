@@ -88,14 +88,16 @@ final class CallerController
         // pro jiné navolávačky.
         if ($subjectPref === 'firma' || $subjectPref === 'osvc') {
             try {
+                // Multi-tenant: uvolnit jen v rámci aktivního tenanta
                 $this->pdo->prepare(
                     "UPDATE contacts
                      SET locked_by = NULL, locked_until = NULL
                      WHERE locked_by = ?
                        AND stav = 'READY'
                        AND assigned_caller_id IS NULL
-                       AND subject_type <> ?"
-                )->execute([$callerId, $subjectPref]);
+                       AND subject_type <> ?
+                       AND tenant_id = ?"
+                )->execute([$callerId, $subjectPref, crm_tenant_id()]);
             } catch (\Throwable $_) {}
         }
         $validCallerTabs = ['aktivni', 'callback', 'nedovolano', 'navolane', 'prohra', 'izolace', 'chybny', 'chybne_oz', 'rescue', 'vykon'];
@@ -136,14 +138,18 @@ final class CallerController
         $earnMonth = (int) date('n');
 
         // Standardní sazba per výhra (caller_rewards_config — aktuální platnost)
-        $rewRow = $this->pdo->query(
+        // Multi-tenant filter: per-tenant config
+        $earnTid = crm_tenant_id();
+        $rewStmt0 = $this->pdo->prepare(
             "SELECT amount_czk FROM caller_rewards_config
              WHERE valid_from <= CURDATE() AND (valid_to IS NULL OR valid_to >= CURDATE())
+               AND tenant_id = :tid
              ORDER BY valid_from DESC LIMIT 1"
         );
-        $earnRewardPerWin = $rewRow ? (float) ($rewRow->fetchColumn() ?: 0) : 0.0;
+        $rewStmt0->execute(['tid' => $earnTid]);
+        $earnRewardPerWin = (float) ($rewStmt0->fetchColumn() ?: 0);
 
-        // Počet CALLED_OK z tohoto měsíce, ne flagged (= platné)
+        // Počet CALLED_OK z tohoto měsíce, ne flagged (= platné) — multi-tenant
         $earnStmt = $this->pdo->prepare(
             "SELECT
                 COUNT(*) AS total_wins,
@@ -154,9 +160,10 @@ final class CallerController
              WHERE c.stav = 'CALLED_OK'
                AND c.assigned_caller_id = :cid
                AND YEAR(c.datum_volani)  = :y
-               AND MONTH(c.datum_volani) = :m"
+               AND MONTH(c.datum_volani) = :m
+               AND c.tenant_id = :tid"
         );
-        $earnStmt->execute(['cid' => $callerId, 'y' => $earnYear, 'm' => $earnMonth]);
+        $earnStmt->execute(['cid' => $callerId, 'y' => $earnYear, 'm' => $earnMonth, 'tid' => $earnTid]);
         $earnRow = $earnStmt->fetch(PDO::FETCH_ASSOC) ?: [];
         $earnWinsTotal = (int) ($earnRow['total_wins'] ?? 0);
         $earnWinsValid = (int) ($earnRow['valid_wins'] ?? 0);
@@ -167,15 +174,17 @@ final class CallerController
         $earnRescueEarned   = 0.0;  // bonus_amount nastaven, nevyplacený
         $earnRescuePaid     = 0.0;  // už vyplacený
         try {
+            // Multi-tenant: rescue per-tenant
             $rbStmt = $this->pdo->prepare(
                 "SELECT bonus_amount, bonus_paid_at
                  FROM rescue_requests
                  WHERE rescued_by_caller_id = :cid
                    AND outcome = 'success'
                    AND YEAR(rescued_at)  = :y
-                   AND MONTH(rescued_at) = :m"
+                   AND MONTH(rescued_at) = :m
+                   AND tenant_id = :tid"
             );
-            $rbStmt->execute(['cid' => $callerId, 'y' => $earnYear, 'm' => $earnMonth]);
+            $rbStmt->execute(['cid' => $callerId, 'y' => $earnYear, 'm' => $earnMonth, 'tid' => $earnTid]);
             foreach ($rbStmt->fetchAll(PDO::FETCH_ASSOC) as $rbRow) {
                 $amt = (float) ($rbRow['bonus_amount'] ?? 0);
                 if ($amt <= 0) {
@@ -195,13 +204,15 @@ final class CallerController
         // Runtime DDL odstraněn 5/2026 → konec "Duplicate column" log spamu.
 
         // ── Lazy midnight reset: NEDOVOLANO → ASSIGNED po změně dne ──────────
+        // Multi-tenant: jen v rámci aktivního tenanta
         $this->pdo->prepare(
             "UPDATE contacts
              SET stav = 'ASSIGNED', updated_at = NOW(3)
              WHERE stav = 'NEDOVOLANO'
                AND assigned_caller_id = :cid
-               AND DATE(updated_at) < CURDATE()"
-        )->execute(['cid' => $callerId]);
+               AND DATE(updated_at) < CURDATE()
+               AND tenant_id = :tid"
+        )->execute(['cid' => $callerId, 'tid' => crm_tenant_id()]);
 
         // ── Regiony přiřazené navolávačce ─────────────────────────────────────
         $urStmt = $this->pdo->prepare(
@@ -219,9 +230,11 @@ final class CallerController
         // POZN: Premium leady (cleaning_status='pending' nebo 'tradeable' v premium_lead_pool)
         // se z standardní queue VYLOUČÍ — patří do separátní /caller/premium plochy.
         // Non_tradeable leady zde zůstávají (vrátily se do běžného poolu).
+        // Multi-tenant: pool je per-tenant; vážeme plp.tenant_id na contacts.tenant_id
         $excludePremium = " AND NOT EXISTS (
             SELECT 1 FROM premium_lead_pool plp
             WHERE plp.contact_id = contacts.id
+              AND plp.tenant_id = contacts.tenant_id
               AND plp.cleaning_status IN ('pending', 'tradeable')
         )";
 
@@ -234,38 +247,44 @@ final class CallerController
                 $availSubjParam  = [$subjectPref];
             }
 
+            // Multi-tenant: tenant filter v obou UNION větvích
+            $tid = crm_tenant_id();
             if ($hasCallerRegions) {
                 $ph = implode(',', array_fill(0, count($callerRegions), '?'));
                 $avStmt = $this->pdo->prepare(
                     "SELECT DISTINCT region FROM contacts
                      WHERE stav='READY' AND operator IN('TM','O2')
                        AND assigned_caller_id IS NULL AND region IN($ph) AND region!=''
+                       AND tenant_id = ?
                        $excludePremium $availSubjFilter
                      UNION
                      SELECT DISTINCT region FROM contacts
                      WHERE stav = 'ASSIGNED' AND assigned_caller_id = ? AND region != ''
+                       AND tenant_id = ?
                        $availSubjFilter
                      ORDER BY region"
                 );
                 $avStmt->execute(array_merge(
-                    $callerRegions, $availSubjParam,
-                    [$callerId], $availSubjParam
+                    $callerRegions, [$tid], $availSubjParam,
+                    [$callerId, $tid], $availSubjParam
                 ));
             } else {
                 $avStmt = $this->pdo->prepare(
                     "SELECT DISTINCT region FROM contacts
                      WHERE stav='READY' AND operator IN('TM','O2')
                        AND assigned_caller_id IS NULL AND region!=''
+                       AND tenant_id = ?
                        $excludePremium $availSubjFilter
                      UNION
                      SELECT DISTINCT region FROM contacts
                      WHERE stav = 'ASSIGNED' AND assigned_caller_id = ? AND region != ''
+                       AND tenant_id = ?
                        $availSubjFilter
                      ORDER BY region"
                 );
                 $avStmt->execute(array_merge(
-                    $availSubjParam,
-                    [$callerId], $availSubjParam
+                    [$tid], $availSubjParam,
+                    [$callerId, $tid], $availSubjParam
                 ));
             }
             $availableRegions = $avStmt ? ($avStmt->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
@@ -279,26 +298,29 @@ final class CallerController
                 // Počty: 1) volné (unclaimed) READY v daném regionu
                 //         2) PLUS caller's vlastní ASSIGNED kontakty
                 //         + aplikujeme subject_type filter všude
+                // Multi-tenant filter v obou UNION větvích
                 $rcStmt = $this->pdo->prepare(
                     "SELECT region, SUM(cnt) AS cnt FROM (
                         SELECT region, COUNT(*) AS cnt FROM contacts
                         WHERE stav='READY' AND operator IN('TM','O2')
                           AND assigned_caller_id IS NULL AND region IN($ph2)
                           AND (locked_by IS NULL OR locked_until < NOW(3) OR locked_by = ?)
+                          AND tenant_id = ?
                           $excludePremium $availSubjFilter
                         GROUP BY region
                         UNION ALL
                         SELECT region, COUNT(*) AS cnt FROM contacts
                         WHERE stav = 'ASSIGNED' AND assigned_caller_id = ?
                           AND region IN($ph2)
+                          AND tenant_id = ?
                           $availSubjFilter
                         GROUP BY region
                      ) AS combined
                      GROUP BY region"
                 );
                 $rcStmt->execute(array_merge(
-                    $availableRegions, [$callerId], $availSubjParam,
-                    [$callerId], $availableRegions, $availSubjParam
+                    $availableRegions, [$callerId, $tid], $availSubjParam,
+                    [$callerId], $availableRegions, [$tid], $availSubjParam
                 ));
                 foreach ($rcStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
                     $regionCounts[(string) $row['region']] = (int) $row['cnt'];
@@ -333,6 +355,8 @@ final class CallerController
         $totalCount = 0;
         $totalPages = 1;
 
+        // Multi-tenant: tenant filter ve všech tab queries
+        $tid = crm_tenant_id();
         if ($tab === 'callback') {
             $stmt = $this->pdo->prepare(
                 'SELECT c.*, u.jmeno AS sales_name
@@ -340,20 +364,22 @@ final class CallerController
                  LEFT JOIN users u ON u.id = c.assigned_sales_id
                  WHERE c.stav = \'CALLBACK\'
                    AND (c.assigned_caller_id = :cid OR c.assigned_caller_id IS NULL)
+                   AND c.tenant_id = :tid
                  ORDER BY c.callback_at ASC
                  LIMIT 200'
             );
-            $stmt->execute(['cid' => $callerId]);
+            $stmt->execute(['cid' => $callerId, 'tid' => $tid]);
         } elseif ($tab === 'nedovolano') {
             $stmt = $this->pdo->prepare(
                 'SELECT c.*, u.jmeno AS sales_name
                  FROM contacts c
                  LEFT JOIN users u ON u.id = c.assigned_sales_id
                  WHERE c.assigned_caller_id = :cid AND c.stav = \'NEDOVOLANO\'
+                   AND c.tenant_id = :tid
                  ORDER BY c.updated_at DESC
                  LIMIT 200'
             );
-            $stmt->execute(['cid' => $callerId]);
+            $stmt->execute(['cid' => $callerId, 'tid' => $tid]);
         } elseif ($tab === 'navolane') {
             // Vylučujeme kontakty s flagem od OZ — ty patří do tabu 'chybne_oz'.
             $stmt = $this->pdo->prepare(
@@ -364,13 +390,14 @@ final class CallerController
                    AND c.stav IN ('CALLED_OK', 'FOR_SALES')
                    AND YEAR(c.datum_volani)  = :y
                    AND MONTH(c.datum_volani) = :m
+                   AND c.tenant_id = :tid
                    AND NOT EXISTS (
                        SELECT 1 FROM contact_oz_flags f WHERE f.contact_id = c.id
                    )
                  ORDER BY c.datum_volani DESC, c.updated_at DESC
                  LIMIT 100"
             );
-            $stmt->execute(['cid' => $callerId, 'y' => $filterYear, 'm' => $filterMonth]);
+            $stmt->execute(['cid' => $callerId, 'y' => $filterYear, 'm' => $filterMonth, 'tid' => $tid]);
         } elseif ($tab === 'prohra') {
             $stmt = $this->pdo->prepare(
                 'SELECT c.*, u.jmeno AS sales_name
@@ -380,20 +407,22 @@ final class CallerController
                    AND c.stav IN (\'CALLED_BAD\', \'NEZAJEM\')
                    AND YEAR(c.datum_volani)  = :y
                    AND MONTH(c.datum_volani) = :m
+                   AND c.tenant_id = :tid
                  ORDER BY c.datum_volani DESC, c.updated_at DESC
                  LIMIT 100'
             );
-            $stmt->execute(['cid' => $callerId, 'y' => $filterYear, 'm' => $filterMonth]);
+            $stmt->execute(['cid' => $callerId, 'y' => $filterYear, 'm' => $filterMonth, 'tid' => $tid]);
         } elseif ($tab === 'izolace') {
             $stmt = $this->pdo->prepare(
                 'SELECT c.*, u.jmeno AS sales_name
                  FROM contacts c
                  LEFT JOIN users u ON u.id = c.assigned_sales_id
                  WHERE c.assigned_caller_id = :cid AND c.stav = \'IZOLACE\'
+                   AND c.tenant_id = :tid
                  ORDER BY c.updated_at DESC
                  LIMIT 100'
             );
-            $stmt->execute(['cid' => $callerId]);
+            $stmt->execute(['cid' => $callerId, 'tid' => $tid]);
         } elseif ($tab === 'chybny') {
             $stmt = $this->pdo->prepare(
                 'SELECT c.*, u.jmeno AS sales_name
@@ -402,12 +431,14 @@ final class CallerController
                  WHERE c.assigned_caller_id = :cid AND c.stav = \'CHYBNY_KONTAKT\'
                    AND YEAR(c.updated_at)  = :y
                    AND MONTH(c.updated_at) = :m
+                   AND c.tenant_id = :tid
                  ORDER BY c.updated_at DESC
                  LIMIT 100'
             );
-            $stmt->execute(['cid' => $callerId, 'y' => $filterYear, 'm' => $filterMonth]);
+            $stmt->execute(['cid' => $callerId, 'y' => $filterYear, 'm' => $filterMonth, 'tid' => $tid]);
         } elseif ($tab === 'chybne_oz') {
             // ── Chybné leady nahlášené OZ — přes contact_oz_flags ──
+            // Multi-tenant: filter c.tenant_id
             $stmt = $this->pdo->prepare(
                 "SELECT c.id, c.firma, c.telefon, c.region, c.datum_volani,
                         f.reason              AS oz_reason,
@@ -426,10 +457,11 @@ final class CallerController
                  WHERE c.assigned_caller_id = :cid
                    AND YEAR(f.flagged_at)  = :y
                    AND MONTH(f.flagged_at) = :m
+                   AND c.tenant_id = :tid
                  ORDER BY (f.caller_confirmed + f.oz_confirmed) ASC, f.flagged_at DESC
                  LIMIT 100"
             );
-            $stmt->execute(['cid' => $callerId, 'y' => $filterYear, 'm' => $filterMonth]);
+            $stmt->execute(['cid' => $callerId, 'y' => $filterYear, 'm' => $filterMonth, 'tid' => $tid]);
         } else {
             // ── Aktivní: READY pool s exkluzivním claimem (locked_by) + vlastní ASSIGNED ──
             //
@@ -443,34 +475,39 @@ final class CallerController
             //   - Cíl: vyřešit problém, kdy caller proklikal pět krajů, na každém zamkl
             //     10 leadů, a tím blokoval ostatní bez aktivního volání.
 
+            // Multi-tenant filter ve všech lock UPDATEs a SELECT
             // (vždy) Uvolnit expirované vlastní zámky — pojistka pro případ pádu prohlížeče atd.
             $this->pdo->prepare(
                 "UPDATE contacts SET locked_by = NULL, locked_until = NULL
-                 WHERE locked_by = :cid AND locked_until < NOW(3) AND stav = 'READY'"
-            )->execute(['cid' => $callerId]);
+                 WHERE locked_by = :cid AND locked_until < NOW(3) AND stav = 'READY'
+                   AND tenant_id = :tid"
+            )->execute(['cid' => $callerId, 'tid' => $tid]);
 
             if ($selectedRegion !== '') {
                 // 1. Uvolnit vlastní zámky ve VŠECH OSTATNÍCH krajích — caller přepnul region.
                 //    Tím se nestává, že proklikáním krajů zamyká 10×N kontaktů paralelně.
                 $this->pdo->prepare(
                     "UPDATE contacts SET locked_by = NULL, locked_until = NULL
-                     WHERE locked_by = :cid AND stav = 'READY' AND region != :selreg"
-                )->execute(['cid' => $callerId, 'selreg' => $selectedRegion]);
+                     WHERE locked_by = :cid AND stav = 'READY' AND region != :selreg
+                       AND tenant_id = :tid"
+                )->execute(['cid' => $callerId, 'selreg' => $selectedRegion, 'tid' => $tid]);
 
                 // 2. Prodloužit platné zámky v aktuálním kraji (sliding window +10 min)
                 $this->pdo->prepare(
                     "UPDATE contacts SET locked_until = NOW(3) + INTERVAL 10 MINUTE
                      WHERE locked_by = :cid AND stav = 'READY' AND locked_until > NOW(3)
-                       AND region = :selreg"
-                )->execute(['cid' => $callerId, 'selreg' => $selectedRegion]);
+                       AND region = :selreg
+                       AND tenant_id = :tid"
+                )->execute(['cid' => $callerId, 'selreg' => $selectedRegion, 'tid' => $tid]);
 
                 // 3. Spočítat aktuální zámky v tomto kraji
                 $lockedCntStmt = $this->pdo->prepare(
                     "SELECT COUNT(*) FROM contacts
                      WHERE locked_by = :cid AND stav = 'READY'
-                       AND locked_until > NOW(3) AND region = :reg"
+                       AND locked_until > NOW(3) AND region = :reg
+                       AND tenant_id = :tid"
                 );
-                $lockedCntStmt->execute(['cid' => $callerId, 'reg' => $selectedRegion]);
+                $lockedCntStmt->execute(['cid' => $callerId, 'reg' => $selectedRegion, 'tid' => $tid]);
                 $lockedCount = (int) $lockedCntStmt->fetchColumn();
             } else {
                 // No region selected — caller je v "overview" módu (nevybral kraj).
@@ -485,12 +522,15 @@ final class CallerController
             //    POZN: NOT EXISTS premium_lead_pool — premium leady patří do /caller/premium
             $needed = $selectedRegion !== '' ? (self::PAGE_SIZE - $lockedCount) : 0;
             if ($needed > 0) {
+                // Multi-tenant: tenant filter v claim
                 $claimWhere  = "stav = 'READY' AND operator IN('TM','O2') AND assigned_caller_id IS NULL
                                 AND (locked_by IS NULL OR locked_until < NOW(3))
                                 AND region = ?
+                                AND tenant_id = ?
                                 AND NOT EXISTS (
                                     SELECT 1 FROM premium_lead_pool plp
                                     WHERE plp.contact_id = contacts.id
+                                      AND plp.tenant_id = contacts.tenant_id
                                       AND plp.cleaning_status IN ('pending', 'tradeable')
                                 )
                                 -- Excluze sázkových kontaktů: ty patří do /caller/campaigns,
@@ -499,7 +539,7 @@ final class CallerController
                                     SELECT 1 FROM bet_campaign_leads bcl
                                     WHERE bcl.contact_id = contacts.id
                                 )";
-                $claimParams = [$selectedRegion];
+                $claimParams = [$selectedRegion, $tid];
 
                 // Per-navolávačka filter typu subjektu (firma/osvc)
                 if ($subjectPref === 'firma' || $subjectPref === 'osvc') {
@@ -529,10 +569,11 @@ final class CallerController
 
                     if ($ids !== []) {
                         $ph2 = implode(',', array_fill(0, count($ids), '?'));
+                        // Multi-tenant: lock jen v rámci tenanta (defensivní)
                         $this->pdo->prepare(
                             "UPDATE contacts SET locked_by = ?, locked_until = NOW(3) + INTERVAL 10 MINUTE
-                             WHERE id IN ($ph2)"
-                        )->execute(array_merge([$callerId], $ids));
+                             WHERE id IN ($ph2) AND tenant_id = ?"
+                        )->execute(array_merge([$callerId], $ids, [$tid]));
                     }
                     $this->pdo->commit();
                 } catch (\Throwable $e) {
@@ -557,18 +598,20 @@ final class CallerController
                 $subjExtraOwn  = ' AND c.subject_type = :subj_pref_own';
             }
 
+            // Multi-tenant: vnější AND c.tenant_id přes celou OR podmínku
             $sql = "SELECT c.*, u.jmeno AS sales_name,
                            CASE WHEN c.assigned_caller_id IS NULL THEN 1 ELSE 0 END AS is_pool
                     FROM contacts c
                     LEFT JOIN users u ON u.id = c.assigned_sales_id
-                    WHERE (
-                      (c.stav = 'READY' AND c.locked_by = :cid_pool AND c.locked_until > NOW(3)
-                       AND c.assigned_caller_id IS NULL {$regionExtraWhere}{$subjExtraPool})
-                      OR (c.assigned_caller_id = :cid_own AND c.stav = 'ASSIGNED' {$subjExtraOwn})
-                    )
+                    WHERE c.tenant_id = :tid
+                      AND (
+                          (c.stav = 'READY' AND c.locked_by = :cid_pool AND c.locked_until > NOW(3)
+                           AND c.assigned_caller_id IS NULL {$regionExtraWhere}{$subjExtraPool})
+                          OR (c.assigned_caller_id = :cid_own AND c.stav = 'ASSIGNED' {$subjExtraOwn})
+                      )
                     ORDER BY is_pool ASC, c.created_at ASC";
 
-            $mainParams = ['cid_pool' => $callerId, 'cid_own' => $callerId];
+            $mainParams = ['cid_pool' => $callerId, 'cid_own' => $callerId, 'tid' => $tid];
             if ($selectedRegion !== '') {
                 $mainParams['reg'] = $selectedRegion;
             }
@@ -604,14 +647,15 @@ final class CallerController
             try {
                 $cIds2 = array_map(fn($c) => (int) $c['id'], $contacts);
                 $ph2 = implode(',', array_fill(0, count($cIds2), '?'));
+                // Multi-tenant filter
                 $st = $this->pdo->prepare(
                     'SELECT contact_id, id, phone, phone_digits, operator,
                             verified_at, position
                      FROM contact_phones
-                     WHERE contact_id IN (' . $ph2 . ')
+                     WHERE contact_id IN (' . $ph2 . ') AND tenant_id = ?
                      ORDER BY contact_id, position ASC, id ASC'
                 );
-                $st->execute($cIds2);
+                $st->execute(array_merge($cIds2, [$tid]));
                 foreach ($st->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
                     $phonesByContact[(int) $r['contact_id']][] = $r;
                 }
@@ -625,6 +669,7 @@ final class CallerController
         if ($contacts !== []) {
             $cIds = array_map(fn($c) => (int) $c['id'], $contacts);
             $ph   = implode(',', array_fill(0, count($cIds), '?'));
+            // Multi-tenant: filter bet_campaign_leads tenant
             $betStmt = $this->pdo->prepare(
                 "SELECT bcl.contact_id, bcl.position,
                         bcr.oz_id, u.jmeno AS oz_name,
@@ -634,9 +679,10 @@ final class CallerController
                  JOIN bet_campaigns bc ON bc.id = bcl.campaign_id
                  LEFT JOIN users u ON u.id = bcr.oz_id
                  WHERE bcl.contact_id IN ($ph)
-                   AND bcr.delivery_type = 'call'"
+                   AND bcr.delivery_type = 'call'
+                   AND bcl.tenant_id = ?"
             );
-            $betStmt->execute($cIds);
+            $betStmt->execute(array_merge($cIds, [$tid]));
             foreach ($betStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
                 $betContacts[(int) $r['contact_id']] = [
                     'oz_id'         => (int) $r['oz_id'],
@@ -656,6 +702,7 @@ final class CallerController
         if ($subjectPref === 'firma' || $subjectPref === 'osvc') {
             $subjFilterSql = " AND subject_type = " . $this->pdo->quote($subjectPref);
         }
+        // Multi-tenant: tenant filter v counts
         $counts = $this->pdo->prepare(
             'SELECT
                 SUM(CASE WHEN stav IN (\'NEW\', \'ASSIGNED\') THEN 1 ELSE 0 END)          AS aktivni,
@@ -668,11 +715,12 @@ final class CallerController
                 SUM(CASE WHEN stav = \'IZOLACE\' THEN 1 ELSE 0 END)                      AS izolace,
                 SUM(CASE WHEN stav = \'CHYBNY_KONTAKT\' THEN 1 ELSE 0 END)               AS chybny
              FROM contacts
-             WHERE (assigned_caller_id = :cid2
+             WHERE tenant_id = :tid
+               AND (assigned_caller_id = :cid2
                     OR (stav = \'CALLBACK\' AND assigned_caller_id IS NULL))'
             . $subjFilterSql
         );
-        $counts->execute(['cid1' => $callerId, 'cid2' => $callerId]);
+        $counts->execute(['cid1' => $callerId, 'cid2' => $callerId, 'tid' => $tid]);
         $tabCounts = $counts->fetch(PDO::FETCH_ASSOC)
             ?: ['aktivni' => 0, 'callback' => 0, 'nedovolano' => 0, 'navolane' => 0, 'prohra' => 0, 'izolace' => 0, 'chybny' => 0];
 
@@ -682,9 +730,10 @@ final class CallerController
                 "SELECT COUNT(*) FROM contact_oz_flags f
                  JOIN contacts c ON c.id = f.contact_id
                  WHERE c.assigned_caller_id = :cid
-                   AND c.stav IN ('CALLED_OK', 'FOR_SALES')"
+                   AND c.stav IN ('CALLED_OK', 'FOR_SALES')
+                   AND c.tenant_id = :tid"
             );
-            $flagInNavolaneStmt->execute(['cid' => $callerId]);
+            $flagInNavolaneStmt->execute(['cid' => $callerId, 'tid' => $tid]);
             $flagInNavolaneCount = (int) $flagInNavolaneStmt->fetchColumn();
             $tabCounts['navolane'] = max(0, ((int) ($tabCounts['navolane'] ?? 0)) - $flagInNavolaneCount);
         } catch (\PDOException) {
@@ -696,20 +745,22 @@ final class CallerController
             $chybneOzCount = $this->pdo->prepare(
                 "SELECT COUNT(*) FROM contact_oz_flags f
                  JOIN contacts c ON c.id = f.contact_id
-                 WHERE c.assigned_caller_id = :cid"
+                 WHERE c.assigned_caller_id = :cid AND c.tenant_id = :tid"
             );
-            $chybneOzCount->execute(['cid' => $callerId]);
+            $chybneOzCount->execute(['cid' => $callerId, 'tid' => $tid]);
             $tabCounts['chybne_oz'] = (int) $chybneOzCount->fetchColumn();
         } catch (\PDOException) {
             $tabCounts['chybne_oz'] = 0;
         }
 
         // Přidat caller's zamčené READY kontakty do počtu tab "aktivní"
+        // Multi-tenant filter
         $lockedForBadge = $this->pdo->prepare(
             "SELECT COUNT(*) FROM contacts
-             WHERE locked_by = :cid AND stav = 'READY' AND locked_until > NOW(3)"
+             WHERE locked_by = :cid AND stav = 'READY' AND locked_until > NOW(3)
+               AND tenant_id = :tid"
         );
-        $lockedForBadge->execute(['cid' => $callerId]);
+        $lockedForBadge->execute(['cid' => $callerId, 'tid' => $tid]);
         $tabCounts['aktivni'] = (int) ($tabCounts['aktivni'] ?? 0) + (int) $lockedForBadge->fetchColumn();
 
         // Obchodáci seskupení dle regionu
@@ -747,7 +798,7 @@ final class CallerController
         // Výchozí OZ ze session
         $defaultSalesId = (int) ($_SESSION['crm_caller_def_sales_' . $callerId] ?? 0);
 
-        // Dnešní statistiky
+        // Dnešní statistiky — multi-tenant filter
         $todayStmt = $this->pdo->prepare(
             'SELECT
                 COUNT(*)                                               AS total_calls,
@@ -755,9 +806,10 @@ final class CallerController
              FROM contacts
              WHERE assigned_caller_id = :cid
                AND datum_volani IS NOT NULL
-               AND DATE(datum_volani) = CURDATE()'
+               AND DATE(datum_volani) = CURDATE()
+               AND tenant_id = :tid'
         );
-        $todayStmt->execute(['cid' => $callerId]);
+        $todayStmt->execute(['cid' => $callerId, 'tid' => $tid]);
         $todayStats = $todayStmt->fetch(PDO::FETCH_ASSOC) ?: ['total_calls' => 0, 'wins_today' => 0];
 
         // Denní cíl
@@ -767,25 +819,28 @@ final class CallerController
         $dailyGoal = ($goalRow ? $goalRow->fetch(PDO::FETCH_ASSOC) : null)
             ?: ['target_calls' => 0, 'target_wins' => 0];
 
-        // Odměna za výhru (základní sazba)
-        $rewardRow = $this->pdo->query(
+        // Odměna za výhru (základní sazba) — per-tenant config
+        $rewStmt = $this->pdo->prepare(
             'SELECT amount_czk FROM caller_rewards_config
              WHERE valid_from <= CURDATE() AND (valid_to IS NULL OR valid_to >= CURDATE())
+               AND tenant_id = :tid
              ORDER BY valid_from DESC LIMIT 1'
         );
-        $rewardPerWin = $rewardRow ? (float) ($rewardRow->fetchColumn() ?: 0) : 0.0;
+        $rewStmt->execute(['tid' => $tid]);
+        $rewardPerWin = (float) ($rewStmt->fetchColumn() ?: 0);
 
         // ── Měsíční statistiky + bonusový systém ─────────────────────────────
         $curYear  = (int) date('Y');
         $curMonth = (int) date('n');
 
-        // Výhry tohoto callera v aktuálním měsíci (z workflow_log)
+        // Výhry tohoto callera v aktuálním měsíci (z workflow_log) — multi-tenant
         $mWinsStmt = $this->pdo->prepare(
             "SELECT COUNT(*) FROM workflow_log
              WHERE user_id = :cid AND new_status = 'CALLED_OK'
-               AND YEAR(created_at) = :y AND MONTH(created_at) = :m"
+               AND YEAR(created_at) = :y AND MONTH(created_at) = :m
+               AND tenant_id = :tid"
         );
-        $mWinsStmt->execute(['cid' => $callerId, 'y' => $curYear, 'm' => $curMonth]);
+        $mWinsStmt->execute(['cid' => $callerId, 'y' => $curYear, 'm' => $curMonth, 'tid' => $tid]);
         $monthWins = (int) $mWinsStmt->fetchColumn();
 
         // Chybné leady tohoto měsíce (odečtou se z výplaty)
@@ -795,9 +850,10 @@ final class CallerController
                 "SELECT COUNT(*) FROM contact_oz_flags f
                  JOIN contacts c ON c.id = f.contact_id
                  WHERE c.assigned_caller_id = :cid
-                   AND YEAR(f.flagged_at) = :y AND MONTH(f.flagged_at) = :m"
+                   AND YEAR(f.flagged_at) = :y AND MONTH(f.flagged_at) = :m
+                   AND c.tenant_id = :tid"
             );
-            $chybneStmt->execute(['cid' => $callerId, 'y' => $curYear, 'm' => $curMonth]);
+            $chybneStmt->execute(['cid' => $callerId, 'y' => $curYear, 'm' => $curMonth, 'tid' => $tid]);
             $monthChybne = (int) $chybneStmt->fetchColumn();
         } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
         // Čisté placené výhry = výhry − chybné leady (min. 0)
@@ -805,11 +861,15 @@ final class CallerController
 
         // Měsíční cíl + bonusy
         try {
-            $mgRow = $this->pdo->query(
+            // Multi-tenant: monthly_goals per-tenant
+            $mgStmt = $this->pdo->prepare(
                 "SELECT target_wins, bonus1_at_pct, bonus1_pct, bonus2_at_pct, bonus2_pct, motiv_enabled
-                 FROM monthly_goals WHERE valid_to IS NULL ORDER BY id DESC LIMIT 1"
+                 FROM monthly_goals
+                 WHERE valid_to IS NULL AND tenant_id = :tid
+                 ORDER BY id DESC LIMIT 1"
             );
-            $monthlyGoal = ($mgRow ? $mgRow->fetch(PDO::FETCH_ASSOC) : null) ?: null;
+            $mgStmt->execute(['tid' => $tid]);
+            $monthlyGoal = $mgStmt->fetch(PDO::FETCH_ASSOC) ?: null;
         } catch (\PDOException $e) {
             $monthlyGoal = null; // Tabulka ještě neexistuje
         }
@@ -861,19 +921,22 @@ final class CallerController
             // POZN: JOIN users + aktivni=1 — header musí počítat jen aktivní obchodáky,
             // jinak by se total nesedl s tabulkou (která renderuje jen aktivní).
             // Stejná logika u obou queries (targets + received).
+            // Multi-tenant filter
             $tgtStmt = $this->pdo->prepare(
                 "SELECT t.user_id, t.region, t.target_count
                  FROM oz_targets t
                  JOIN users u ON u.id = t.user_id
                  WHERE t.year = :y AND t.month = :m
-                   AND u.role = 'obchodak' AND u.aktivni = 1"
+                   AND u.role = 'obchodak' AND u.aktivni = 1
+                   AND t.tenant_id = :tid"
             );
-            $tgtStmt->execute(['y' => $cqYear, 'm' => $cqMonth]);
+            $tgtStmt->execute(['y' => $cqYear, 'm' => $cqMonth, 'tid' => $tid]);
             $ozTargetData = [];
             foreach ($tgtStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 $ozTargetData[(int) $row['user_id']][(string) $row['region']] = (int) $row['target_count'];
             }
 
+            // Multi-tenant filter
             $recStmt = $this->pdo->prepare(
                 "SELECT c.assigned_sales_id AS uid, c.region, COUNT(*) AS cnt
                  FROM contacts c
@@ -883,9 +946,10 @@ final class CallerController
                    AND u.role = 'obchodak' AND u.aktivni = 1
                    AND YEAR(c.datum_volani) = :y
                    AND MONTH(c.datum_volani) = :m
+                   AND c.tenant_id = :tid
                  GROUP BY c.assigned_sales_id, c.region"
             );
-            $recStmt->execute(['y' => $cqYear, 'm' => $cqMonth]);
+            $recStmt->execute(['y' => $cqYear, 'm' => $cqMonth, 'tid' => $tid]);
             $ozReceivedData = [];
             foreach ($recStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 $ozReceivedData[(int) $row['uid']][(string) $row['region']] = (int) $row['cnt'];
@@ -941,13 +1005,37 @@ final class CallerController
             crm_redirect('/caller');
         }
 
-        // Poznámka povinná (kromě NEDOVOLANO)
-        if ($poznamka === '' && $newStatus !== 'NEDOVOLANO') {
-            crm_flash_set('Poznámka je povinná – bez ní nelze změnit stav.');
+        // Callback bez data/času nemá smysl — neukázal by se v kalendáři.
+        // Vynutíme vyplnění, aby kontakt vždy spadl do kalendáře i tabu Callbacky.
+        if ($newStatus === 'CALLBACK' && $callbackDate === '') {
+            crm_flash_set('Pro callback je nutné vyplnit datum a čas, kdy zavolat zpět.');
             crm_redirect('/caller');
         }
-        if ($poznamka === '' && $newStatus === 'NEDOVOLANO') {
-            $poznamka = 'Nedovoláno';
+
+        // note_area=1 → požadavek přišel z PRACOVNÍHO tabu (velké pole bylo
+        // viditelné). note_area=0 → z už vyřízeného tabu (pole skryté), kde se
+        // mění jen stav/důvod a poznámka se NESMÍ přepsat (jinak ztráta dat).
+        $noteArea = ((string) ($_POST['note_area'] ?? '1')) === '1';
+
+        // Poznámka — kdy je povinná? Optimalizováno na rychlost navolávačky.
+        //   - NEDOVOLANO    → automaticky doplněna "Nedovoláno"
+        //   - NEZAJEM       → VOLITELNÁ (1-click flow, ať se zbytečně nezdržuje)
+        //   - CALLBACK      → VOLITELNÁ (datum stačí)
+        //   - CHYBNY_KONTAKT → VOLITELNÁ
+        //   - CALLED_OK     → povinná (info pro OZ)
+        //   - CALLED_BAD    → povinná (audit pro reklamaci)
+        //   - IZOLACE       → povinná (zakládá blacklist navždy — musíme vědět proč)
+        // Povinnost se vynucuje JEN v pracovním tabu — ve vyřízeném tabu pole
+        // není a kontakt už poznámku z dřívějška má.
+        $optionalNoteStatuses = ['NEDOVOLANO', 'NEZAJEM', 'CALLBACK', 'CHYBNY_KONTAKT'];
+        if ($noteArea && $poznamka === '' && !in_array($newStatus, $optionalNoteStatuses, true)) {
+            $reasonLabels = [
+                'CALLED_OK'  => 'Pro výhru je poznámka povinná (info pro OZ).',
+                'CALLED_BAD' => 'Pro prohru s reklamací je poznámka povinná (audit).',
+                'IZOLACE'    => 'Pro Izolaci je poznámka povinná (blacklist).',
+            ];
+            crm_flash_set($reasonLabels[$newStatus] ?? 'Poznámka je povinná.');
+            crm_redirect('/caller');
         }
 
         // Pro výhru musí být vybrán OZ
@@ -957,14 +1045,15 @@ final class CallerController
             // ── ENFORCEMENT: pokud je kontakt v sázce (bet_campaign_leads),
             // OZ je FIXNĚ určen sázkou — ignoruj POST sales_id a vezmi z recipients.
             // To brání tomu, aby navolávačka přepsala pre-assigned OZ ze sázky.
+            // Multi-tenant: tenant filter
             $betCheck = $this->pdo->prepare(
                 "SELECT bcr.oz_id, u.jmeno
                  FROM bet_campaign_leads bcl
                  JOIN bet_campaign_recipients bcr ON bcr.id = bcl.recipient_id
                  LEFT JOIN users u ON u.id = bcr.oz_id
-                 WHERE bcl.contact_id = ? LIMIT 1"
+                 WHERE bcl.contact_id = ? AND bcl.tenant_id = ? LIMIT 1"
             );
-            $betCheck->execute([$contactId]);
+            $betCheck->execute([$contactId, crm_tenant_id()]);
             $betRow = $betCheck->fetch(PDO::FETCH_ASSOC);
 
             if ($betRow && (int) ($betRow['oz_id'] ?? 0) > 0) {
@@ -993,28 +1082,67 @@ final class CallerController
             }
         }
 
-        // Ověření vlastnictví kontaktu:
+        // Ověření vlastnictví kontaktu — multi-tenant:
         // - vlastní (assigned_caller_id = caller)
         // - sdílený callback (IS NULL AND stav=CALLBACK)
         // - READY z poolu (IS NULL AND stav=READY)
         $check = $this->pdo->prepare(
-            'SELECT id, stav, nedovolano_count
+            'SELECT id, stav, nedovolano_count, poznamka
              FROM contacts
              WHERE id = :id
+               AND tenant_id = :tid
                AND (
                  assigned_caller_id = :cid
                  OR (assigned_caller_id IS NULL AND stav IN (\'CALLBACK\', \'READY\'))
                )
              LIMIT 1'
         );
-        $check->execute(['id' => $contactId, 'cid' => $callerId]);
+        $check->execute(['id' => $contactId, 'cid' => $callerId, 'tid' => crm_tenant_id()]);
         $contact = $check->fetch(PDO::FETCH_ASSOC);
         if (!$contact) {
             crm_flash_set('Kontakt nenalezen nebo vám nepatří.');
             crm_redirect('/caller');
         }
 
-        $oldStatus = (string) $contact['stav'];
+        $oldStatus    = (string) $contact['stav'];
+        $existingNote = trim((string) ($contact['poznamka'] ?? ''));
+
+        // ── Finalizace poznámky (ochrana proti přepsání) ─────────────────
+        // Pracovní tab (note_area=1): použij napsaný text; když nic, doplň
+        //   audit auto-text (jen pokud kontakt ještě žádnou poznámku nemá).
+        // Vyřízený tab (note_area=0): původní poznámku ZACHOVAT a jen připsat
+        //   řádek o překlasifikaci — uživatel zde velké pole nemá.
+        $autoNote = [
+            'NEDOVOLANO'     => 'Nedovoláno',
+            'NEZAJEM'        => 'Nezájem',
+            'CHYBNY_KONTAKT' => 'Chybný kontakt',
+            'CALLBACK'       => 'Domluven callback',
+        ];
+        $statusCz = [
+            'CALLED_OK' => 'Výhra', 'CALLED_BAD' => 'Prohra', 'CALLBACK' => 'Callback',
+            'NEZAJEM' => 'Nezájem', 'IZOLACE' => 'Izolace',
+            'CHYBNY_KONTAKT' => 'Chybný kontakt', 'NEDOVOLANO' => 'Nedovoláno',
+        ];
+        $reasonCz = [
+            'cena' => 'cena', 'ma_smlouvu' => 'má smlouvu jinde',
+            'nechce_prejit' => 'nechce přejít', 'spatny_kontakt' => 'špatný kontakt',
+        ];
+
+        if ($noteArea) {
+            if ($poznamka === '') {
+                // Zachovat dřívější poznámku; pokud žádná není, doplnit audit text.
+                $poznamka = $existingNote !== '' ? $existingNote : ($autoNote[$newStatus] ?? '');
+            }
+        } else {
+            // Změna stavu z vyřízeného tabu — zachovat + připsat řádek o změně.
+            $changeLabel = $statusCz[$newStatus] ?? $newStatus;
+            if ($rejectionReason !== '' && isset($reasonCz[$rejectionReason])) {
+                $changeLabel .= ' — ' . $reasonCz[$rejectionReason];
+            }
+            $line = '→ změněno na ' . $changeLabel . ' (' . date('d.m.') . ')';
+            $poznamka = $existingNote !== '' ? ($existingNote . "\n" . $line) : $line;
+        }
+
         $updates   = ['stav = :stav', 'datum_volani = NOW(3)', 'poznamka = :poz',
                       'assigned_caller_id = :cid_claim']; // Claim kontaktu
         $params    = ['stav' => $newStatus, 'id' => $contactId, 'poz' => $poznamka,
@@ -1038,7 +1166,7 @@ final class CallerController
 
         // --- Rejection reason (Nezájem, Prohra) ---
         if (in_array($newStatus, ['NEZAJEM', 'CALLED_BAD'], true) && $rejectionReason !== '') {
-            $validReasons = ['nezajem', 'cena', 'ma_smlouvu', 'spatny_kontakt', 'jine'];
+            $validReasons = ['nezajem', 'cena', 'ma_smlouvu', 'nechce_prejit', 'spatny_kontakt', 'jine'];
             if (in_array($rejectionReason, $validReasons, true)) {
                 $updates[]                    = 'rejection_reason = :rr';
                 $params['rr'] = $rejectionReason;
@@ -1078,7 +1206,10 @@ final class CallerController
         $updates[] = 'locked_by = NULL';
         $updates[] = 'locked_until = NULL';
 
-        $sql = 'UPDATE contacts SET ' . implode(', ', $updates) . ' WHERE id = :id';
+        // Multi-tenant: tenant filter v WHERE jako defense-in-depth
+        $sql = 'UPDATE contacts SET ' . implode(', ', $updates)
+             . ' WHERE id = :id AND tenant_id = :tid_upd';
+        $params['tid_upd'] = crm_tenant_id();
         $this->pdo->prepare($sql)->execute($params);
 
         // Workflow log
@@ -1098,6 +1229,16 @@ final class CallerController
             'INSERT INTO contact_notes (contact_id, user_id, note, created_at)
              VALUES (:cid, :uid, :note, NOW(3))'
         )->execute(['cid' => $contactId, 'uid' => $callerId, 'note' => $poznamka]);
+
+        // Activity log — bonus call.bet_success pro sázkové kontakty
+        // (standard call.success už zapsala workflow_log hook v crm_log_workflow_change)
+        if ($newStatus === 'CALLED_OK' && $isBetLead) {
+            crm_activity_log_record(
+                $this->pdo, (int) $user['id'], 'call.bet_success',
+                'contact', $contactId,
+                ['oz_id' => $salesUser['id'] ?? null, 'oz_name' => $salesUser['jmeno'] ?? null]
+            );
+        }
 
         $labels = [
             'CALLED_OK'      => 'Výhra' . ($salesUser !== null ? ' → předáno: ' . $salesUser['jmeno'] : ''),
@@ -1127,17 +1268,18 @@ final class CallerController
         if ($month < 1)  { $month = 12; $year--; }
         if ($month > 12) { $month = 1;  $year++; }
 
-        // Vlastní + sdílené callbacky
+        // Vlastní + sdílené callbacky — multi-tenant
         $stmt = $this->pdo->prepare(
             'SELECT id, firma, telefon, callback_at
              FROM contacts
              WHERE stav = \'CALLBACK\'
                AND callback_at IS NOT NULL
+               AND tenant_id = :tid
                AND (assigned_caller_id = :cid OR assigned_caller_id IS NULL)
              ORDER BY callback_at ASC
              LIMIT 500'
         );
-        $stmt->execute(['cid' => $callerId]);
+        $stmt->execute(['cid' => $callerId, 'tid' => crm_tenant_id()]);
         $allCallbacks = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $callbacksByDate = [];
@@ -1168,6 +1310,7 @@ final class CallerController
 
         $callerId = (int) $user['id'];
 
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             'SELECT id, firma, telefon, callback_at,
                     CASE WHEN assigned_caller_id IS NULL THEN 1 ELSE 0 END AS is_shared
@@ -1175,10 +1318,11 @@ final class CallerController
              WHERE stav = \'CALLBACK\'
                AND callback_at BETWEEN DATE_SUB(NOW(), INTERVAL 5 MINUTE)
                                    AND DATE_ADD(NOW(), INTERVAL 2 HOUR)
+               AND tenant_id = :tid
                AND (assigned_caller_id = :cid OR assigned_caller_id IS NULL)
              ORDER BY callback_at ASC'
         );
-        $stmt->execute(['cid' => $callerId]);
+        $stmt->execute(['cid' => $callerId, 'tid' => crm_tenant_id()]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         echo json_encode(['callbacks' => $rows, 'server_time' => date('Y-m-d H:i:s')]);
@@ -1196,19 +1340,23 @@ final class CallerController
 
         $callerId = (int) $user['id'];
 
+        // Multi-tenant filter
+        $tidJson = crm_tenant_id();
         // Zamčené READY kontakty (caller's exkluzivní sada z poolu)
         $lockedStmt = $this->pdo->prepare(
             "SELECT COUNT(*) FROM contacts
-             WHERE locked_by = :cid AND stav = 'READY' AND locked_until > NOW(3)"
+             WHERE locked_by = :cid AND stav = 'READY' AND locked_until > NOW(3)
+               AND tenant_id = :tid"
         );
-        $lockedStmt->execute(['cid' => $callerId]);
+        $lockedStmt->execute(['cid' => $callerId, 'tid' => $tidJson]);
         $lockedCount = (int) $lockedStmt->fetchColumn();
 
         // Vlastní ASSIGNED kontakty
         $ownStmt = $this->pdo->prepare(
-            "SELECT COUNT(*) FROM contacts WHERE assigned_caller_id = :cid AND stav = 'ASSIGNED'"
+            "SELECT COUNT(*) FROM contacts
+             WHERE assigned_caller_id = :cid AND stav = 'ASSIGNED' AND tenant_id = :tid"
         );
-        $ownStmt->execute(['cid' => $callerId]);
+        $ownStmt->execute(['cid' => $callerId, 'tid' => $tidJson]);
         $ownCount = (int) $ownStmt->fetchColumn();
 
         echo json_encode(['count' => $lockedCount + $ownCount]);
@@ -1228,19 +1376,21 @@ final class CallerController
 
         try {
             // Měsíční cíl (vždy z monthly_goals, i když je motiv_enabled=0)
+            // Multi-tenant: race jen v rámci aktivního tenanta
+            $tidRace = crm_tenant_id();
             $target = 150;
             try {
-                $tRow = $this->pdo->query(
+                $tStmt = $this->pdo->prepare(
                     "SELECT target_wins FROM monthly_goals
-                     WHERE valid_to IS NULL ORDER BY id DESC LIMIT 1"
+                     WHERE valid_to IS NULL AND tenant_id = :tid
+                     ORDER BY id DESC LIMIT 1"
                 );
-                if ($tRow) {
-                    $target = max(1, (int) ($tRow->fetchColumn() ?: 150));
-                }
+                $tStmt->execute(['tid' => $tidRace]);
+                $target = max(1, (int) ($tStmt->fetchColumn() ?: 150));
             } catch (\PDOException $e) { /* tabulka ještě neexistuje → fallback 150 */ }
 
-            // Výhry v aktuálním měsíci pro každou aktivní navolávačku
-            $stmt = $this->pdo->query(
+            // Výhry v aktuálním měsíci pro každou aktivní navolávačku — per-tenant
+            $stmt = $this->pdo->prepare(
                 "SELECT
                     u.id,
                     u.jmeno,
@@ -1252,11 +1402,13 @@ final class CallerController
                      WHERE new_status = 'CALLED_OK'
                        AND YEAR(created_at)  = YEAR(NOW())
                        AND MONTH(created_at) = MONTH(NOW())
+                       AND tenant_id = :tid
                      GROUP BY user_id
                  ) wm ON wm.user_id = u.id
                  WHERE u.role = 'navolavacka' AND u.aktivni = 1
                  ORDER BY wins DESC, u.jmeno ASC"
             );
+            $stmt->execute(['tid' => $tidRace]);
             $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
 
             $callers = [];
@@ -1303,13 +1455,14 @@ final class CallerController
         $callerId  = (int) $user['id'];
         $contactId = (int) ($_POST['contact_id'] ?? 0);
 
-        // Ověř přístup ke kontaktu
+        // Ověř přístup ke kontaktu — multi-tenant
         $check = $this->pdo->prepare(
             "SELECT id, operator FROM contacts
-             WHERE id=:id AND (assigned_caller_id=:cid OR stav='READY')
+             WHERE id=:id AND tenant_id=:tid
+               AND (assigned_caller_id=:cid OR stav='READY')
              LIMIT 1"
         );
-        $check->execute(['id' => $contactId, 'cid' => $callerId]);
+        $check->execute(['id' => $contactId, 'cid' => $callerId, 'tid' => crm_tenant_id()]);
         $contact = $check->fetch(PDO::FETCH_ASSOC);
 
         if (!$contact) {
@@ -1320,10 +1473,10 @@ final class CallerController
         // Najdi čističku která naposled nastavila READY status
         $cleanerStmt = $this->pdo->prepare(
             "SELECT user_id FROM workflow_log
-             WHERE contact_id=:cid AND new_status='READY'
+             WHERE contact_id=:cid AND new_status='READY' AND tenant_id=:tid
              ORDER BY created_at DESC LIMIT 1"
         );
-        $cleanerStmt->execute(['cid' => $contactId]);
+        $cleanerStmt->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
         $cleanerId = (int) ($cleanerStmt->fetchColumn() ?: 0);
 
         // Log do workflow_log (vidí majitel v admin přehledu)
@@ -1403,14 +1556,16 @@ final class CallerController
         }
 
         // Navolávačka smí editovat: (a) svůj přidělený kontakt, (b) READY z poolu, nebo (c) sdílený callback
+        // Multi-tenant filter
+        $tidEdit = crm_tenant_id();
         $check = $this->pdo->prepare(
             "SELECT id FROM contacts
-             WHERE id = :id
+             WHERE id = :id AND tenant_id = :tid
                AND (assigned_caller_id = :cid
                     OR (assigned_caller_id IS NULL AND stav IN ('READY', 'CALLBACK')))
              LIMIT 1"
         );
-        $check->execute(['id' => $contactId, 'cid' => $callerId]);
+        $check->execute(['id' => $contactId, 'cid' => $callerId, 'tid' => $tidEdit]);
         if (!$check->fetch()) {
             echo json_encode(['ok' => false, 'error' => 'Přístup odepřen.']);
             exit;
@@ -1427,10 +1582,62 @@ final class CallerController
         ];
         $col = $colMap[$field];
         $this->pdo->prepare(
-            "UPDATE contacts SET `{$col}` = :val, updated_at = NOW(3) WHERE id = :id"
-        )->execute(['val' => ($value !== '' ? $value : null), 'id' => $contactId]);
+            "UPDATE contacts SET `{$col}` = :val, updated_at = NOW(3) WHERE id = :id AND tenant_id = :tid"
+        )->execute(['val' => ($value !== '' ? $value : null), 'id' => $contactId, 'tid' => $tidEdit]);
 
         echo json_encode(['ok' => true, 'value' => $value]);
+        exit;
+    }
+
+    /** POST /caller/set-prilez – rychlá inline úprava příležitosti (AJAX, klik na příležitost) */
+    public function postSetPrilez(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['navolavacka']);
+
+        header('Content-Type: application/json; charset=UTF-8');
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            echo json_encode(['ok' => false, 'error' => 'Neplatný CSRF token.']);
+            exit;
+        }
+
+        $callerId  = (int) $user['id'];
+        $contactId = (int) ($_POST['contact_id'] ?? 0);
+        $prilez    = trim((string) ($_POST['prilez'] ?? ''));
+        $prilezDo  = trim((string) ($_POST['prilez_do'] ?? ''));
+
+        // Prázdná poznámka = bez příležitosti (smaž i termín).
+        if ($prilez === '') { $prilezDo = ''; }
+        if ($prilezDo !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $prilezDo)) { $prilezDo = ''; }
+        if (mb_strlen($prilez) > 255) { $prilez = mb_substr($prilez, 0, 255); }
+
+        // Stejné oprávnění jako u editace polí: vlastní / READY z poolu / sdílený callback
+        $tid = crm_tenant_id();
+        $check = $this->pdo->prepare(
+            "SELECT id FROM contacts
+             WHERE id = :id AND tenant_id = :tid
+               AND (assigned_caller_id = :cid
+                    OR (assigned_caller_id IS NULL AND stav IN ('READY', 'CALLBACK')))
+             LIMIT 1"
+        );
+        $check->execute(['id' => $contactId, 'cid' => $callerId, 'tid' => $tid]);
+        if (!$check->fetch()) {
+            echo json_encode(['ok' => false, 'error' => 'Přístup odepřen.']);
+            exit;
+        }
+
+        $this->pdo->prepare(
+            "UPDATE contacts SET prilez = :p, prilez_do = :pd, updated_at = NOW(3)
+             WHERE id = :id AND tenant_id = :tid"
+        )->execute([
+            'p'   => $prilez   === '' ? null : $prilez,
+            'pd'  => $prilezDo === '' ? null : $prilezDo,
+            'id'  => $contactId,
+            'tid' => $tid,
+        ]);
+
+        echo json_encode(['ok' => true, 'prilez' => $prilez, 'prilez_do' => $prilezDo], JSON_UNESCAPED_UNICODE);
         exit;
     }
 
@@ -1449,6 +1656,7 @@ final class CallerController
         if (strlen($q) >= 3) {
             // Hledá v celé DB — telefon nebo firma
             $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+            // Multi-tenant filter
             $stmt = $this->pdo->prepare(
                 'SELECT c.id, c.firma, c.telefon, c.email, c.stav, c.operator,
                         c.region, c.poznamka, c.callback_at, c.assigned_caller_id,
@@ -1456,11 +1664,12 @@ final class CallerController
                         u.jmeno AS sales_name
                  FROM contacts c
                  LEFT JOIN users u ON u.id = c.assigned_sales_id
-                 WHERE (c.firma LIKE :q1 OR c.telefon LIKE :q2)
+                 WHERE c.tenant_id = :tid
+                   AND (c.firma LIKE :q1 OR c.telefon LIKE :q2)
                  ORDER BY c.firma ASC
                  LIMIT 50'
             );
-            $stmt->execute(['q1' => $like, 'q2' => $like]);
+            $stmt->execute(['q1' => $like, 'q2' => $like, 'tid' => crm_tenant_id()]);
             $results = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
             // Anotuj výsledky o info o sdílených telefonech (stejně jako v hlavní queue).
@@ -1525,37 +1734,39 @@ final class CallerController
         $trackedStatuses = ['CALLED_OK', 'CALLED_BAD', 'CALLBACK', 'NEZAJEM',
                             'NEDOVOLANO', 'IZOLACE', 'CHYBNY_KONTAKT'];
 
-        // ── Souhrnné počty za vybraný měsíc ──
+        // ── Souhrnné počty za vybraný měsíc — multi-tenant ──
         $sumStmt = $this->pdo->prepare(
             'SELECT new_status, COUNT(*) AS cnt
              FROM workflow_log
              WHERE user_id = :uid
                AND YEAR(created_at)  = :yr
                AND MONTH(created_at) = :mo
+               AND tenant_id = :tid
                AND new_status IN (\'CALLED_OK\',\'CALLED_BAD\',\'CALLBACK\',
                                   \'NEZAJEM\',\'NEDOVOLANO\',\'IZOLACE\',\'CHYBNY_KONTAKT\')
              GROUP BY new_status'
         );
-        $sumStmt->execute(['uid' => $callerId, 'yr' => $year, 'mo' => $month]);
+        $sumStmt->execute(['uid' => $callerId, 'yr' => $year, 'mo' => $month, 'tid' => crm_tenant_id()]);
         $summaryRaw = $sumStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $summary = array_fill_keys($trackedStatuses, 0);
         foreach ($summaryRaw as $row) {
             $summary[(string) $row['new_status']] = (int) $row['cnt'];
         }
 
-        // ── Denní breakdown (den → stav → počet) ──
+        // ── Denní breakdown (den → stav → počet) — multi-tenant ──
         $dailyStmt = $this->pdo->prepare(
             'SELECT DAY(created_at) AS day, new_status, COUNT(*) AS cnt
              FROM workflow_log
              WHERE user_id = :uid
                AND YEAR(created_at)  = :yr
                AND MONTH(created_at) = :mo
+               AND tenant_id = :tid
                AND new_status IN (\'CALLED_OK\',\'CALLED_BAD\',\'CALLBACK\',
                                   \'NEZAJEM\',\'NEDOVOLANO\',\'IZOLACE\',\'CHYBNY_KONTAKT\')
              GROUP BY DAY(created_at), new_status
              ORDER BY DAY(created_at) ASC'
         );
-        $dailyStmt->execute(['uid' => $callerId, 'yr' => $year, 'mo' => $month]);
+        $dailyStmt->execute(['uid' => $callerId, 'yr' => $year, 'mo' => $month, 'tid' => crm_tenant_id()]);
         $dailyRaw = $dailyStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         // Sestavit pole [den => [stav => počet]]
@@ -1620,10 +1831,14 @@ final class CallerController
             crm_redirect('/caller');
         }
 
+        // Multi-tenant filter
+        $tidPredej = crm_tenant_id();
         $check = $this->pdo->prepare(
-            'SELECT id, stav FROM contacts WHERE id = :id AND assigned_caller_id = :cid LIMIT 1'
+            'SELECT id, stav FROM contacts
+             WHERE id = :id AND assigned_caller_id = :cid AND tenant_id = :tid
+             LIMIT 1'
         );
-        $check->execute(['id' => $contactId, 'cid' => $callerId]);
+        $check->execute(['id' => $contactId, 'cid' => $callerId, 'tid' => $tidPredej]);
         $contact = $check->fetch(PDO::FETCH_ASSOC);
         if (!$contact) {
             crm_flash_set('Kontakt nenalezen nebo vám nepatří.');
@@ -1645,8 +1860,8 @@ final class CallerController
         $this->pdo->prepare(
             'UPDATE contacts
              SET stav = \'FOR_SALES\', assigned_sales_id = :sid, datum_predani = NOW(3), updated_at = NOW(3)
-             WHERE id = :id'
-        )->execute(['sid' => $salesId, 'id' => $contactId]);
+             WHERE id = :id AND tenant_id = :tid'
+        )->execute(['sid' => $salesId, 'id' => $contactId, 'tid' => $tidPredej]);
 
         $this->pdo->prepare(
             'INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
@@ -1691,13 +1906,14 @@ final class CallerController
         $comment   = trim((string) ($_POST['caller_comment'] ?? ''));
         $action    = (string) ($_POST['action'] ?? 'comment'); // 'comment' | 'accept'
 
-        // Ověřit že flag patří kontaktu tohoto callera
+        // Ověřit že flag patří kontaktu tohoto callera — multi-tenant
         $fStmt = $this->pdo->prepare(
             "SELECT f.id, f.oz_id FROM contact_oz_flags f
              JOIN contacts c ON c.id = f.contact_id
-             WHERE f.contact_id = :cid AND c.assigned_caller_id = :caller"
+             WHERE f.contact_id = :cid AND c.assigned_caller_id = :caller
+               AND c.tenant_id = :tid"
         );
-        $fStmt->execute(['cid' => $contactId, 'caller' => $callerId]);
+        $fStmt->execute(['cid' => $contactId, 'caller' => $callerId, 'tid' => crm_tenant_id()]);
         $flag = $fStmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$flag) {
@@ -1776,13 +1992,15 @@ final class CallerController
             // Pro každý unikátní telefon zjistíme všechny kontakty se stejným number
             // (REGEXP_REPLACE pro normalizaci na digits-only).
             $placeholders = implode(',', array_fill(0, count($uniquePhones), '?'));
+            // Multi-tenant filter — shared phone info jen v rámci tenanta
             $stmt = $this->pdo->prepare(
                 "SELECT id, firma, stav, REGEXP_REPLACE(telefon, '[^0-9]+', '') AS phone_digits
                  FROM contacts
                  WHERE telefon IS NOT NULL AND TRIM(telefon) <> ''
+                   AND tenant_id = ?
                    AND REGEXP_REPLACE(telefon, '[^0-9]+', '') IN ($placeholders)"
             );
-            $stmt->execute($uniquePhones);
+            $stmt->execute(array_merge([crm_tenant_id()], $uniquePhones));
             while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 $pd = (string) ($row['phone_digits'] ?? '');
                 if ($pd === '') continue;
@@ -1812,19 +2030,21 @@ final class CallerController
         if ($sharedOnlyPhones !== []) {
             try {
                 $placeholders = implode(',', array_fill(0, count($sharedOnlyPhones), '?'));
+                // Multi-tenant filter
                 $stmt = $this->pdo->prepare(
                     "SELECT w.contact_id, w.new_status, w.created_at, c.firma,
                             REGEXP_REPLACE(c.telefon, '[^0-9]+', '') AS phone_digits
                      FROM workflow_log w
                      JOIN contacts c ON c.id = w.contact_id
                      WHERE c.telefon IS NOT NULL
+                       AND c.tenant_id = ?
                        AND REGEXP_REPLACE(c.telefon, '[^0-9]+', '') IN ($placeholders)
                        AND w.new_status IN ('CALLED_OK','CALLED_BAD','NEZAJEM','CALLBACK','NEDOVOLANO',
                                             'IZOLACE','CHYBNY_KONTAKT')
                      ORDER BY w.created_at DESC
                      LIMIT 5000"
                 );
-                $stmt->execute($sharedOnlyPhones);
+                $stmt->execute(array_merge([crm_tenant_id()], $sharedOnlyPhones));
                 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                     $pd = (string) ($row['phone_digits'] ?? '');
                     if ($pd === '' || isset($lastByPhone[$pd])) continue; // bereme jen první (nejnovější)
@@ -1913,7 +2133,8 @@ final class CallerController
         }
 
         // Kontakty CALLED_OK navolané touto navolávačkou v daný měsíc
-        // + per OZ kdo je dostal + flag info per OZ
+        // + per OZ kdo je dostal + flag info per OZ — multi-tenant filter
+        $tidPay = crm_tenant_id();
         $sqlContacts = $this->pdo->prepare(
             "SELECT c.id, c.firma, c.telefon, c.region, c.datum_volani, c.poznamka,
                     u.id   AS oz_id,
@@ -1928,9 +2149,10 @@ final class CallerController
                AND c.assigned_caller_id = :cid
                AND YEAR(c.datum_volani)  = :y
                AND MONTH(c.datum_volani) = :m
+               AND c.tenant_id = :tid
              ORDER BY u.jmeno ASC, c.region ASC, c.datum_volani ASC"
         );
-        $sqlContacts->execute(['cid' => $callerId, 'y' => $year, 'm' => $month]);
+        $sqlContacts->execute(['cid' => $callerId, 'y' => $year, 'm' => $month, 'tid' => $tidPay]);
         $contacts = $sqlContacts->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         // Seskupit per OZ (a uvnitř per region)
@@ -1953,13 +2175,15 @@ final class CallerController
             $byOz[$oid]['byRegion'][(string) $c['region']][] = $c;
         }
 
-        // Sazba odměny — stejný princip jako u OZ
-        $rewardRow = $this->pdo->query(
+        // Sazba odměny — per-tenant config
+        $rewStmt2 = $this->pdo->prepare(
             "SELECT amount_czk FROM caller_rewards_config
              WHERE valid_from <= CURDATE() AND (valid_to IS NULL OR valid_to >= CURDATE())
+               AND tenant_id = :tid
              ORDER BY valid_from DESC LIMIT 1"
         );
-        $rewardPerWin = $rewardRow ? (float) ($rewardRow->fetchColumn() ?: 0) : 0.0;
+        $rewStmt2->execute(['tid' => $tidPay]);
+        $rewardPerWin = (float) ($rewStmt2->fetchColumn() ?: 0);
 
         // Maskování citlivých údajů — navolávačka vidí maskovaný telefon/firmu;
         // majitel/superadmin/atd. mají plný audit view.
@@ -1976,6 +2200,7 @@ final class CallerController
         $sumRescueEarnedPaid   = 0.0;
         $countRescueAwaiting   = 0;
         try {
+            // Multi-tenant filter
             $rbStmt = $this->pdo->prepare(
                 "SELECT rr.id, rr.contact_id, rr.outcome, rr.rescued_at,
                         rr.bonus_amount, rr.bonus_locked_at, rr.bonus_paid_at,
@@ -1990,9 +2215,10 @@ final class CallerController
                    AND rr.outcome = 'success'
                    AND YEAR(rr.rescued_at)  = :y
                    AND MONTH(rr.rescued_at) = :m
+                   AND rr.tenant_id = :tid
                  ORDER BY rr.rescued_at ASC"
             );
-            $rbStmt->execute(['cid' => $callerId, 'y' => $year, 'm' => $month]);
+            $rbStmt->execute(['cid' => $callerId, 'y' => $year, 'm' => $month, 'tid' => $tidPay]);
             $rescueBonuses = $rbStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
             foreach ($rescueBonuses as $rb) {
                 if (!empty($rb['bonus_amount'])) {
@@ -2028,13 +2254,14 @@ final class CallerController
                  LEFT JOIN users uo   ON uo.id = rr.original_sales_id
                  WHERE rr.original_caller_id = :cid
                    AND rr.outcome IN ('expired', 'failed')
+                   AND rr.tenant_id = :tid
                    AND (
                        (rr.outcome = 'expired' AND YEAR(rr.expired_at) = :y1 AND MONTH(rr.expired_at) = :m1)
                        OR
                        (rr.outcome = 'failed'  AND YEAR(rr.rescued_at) = :y2 AND MONTH(rr.rescued_at) = :m2)
                    )"
             );
-            $cbStmt->execute(['cid' => $callerId, 'y1' => $year, 'm1' => $month, 'y2' => $year, 'm2' => $month]);
+            $cbStmt->execute(['cid' => $callerId, 'y1' => $year, 'm1' => $month, 'y2' => $year, 'm2' => $month, 'tid' => $tidPay]);
             $rescueClawback = $cbStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
             // Standardní sazba (rewardPerWin) — to je co OZ NEzaplatí navolávačce
             $sumClawback = count($rescueClawback) * $rewardPerWin;

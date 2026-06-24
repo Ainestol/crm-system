@@ -28,16 +28,19 @@ final class AdminBetController
         $user = crm_require_user($this->pdo);
         crm_require_roles($user, ['majitel', 'superadmin']);
 
-        $stmt = $this->pdo->query(
+        // Multi-tenant filter
+        $stmt = $this->pdo->prepare(
             "SELECT bc.id, bc.name, bc.region, bc.target_count, bc.cleaned_count,
                     bc.status, bc.created_at, bc.closed_at,
                     u.jmeno AS creator_name
              FROM bet_campaigns bc
              LEFT JOIN users u ON u.id = bc.created_by
+             WHERE bc.tenant_id = :tid
              ORDER BY bc.status = 'open' DESC, bc.created_at DESC
              LIMIT 200"
         );
-        $campaigns = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        $stmt->execute(['tid' => crm_tenant_id()]);
+        $campaigns = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $flash = crm_flash_take();
         $title = 'Sázky';
@@ -53,27 +56,33 @@ final class AdminBetController
         $user = crm_require_user($this->pdo);
         crm_require_roles($user, ['majitel', 'superadmin']);
 
-        // Načti OZ pro <select> (multi-role aware)
-        $ozList = $this->pdo->query(
-            "SELECT id, jmeno, email
-             FROM users
-             WHERE aktivni = 1 AND (
-                 role = 'obchodak'
-                 OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"')
+        // Multi-tenant: OZ a navolávačky jen z aktivního tenantu (přes user_tenants)
+        $tid = crm_tenant_id();
+        $ozStmt = $this->pdo->prepare(
+            "SELECT u.id, u.jmeno, u.email
+             FROM users u
+             INNER JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1
+             WHERE u.aktivni = 1 AND (
+                 u.role = 'obchodak'
+                 OR JSON_CONTAINS(IFNULL(u.roles_extra, '[]'), '\"obchodak\"')
              )
-             ORDER BY jmeno ASC"
-        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+             ORDER BY u.jmeno ASC"
+        );
+        $ozStmt->execute(['tid' => $tid]);
+        $ozList = $ozStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-        // Načti navolávačky pro multi-select
-        $callerList = $this->pdo->query(
-            "SELECT id, jmeno, email
-             FROM users
-             WHERE aktivni = 1 AND (
-                 role = 'navolavacka'
-                 OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"')
+        $callerStmt = $this->pdo->prepare(
+            "SELECT u.id, u.jmeno, u.email
+             FROM users u
+             INNER JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1
+             WHERE u.aktivni = 1 AND (
+                 u.role = 'navolavacka'
+                 OR JSON_CONTAINS(IFNULL(u.roles_extra, '[]'), '\"navolavacka\"')
              )
-             ORDER BY jmeno ASC"
-        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+             ORDER BY u.jmeno ASC"
+        );
+        $callerStmt->execute(['tid' => $tid]);
+        $callerList = $callerStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $regionChoices = function_exists('crm_region_choices') ? crm_region_choices() : [];
 
@@ -138,10 +147,11 @@ final class AdminBetController
         }
 
         // Kontrola, že v tomto kraji už neběží jiná sázka (jedna otevřená per kraj)
+        // Multi-tenant: jedna otevřená sázka per kraj per tenant
         $existCheck = $this->pdo->prepare(
-            "SELECT id FROM bet_campaigns WHERE region = ? AND status = 'open' LIMIT 1"
+            "SELECT id FROM bet_campaigns WHERE region = ? AND status = 'open' AND tenant_id = ? LIMIT 1"
         );
-        $existCheck->execute([$region]);
+        $existCheck->execute([$region, crm_tenant_id()]);
         if ($existCheck->fetchColumn() !== false) {
             crm_flash_set("V kraji '$region' už běží jiná aktivní sázka. Nejprve ji uzavřete.");
             crm_redirect('/admin/bet');
@@ -187,15 +197,17 @@ final class AdminBetController
                 }
             }
             if ($callerIds !== []) {
-                // Validace: pouze aktivní uživatelé s role caller
+                // Validace: pouze aktivní uživatelé s role caller V AKTIVNÍM TENANTU
                 $ph = implode(',', array_fill(0, count($callerIds), '?'));
                 $validStmt = $this->pdo->prepare(
-                    "SELECT id FROM users WHERE id IN ($ph) AND aktivni = 1 AND (
-                        role = 'navolavacka'
-                        OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"')
+                    "SELECT u.id FROM users u
+                     INNER JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
+                     WHERE u.id IN ($ph) AND u.aktivni = 1 AND (
+                        u.role = 'navolavacka'
+                        OR JSON_CONTAINS(IFNULL(u.roles_extra, '[]'), '\"navolavacka\"')
                      )"
                 );
-                $validStmt->execute(array_keys($callerIds));
+                $validStmt->execute(array_merge([crm_tenant_id()], array_keys($callerIds)));
                 $validCallerIds = array_map('intval', $validStmt->fetchAll(PDO::FETCH_COLUMN) ?: []);
 
                 if ($validCallerIds !== []) {
@@ -209,6 +221,12 @@ final class AdminBetController
             }
 
             $this->pdo->commit();
+
+            // Activity log — admin akce
+            crm_activity_log_record(
+                $this->pdo, (int) $user['id'], 'admin.campaign_created',
+                'campaign', $campaignId, ['name' => $name]
+            );
 
             crm_flash_set("Sázka '$name' vytvořena (ID $campaignId).");
             crm_redirect('/admin/bet/show?id=' . $campaignId);
@@ -232,28 +250,32 @@ final class AdminBetController
             crm_redirect('/admin/bet');
         }
 
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             "SELECT bc.*, u.jmeno AS creator_name
              FROM bet_campaigns bc
              LEFT JOIN users u ON u.id = bc.created_by
-             WHERE bc.id = ?"
+             WHERE bc.id = ? AND bc.tenant_id = ?"
         );
-        $stmt->execute([$id]);
+        $stmt->execute([$id, crm_tenant_id()]);
         $campaign = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$campaign) {
             crm_flash_set('Sázka nenalezena.');
             crm_redirect('/admin/bet');
         }
 
+        // Multi-tenant filter všude
+        $tid = crm_tenant_id();
+
         // Recipients
         $rStmt = $this->pdo->prepare(
             "SELECT r.*, u.jmeno AS oz_name
              FROM bet_campaign_recipients r
              LEFT JOIN users u ON u.id = r.oz_id
-             WHERE r.campaign_id = ?
+             WHERE r.campaign_id = ? AND r.tenant_id = ?
              ORDER BY r.sort_order ASC"
         );
-        $rStmt->execute([$id]);
+        $rStmt->execute([$id, $tid]);
         $recipients = $rStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         // Sample leads (posledních 50 — pro náhled)
@@ -264,11 +286,11 @@ final class AdminBetController
              LEFT JOIN contacts c ON c.id = l.contact_id
              LEFT JOIN bet_campaign_recipients r ON r.id = l.recipient_id
              LEFT JOIN users ru ON ru.id = r.oz_id
-             WHERE l.campaign_id = ?
+             WHERE l.campaign_id = ? AND l.tenant_id = ?
              ORDER BY l.position DESC
              LIMIT 50"
         );
-        $lStmt->execute([$id]);
+        $lStmt->execute([$id, $tid]);
         $sampleLeads = $lStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         // Přiřazené navolávačky
@@ -276,22 +298,25 @@ final class AdminBetController
             "SELECT bcc.caller_id, u.jmeno, u.email
              FROM bet_campaign_callers bcc
              JOIN users u ON u.id = bcc.caller_id
-             WHERE bcc.campaign_id = ?
+             WHERE bcc.campaign_id = ? AND bcc.tenant_id = ?
              ORDER BY u.jmeno ASC"
         );
-        $caStmt->execute([$id]);
+        $caStmt->execute([$id, $tid]);
         $assignedCallers = $caStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-        // Všechny dostupné navolávačky (pro „přidat" panel)
-        $allCallers = $this->pdo->query(
-            "SELECT id, jmeno, email
-             FROM users
-             WHERE aktivni = 1 AND (
-                 role = 'navolavacka'
-                 OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"')
+        // Všechny dostupné navolávačky (pro „přidat" panel) — per-tenant
+        $allCallersStmt = $this->pdo->prepare(
+            "SELECT u.id, u.jmeno, u.email
+             FROM users u
+             INNER JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1
+             WHERE u.aktivni = 1 AND (
+                 u.role = 'navolavacka'
+                 OR JSON_CONTAINS(IFNULL(u.roles_extra, '[]'), '\"navolavacka\"')
              )
-             ORDER BY jmeno ASC"
-        )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+             ORDER BY u.jmeno ASC"
+        );
+        $allCallersStmt->execute(['tid' => $tid]);
+        $allCallers = $allCallersStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $flash = crm_flash_take();
         $csrf  = crm_csrf_token();
@@ -320,9 +345,9 @@ final class AdminBetController
 
         $stmt = $this->pdo->prepare(
             "UPDATE bet_campaigns SET status = 'closed', closed_at = NOW(3)
-             WHERE id = ? AND status = 'open'"
+             WHERE id = ? AND status = 'open' AND tenant_id = ?"
         );
-        $stmt->execute([$id]);
+        $stmt->execute([$id, crm_tenant_id()]);
 
         crm_flash_set('Sázka uzavřena.');
         crm_redirect('/admin/bet/show?id=' . $id);
@@ -346,14 +371,16 @@ final class AdminBetController
             crm_redirect('/admin/bet');
         }
 
-        // Validace: caller existuje a má roli caller
+        // Validace: caller existuje, má roli caller A patří do aktuálního tenantu
         $vStmt = $this->pdo->prepare(
-            "SELECT id FROM users WHERE id = ? AND aktivni = 1 AND (
-                role = 'navolavacka'
-                OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"navolavacka\"')
+            "SELECT u.id FROM users u
+             INNER JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
+             WHERE u.id = ? AND u.aktivni = 1 AND (
+                u.role = 'navolavacka'
+                OR JSON_CONTAINS(IFNULL(u.roles_extra, '[]'), '\"navolavacka\"')
              )"
         );
-        $vStmt->execute([$callerId]);
+        $vStmt->execute([crm_tenant_id(), $callerId]);
         if ($vStmt->fetchColumn() === false) {
             crm_flash_set('Vybraná navolávačka neexistuje nebo nemá roli navolavacka.');
             crm_redirect('/admin/bet/show?id=' . $campaignId);
@@ -394,9 +421,10 @@ final class AdminBetController
             crm_redirect('/admin/bet');
         }
 
+        // Multi-tenant filter
         $this->pdo->prepare(
-            "DELETE FROM bet_campaign_callers WHERE campaign_id = ? AND caller_id = ?"
-        )->execute([$campaignId, $callerId]);
+            "DELETE FROM bet_campaign_callers WHERE campaign_id = ? AND caller_id = ? AND tenant_id = ?"
+        )->execute([$campaignId, $callerId, crm_tenant_id()]);
 
         crm_flash_set('Navolávačka odebrána.');
         crm_redirect('/admin/bet/show?id=' . $campaignId);
@@ -420,9 +448,9 @@ final class AdminBetController
 
         $stmt = $this->pdo->prepare(
             "UPDATE bet_campaigns SET status = 'cancelled', closed_at = NOW(3)
-             WHERE id = ? AND status = 'open'"
+             WHERE id = ? AND status = 'open' AND tenant_id = ?"
         );
-        $stmt->execute([$id]);
+        $stmt->execute([$id, crm_tenant_id()]);
 
         crm_flash_set('Sázka zrušena.');
         crm_redirect('/admin/bet');

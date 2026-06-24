@@ -20,6 +20,40 @@ final class OzController
     {
     }
 
+    /**
+     * Bezpečný INSERT poznámky do `oz_contact_notes` s fallbackem,
+     * pokud sloupec `author_user_id` ještě neexistuje (migrace 028).
+     *
+     * @param int    $contactId
+     * @param int    $ozId       — vlastník kontaktu
+     * @param int    $authorId   — kdo poznámku reálně napsal (typicky stejný jako $ozId)
+     * @param string $note       — text poznámky
+     */
+    private function insertOzContactNote(int $contactId, int $ozId, int $authorId, string $note): void
+    {
+        if ($note === '') return;
+        try {
+            $this->pdo->prepare(
+                'INSERT INTO oz_contact_notes (contact_id, oz_id, author_user_id, note)
+                 VALUES (:cid, :oid, :aid, :note)'
+            )->execute(['cid' => $contactId, 'oid' => $ozId, 'aid' => $authorId, 'note' => $note]);
+        } catch (\PDOException $e) {
+            // Migrace 028 ještě neproběhla — fallback bez author_user_id.
+            // Logujeme warning, ale UI nepadá.
+            if (strpos((string) $e->getMessage(), 'author_user_id') !== false) {
+                $this->pdo->prepare(
+                    'INSERT INTO oz_contact_notes (contact_id, oz_id, note)
+                     VALUES (:cid, :oid, :note)'
+                )->execute(['cid' => $contactId, 'oid' => $ozId, 'note' => $note]);
+                if (function_exists('crm_db_log_error')) {
+                    crm_db_log_error($e, 'OzController::insertOzContactNote — migrace 028 chybí, fallback');
+                }
+            } else {
+                throw $e;
+            }
+        }
+    }
+
     // ────────────────────────────────────────────────────────────────
     //  GET /oz/leads  –  Hlavní pracovní plocha
     // ────────────────────────────────────────────────────────────────
@@ -178,6 +212,7 @@ final class OzController
                 LEFT JOIN contact_oz_flags f
                        ON f.contact_id = c.id AND f.oz_id = :ozid2
                 WHERE c.assigned_sales_id = :ozid3
+                  AND c.tenant_id = :tid
                   AND {$tabStavFilter}
                   AND {$tabWhere}
                 {$orderBy}";
@@ -185,7 +220,8 @@ final class OzController
         $stmt = $this->pdo->prepare($sql);
         // ozid_la = parameter pro subquery v ORDER BY ($lastActivityExpr).
         // PDO ho odmítá pokud není v $orderBy použit, takže předáme jen když je.
-        $execParams = ['ozid1' => $ozId, 'ozid2' => $ozId, 'ozid3' => $ozId];
+        // Multi-tenant: tid filtruje contacts na aktivní tenant
+        $execParams = ['ozid1' => $ozId, 'ozid2' => $ozId, 'ozid3' => $ozId, 'tid' => crm_tenant_id()];
         if (strpos($orderBy, ':ozid_la') !== false) {
             $execParams['ozid_la'] = $ozId;
         }
@@ -207,9 +243,10 @@ final class OzController
                  INNER JOIN contacts c ON c.id = cn.contact_id
                  LEFT JOIN users au ON au.id = COALESCE(cn.author_user_id, cn.oz_id)
                  WHERE cn.oz_id = :ozid AND c.assigned_sales_id = :ozid2
+                   AND c.tenant_id = :tid
                  ORDER BY cn.contact_id ASC, cn.created_at DESC"
             );
-            $nStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $nStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
             foreach ($nStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $n) {
                 $notesByContact[(int) $n['contact_id']][] = $n;
             }
@@ -230,10 +267,10 @@ final class OzController
                  FROM oz_contact_actions a
                  INNER JOIN contacts c ON c.id = a.contact_id
                  LEFT JOIN users u ON u.id = a.oz_id
-                 WHERE c.assigned_sales_id = :ozid
+                 WHERE c.assigned_sales_id = :ozid AND c.tenant_id = :tid
                  ORDER BY a.contact_id ASC, a.action_date DESC, a.created_at DESC"
             );
-            $aStmt->execute(['ozid' => $ozId]);
+            $aStmt->execute(['ozid' => $ozId, 'tid' => crm_tenant_id()]);
             foreach ($aStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $a) {
                 $actionsByContact[(int) $a['contact_id']][] = $a;
             }
@@ -252,9 +289,10 @@ final class OzController
                  FROM oz_contact_offered_services s
                  INNER JOIN contacts c ON c.id = s.contact_id
                  WHERE s.oz_id = :ozid AND c.assigned_sales_id = :ozid2
+                   AND c.tenant_id = :tid
                  ORDER BY s.contact_id ASC, s.created_at ASC"
             );
-            $sStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $sStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
             $servicesRows = $sStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
             $itemsByService = [];
@@ -293,12 +331,13 @@ final class OzController
                  FROM contacts c
                  JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
                  WHERE c.assigned_sales_id = :ozid2
+                   AND c.tenant_id = :tid
                    AND w.stav = 'SCHUZKA'
                    AND COALESCE(w.schuzka_acknowledged, 0) = 0
                    AND w.schuzka_at BETWEEN NOW() - INTERVAL 2 HOUR AND NOW() + INTERVAL 26 HOUR
                  ORDER BY w.schuzka_at ASC"
             );
-            $meetStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $meetStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
             $meetingNotifications = $meetStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -333,9 +372,10 @@ final class OzController
                 SUM(CASE WHEN c.stav = 'RESCUE_REQUESTED'                                         THEN 1 ELSE 0 END) AS zachrana
              FROM contacts c
              LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
-             WHERE c.assigned_sales_id = :ozid2 AND c.stav IN ('CALLED_OK', 'RESCUE_REQUESTED')"
+             WHERE c.assigned_sales_id = :ozid2 AND c.stav IN ('CALLED_OK', 'RESCUE_REQUESTED')
+               AND c.tenant_id = :tid"
         );
-        $countStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'doneY' => $doneYear, 'doneM' => $doneMonth]);
+        $countStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'doneY' => $doneYear, 'doneM' => $doneMonth, 'tid' => crm_tenant_id()]);
         $tabCounts = $countStmt->fetch(PDO::FETCH_ASSOC)
             ?: ['nove' => 0, 'nabidka' => 0, 'schuzka' => 0, 'callback' => 0, 'sance' => 0, 'zachrana' => 0,
                 'bo_predano' => 0, 'bo_vraceno' => 0, 'dokonceno' => 0, 'nezajem' => 0, 'reklamace' => 0];
@@ -357,6 +397,7 @@ final class OzController
             "SELECT COUNT(*), COALESCE(SUM(bmsl), 0)
              FROM oz_contact_workflow
              WHERE oz_id = :ozid
+               AND tenant_id = :tid
                AND (
                  (podpis_potvrzen = 1
                   AND YEAR(podpis_potvrzen_at)  = :y
@@ -366,7 +407,7 @@ final class OzController
                   AND YEAR(updated_at) = :y2 AND MONTH(updated_at) = :m2)
                )"
         );
-        $winsStmt->execute(['ozid' => $ozId, 'y' => $curYear, 'm' => $curMonth, 'y2' => $curYear, 'm2' => $curMonth]);
+        $winsStmt->execute(['ozid' => $ozId, 'y' => $curYear, 'm' => $curMonth, 'y2' => $curYear, 'm2' => $curMonth, 'tid' => crm_tenant_id()]);
         [$monthWins, $monthBmsl] = $winsStmt->fetch(PDO::FETCH_NUM) ?: [0, 0];
         $monthWins = (int) $monthWins;
         $monthBmsl = (int) $monthBmsl;
@@ -379,26 +420,27 @@ final class OzController
                 "SELECT COUNT(w.id) AS contracts, COALESCE(SUM(w.bmsl), 0) AS bmsl
                  FROM oz_contact_workflow w
                  INNER JOIN users u ON u.id = w.oz_id AND u.role = 'obchodak' AND u.aktivni = 1
-                 WHERE (
-                   (w.podpis_potvrzen = 1
-                    AND YEAR(w.podpis_potvrzen_at)  = :y
-                    AND MONTH(w.podpis_potvrzen_at) = :m)
-                   OR
-                   (w.podpis_potvrzen = 0 AND w.stav = 'SMLOUVA'
-                    AND YEAR(w.updated_at) = :y2 AND MONTH(w.updated_at) = :m2)
-                 )"
+                 WHERE w.tenant_id = :tid
+                   AND (
+                     (w.podpis_potvrzen = 1
+                      AND YEAR(w.podpis_potvrzen_at)  = :y
+                      AND MONTH(w.podpis_potvrzen_at) = :m)
+                     OR
+                     (w.podpis_potvrzen = 0 AND w.stav = 'SMLOUVA'
+                      AND YEAR(w.updated_at) = :y2 AND MONTH(w.updated_at) = :m2)
+                   )"
             );
-            $tStmt->execute(['y' => $curYear, 'm' => $curMonth, 'y2' => $curYear, 'm2' => $curMonth]);
+            $tStmt->execute(['y' => $curYear, 'm' => $curMonth, 'y2' => $curYear, 'm2' => $curMonth, 'tid' => crm_tenant_id()]);
             $teamStats = $tStmt->fetch(PDO::FETCH_ASSOC) ?: $teamStats;
 
             $this->ensureStagesTable();
             $sgStmt = $this->pdo->prepare(
                 'SELECT stage_number, label, target_bmsl
                  FROM oz_team_stages
-                 WHERE year = :y AND month = :m
+                 WHERE year = :y AND month = :m AND tenant_id = :tid
                  ORDER BY target_bmsl ASC'
             );
-            $sgStmt->execute(['y' => $curYear, 'm' => $curMonth]);
+            $sgStmt->execute(['y' => $curYear, 'm' => $curMonth, 'tid' => crm_tenant_id()]);
             $teamStages = $sgStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -411,10 +453,10 @@ final class OzController
             $pmStmt = $this->pdo->prepare(
                 'SELECT id, label, target_bmsl, reward_note
                  FROM oz_personal_milestones
-                 WHERE oz_id = :ozid AND year = :y AND month = :m
+                 WHERE oz_id = :ozid AND year = :y AND month = :m AND tenant_id = :tid
                  ORDER BY target_bmsl ASC'
             );
-            $pmStmt->execute(['ozid' => $ozId, 'y' => $curYear, 'm' => $curMonth]);
+            $pmStmt->execute(['ozid' => $ozId, 'y' => $curYear, 'm' => $curMonth, 'tid' => crm_tenant_id()]);
             $personalMilestones = $pmStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -437,12 +479,13 @@ final class OzController
                  LEFT JOIN oz_contact_workflow w
                         ON w.contact_id = c.id AND w.oz_id = :ozid
                  WHERE c.assigned_sales_id = :ozid2
+                   AND c.tenant_id = :tid
                    AND c.stav = 'CALLED_OK'
                    AND w.id IS NULL
                    {$pendingRegionWhere}
                  ORDER BY c.datum_volani IS NULL, c.datum_volani ASC"
             );
-            $pStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $pStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
             $pendingMap = [];
             foreach ($pStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $p) {
                 $key = (int) $p['caller_id'];
@@ -468,11 +511,12 @@ final class OzController
                  FROM contacts c
                  JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
                  WHERE c.assigned_sales_id = :ozid2
+                   AND c.tenant_id = :tid
                    AND c.stav = 'CALLED_OK'
                    AND w.stav = 'BO_VRACENO'
                  ORDER BY w.updated_at DESC"
             );
-            $brStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $brStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
             $boReturned = $brStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -491,13 +535,14 @@ final class OzController
                         DATEDIFF(vyrocni_smlouvy, CURDATE()) AS days_until
                  FROM contacts
                  WHERE assigned_sales_id = :ozid
+                   AND tenant_id = :tid
                    AND vyrocni_smlouvy IS NOT NULL
                    AND vyrocni_smlouvy >= CURDATE()
                    AND vyrocni_smlouvy <= CURDATE() + INTERVAL 180 DAY
                  ORDER BY vyrocni_smlouvy ASC
                  LIMIT 100"
             );
-            $rnStmt->execute(['ozid' => $ozId]);
+            $rnStmt->execute(['ozid' => $ozId, 'tid' => crm_tenant_id()]);
             $renewalsForOz = $rnStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -519,9 +564,10 @@ final class OzController
                  LEFT JOIN users urc ON urc.id = rr.rescued_by_caller_id
                  LEFT JOIN users uo  ON uo.id  = rr.original_sales_id
                  LEFT JOIN users uf  ON uf.id  = rr.final_sales_id
-                 WHERE rr.original_sales_id = :oz1 OR rr.final_sales_id = :oz2"
+                 WHERE (rr.original_sales_id = :oz1 OR rr.final_sales_id = :oz2)
+                   AND rr.tenant_id = :tid"
             );
-            $rmStmt->execute(['oz1' => $ozId, 'oz2' => $ozId]);
+            $rmStmt->execute(['oz1' => $ozId, 'oz2' => $ozId, 'tid' => crm_tenant_id()]);
             foreach ($rmStmt->fetchAll(PDO::FETCH_ASSOC) as $rrRow) {
                 $rescueMap[(int) $rrRow['contact_id']] = $rrRow;
             }
@@ -551,9 +597,10 @@ final class OzController
                  LEFT JOIN oz_contact_workflow w
                         ON w.contact_id = c.id AND w.oz_id = :ozid
                  WHERE c.assigned_sales_id = :ozid2
+                   AND c.tenant_id = :tid
                    AND c.narozeniny_majitele IS NOT NULL"
             );
-            $bdStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $bdStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
             $all = $bdStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
             $today = new DateTime('today');
             foreach ($all as $r) {
@@ -615,11 +662,12 @@ final class OzController
                  FROM contacts c
                  LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
                  WHERE c.assigned_sales_id = :ozid2
+                   AND c.tenant_id = :tid
                    AND {$tabStavFilter}
                    AND ({$tabWhereBase})
                  GROUP BY c.region"
             );
-            $rcStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $rcStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
             foreach ($rcStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
                 $reg = (string) ($row['region'] ?? '');
                 $cnt = (int) $row['cnt'];
@@ -632,11 +680,12 @@ final class OzController
                  FROM contacts c
                  LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
                  WHERE c.assigned_sales_id = :ozid2
+                   AND c.tenant_id = :tid
                    AND c.stav = 'CALLED_OK'
                    AND w.id IS NULL
                  GROUP BY c.region"
             );
-            $prcStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $prcStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
             foreach ($prcStmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
                 $reg = (string) ($row['region'] ?? '');
                 $cnt = (int) $row['cnt'];
@@ -689,10 +738,13 @@ final class OzController
         }
 
         // Ověřit že kontakt patří tomuto OZ
+        // Multi-tenant: tenant filter v ownership check
         $cStmt = $this->pdo->prepare(
-            "SELECT id, firma FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid AND stav = 'CALLED_OK'"
+            "SELECT id, firma FROM contacts
+             WHERE id = :cid AND assigned_sales_id = :ozid AND stav = 'CALLED_OK'
+               AND tenant_id = :tid"
         );
-        $cStmt->execute(['cid' => $contactId, 'ozid' => $ozId]);
+        $cStmt->execute(['cid' => $contactId, 'ozid' => $ozId, 'tid' => crm_tenant_id()]);
         $contact = $cStmt->fetch(PDO::FETCH_ASSOC);
         if (!$contact) {
             crm_flash_set('Kontakt nenalezen.');
@@ -709,10 +761,11 @@ final class OzController
         try {
             $exStmt = $this->pdo->prepare(
                 'SELECT stav FROM oz_contact_workflow
-                 WHERE contact_id = :cid AND oz_id = :oid
+                 WHERE contact_id = :cid AND oz_id = :oid AND tenant_id = :tid
                  LIMIT 1'
             );
-            $exStmt->execute(['cid' => $contactId, 'oid' => $ozId]);
+            $exStmt->execute(['cid' => $contactId, 'oid' => $ozId, 'tid' => crm_tenant_id()]);
+            // tenant_id v subquery: defensivně cross-tenant block
             $exRow = $exStmt->fetch(PDO::FETCH_ASSOC);
             $existingStav = $exRow ? (string) ($exRow['stav'] ?? '') : '';
             $noteOptionalReturn = ($existingStav === 'BO_VRACENO' && $newStav === 'BO_PREDANO');
@@ -727,12 +780,7 @@ final class OzController
 
         // Uložit poznámku do historie (jen pokud něco je — prázdnou nezakládáme).
         // OZ je sám autorem i vlastníkem → oz_id == author_user_id.
-        if ($poznamka !== '') {
-            $this->pdo->prepare(
-                'INSERT INTO oz_contact_notes (contact_id, oz_id, author_user_id, note)
-                 VALUES (:cid, :oid, :aid, :note)'
-            )->execute(['cid' => $contactId, 'oid' => $ozId, 'aid' => $ozId, 'note' => $poznamka]);
-        }
+        $this->insertOzContactNote($contactId, $ozId, $ozId, $poznamka);
 
         // ── NOTE_ONLY: jen poznámka, stav beze změny ─────────────────
         if ($newStav === 'NOTE_ONLY') {
@@ -755,9 +803,9 @@ final class OzController
         if ($newStav === 'BO_PREDANO') {
             $wfStmt = $this->pdo->prepare(
                 "SELECT bmsl, nabidka_id FROM oz_contact_workflow
-                 WHERE contact_id = :cid AND oz_id = :oid LIMIT 1"
+                 WHERE contact_id = :cid AND oz_id = :oid AND tenant_id = :tid LIMIT 1"
             );
-            $wfStmt->execute(['cid' => $contactId, 'oid' => $ozId]);
+            $wfStmt->execute(['cid' => $contactId, 'oid' => $ozId, 'tid' => crm_tenant_id()]);
             $wfRow = $wfStmt->fetch(PDO::FETCH_ASSOC);
             $existingBmsl    = $wfRow ? (int) ($wfRow['bmsl'] ?? 0) : 0;
             $existingNabidka = $wfRow ? trim((string) ($wfRow['nabidka_id'] ?? '')) : '';
@@ -915,6 +963,32 @@ final class OzController
         };
         crm_flash_set($msg);
 
+        // Activity log — sales workflow stage transition
+        $salesAction = match ($newStav) {
+            'ZPRACOVAVA' => 'sales.workflow_started',
+            'OBVOLANO'   => 'sales.workflow_started',
+            'SCHUZKA'    => 'sales.meeting_scheduled',
+            'NABIDKA'    => 'sales.offer_made',
+            'SANCE'      => 'sales.chance_won',
+            'SMLOUVA'    => 'sales.contract_drafted',  // podpis_potvrzen je separátně přes postCheckboxToggle
+            'BO_PREDANO' => 'sales.contract_drafted',
+            'NEZAJEM',
+            'NERELEVANTNI' => 'sales.contract_cancelled',
+            default      => null,
+        };
+        if ($salesAction !== null) {
+            crm_activity_log_record(
+                $this->pdo, $ozId, $salesAction, 'contact', $contactId,
+                ['new_stav' => $newStav]
+            );
+        }
+        // Note vždy uložená přes oz_contact_notes — započteme jako sales.note_added
+        if ($poznamka !== '') {
+            crm_activity_log_record(
+                $this->pdo, $ozId, 'sales.note_added', 'contact', $contactId
+            );
+        }
+
         // Po změně stavu zůstaneme na původním tabu, kde OZ pracoval —
         // kontakt se z něho jen přesune (vidíme to podle změny počítadel).
         crm_redirect('/oz/leads?tab=' . $tab . '#c-' . $contactId);
@@ -1042,11 +1116,13 @@ final class OzController
             crm_redirect('/oz/leads?tab=' . $tab . '#c-' . $contactId);
         }
 
-        // Ověřit že kontakt patří tomuto OZ
+        // Ověřit že kontakt patří tomuto OZ — multi-tenant
         $cStmt = $this->pdo->prepare(
-            "SELECT id, firma FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid AND stav = 'CALLED_OK'"
+            "SELECT id, firma FROM contacts
+             WHERE id = :cid AND assigned_sales_id = :ozid AND stav = 'CALLED_OK'
+               AND tenant_id = :tid"
         );
-        $cStmt->execute(['cid' => $contactId, 'ozid' => $ozId]);
+        $cStmt->execute(['cid' => $contactId, 'ozid' => $ozId, 'tid' => crm_tenant_id()]);
         $contact = $cStmt->fetch(PDO::FETCH_ASSOC);
         if (!$contact) {
             crm_flash_set('Kontakt nenalezen.');
@@ -1056,16 +1132,14 @@ final class OzController
 
         // 1. Uložit poznámku do historie (reklamace = OZ sám hlásí chybný lead).
         //    Prefix [REKLAMACE] zachováme — je to typ akce, ne autor.
-        $this->pdo->prepare(
-            'INSERT INTO oz_contact_notes (contact_id, oz_id, author_user_id, note)
-             VALUES (:cid, :oid, :aid, :note)'
-        )->execute(['cid' => $contactId, 'oid' => $ozId, 'aid' => $ozId, 'note' => '[REKLAMACE] ' . $reason]);
+        $this->insertOzContactNote($contactId, $ozId, $ozId, '[REKLAMACE] ' . $reason);
 
         // Načti starý stav PŘED UPDATE pro audit log
         $oldStavStmt = $this->pdo->prepare(
-            "SELECT stav FROM oz_contact_workflow WHERE contact_id = :cid AND oz_id = :oid LIMIT 1"
+            "SELECT stav FROM oz_contact_workflow
+             WHERE contact_id = :cid AND oz_id = :oid AND tenant_id = :tid LIMIT 1"
         );
-        $oldStavStmt->execute(['cid' => $contactId, 'oid' => $ozId]);
+        $oldStavStmt->execute(['cid' => $contactId, 'oid' => $ozId, 'tid' => crm_tenant_id()]);
         $oldStav = (string) ($oldStavStmt->fetchColumn() ?: '');
 
         // 2. Nastavit workflow stav na REKLAMACE
@@ -1133,10 +1207,12 @@ final class OzController
             crm_redirect('/oz/leads?tab=reklamace#c-' . $contactId);
         }
 
+        // Multi-tenant filter
         $fStmt = $this->pdo->prepare(
-            'SELECT id FROM contact_oz_flags WHERE contact_id = :cid AND oz_id = :oid'
+            'SELECT id FROM contact_oz_flags
+             WHERE contact_id = :cid AND oz_id = :oid AND tenant_id = :tid'
         );
-        $fStmt->execute(['cid' => $contactId, 'oid' => $ozId]);
+        $fStmt->execute(['cid' => $contactId, 'oid' => $ozId, 'tid' => crm_tenant_id()]);
         $flag = $fStmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$flag) {
@@ -1145,8 +1221,8 @@ final class OzController
         }
 
         $this->pdo->prepare(
-            'UPDATE contact_oz_flags SET oz_comment = :comment WHERE id = :id'
-        )->execute(['comment' => $comment, 'id' => (int) $flag['id']]);
+            'UPDATE contact_oz_flags SET oz_comment = :comment WHERE id = :id AND tenant_id = :tid'
+        )->execute(['comment' => $comment, 'id' => (int) $flag['id'], 'tid' => crm_tenant_id()]);
 
         crm_flash_set('💬 Odpověď odeslána navolávačce.');
         crm_redirect('/oz/leads?tab=reklamace#c-' . $contactId);
@@ -1167,12 +1243,12 @@ final class OzController
         $ozId      = (int) $user['id'];
         $contactId = (int) ($_POST['contact_id'] ?? 0);
 
-        // Ověřit flag patří tomuto OZ
+        // Ověřit flag patří tomuto OZ — multi-tenant
         $fStmt = $this->pdo->prepare(
             'SELECT id, caller_confirmed FROM contact_oz_flags
-             WHERE contact_id = :cid AND oz_id = :oid'
+             WHERE contact_id = :cid AND oz_id = :oid AND tenant_id = :tid'
         );
-        $fStmt->execute(['cid' => $contactId, 'oid' => $ozId]);
+        $fStmt->execute(['cid' => $contactId, 'oid' => $ozId, 'tid' => crm_tenant_id()]);
         $flag = $fStmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$flag) {
@@ -1181,8 +1257,8 @@ final class OzController
         }
 
         $this->pdo->prepare(
-            'UPDATE contact_oz_flags SET oz_confirmed = 1 WHERE id = :id'
-        )->execute(['id' => (int) $flag['id']]);
+            'UPDATE contact_oz_flags SET oz_confirmed = 1 WHERE id = :id AND tenant_id = :tid'
+        )->execute(['id' => (int) $flag['id'], 'tid' => crm_tenant_id()]);
 
         $bothConfirmed = (int) $flag['caller_confirmed'] === 1;
         $msg = $bothConfirmed
@@ -1221,9 +1297,9 @@ final class OzController
 
         // Validace vlastnictví kontaktu
         $check = $this->pdo->prepare(
-            "SELECT id FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid LIMIT 1"
+            "SELECT id FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid AND tenant_id = :tid LIMIT 1"
         );
-        $check->execute(['cid' => $contactId, 'ozid' => $ozId]);
+        $check->execute(['cid' => $contactId, 'ozid' => $ozId, 'tid' => crm_tenant_id()]);
         if (!$check->fetch(PDO::FETCH_ASSOC)) {
             crm_flash_set('⚠ Kontakt nenalezen.');
             crm_redirect('/oz/leads?tab=' . urlencode($tab));
@@ -1337,14 +1413,16 @@ final class OzController
         $tab       = (string) ($_POST['tab'] ?? 'nove');
 
         // Ověřit, že služba patří tomuto OZ a kontakt mu je přiřazen
+        // Multi-tenant filter na contacts
         $stmt = $this->pdo->prepare(
             "SELECT s.contact_id
              FROM oz_contact_offered_services s
              JOIN contacts c ON c.id = s.contact_id
              WHERE s.id = :sid AND s.oz_id = :ozid AND c.assigned_sales_id = :ozid2
+               AND c.tenant_id = :tid
              LIMIT 1"
         );
-        $stmt->execute(['sid' => $serviceId, 'ozid' => $ozId, 'ozid2' => $ozId]);
+        $stmt->execute(['sid' => $serviceId, 'ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             crm_flash_set('⚠ Služba nenalezena.');
@@ -1394,15 +1472,17 @@ final class OzController
         $okuRaw  = trim((string) ($_POST['oku_code'] ?? ''));
 
         // Ověřit, že položka patří službě tohoto OZ a kontakt mu je přiřazen
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             "SELECT i.id, s.contact_id
              FROM oz_contact_offered_service_items i
              JOIN oz_contact_offered_services s ON s.id = i.service_id
              JOIN contacts c ON c.id = s.contact_id
              WHERE i.id = :iid AND s.oz_id = :ozid AND c.assigned_sales_id = :ozid2
+               AND c.tenant_id = :tid
              LIMIT 1"
         );
-        $stmt->execute(['iid' => $itemId, 'ozid' => $ozId, 'ozid2' => $ozId]);
+        $stmt->execute(['iid' => $itemId, 'ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             crm_flash_set('⚠ Položka nenalezena.');
@@ -1464,14 +1544,16 @@ final class OzController
         $note      = trim((string) ($_POST['note'] ?? ''));
 
         // Ověřit, že služba patří tomuto OZ a kontakt mu je přiřazen
+        // Multi-tenant filter na contacts
         $stmt = $this->pdo->prepare(
             "SELECT s.contact_id
              FROM oz_contact_offered_services s
              JOIN contacts c ON c.id = s.contact_id
              WHERE s.id = :sid AND s.oz_id = :ozid AND c.assigned_sales_id = :ozid2
+               AND c.tenant_id = :tid
              LIMIT 1"
         );
-        $stmt->execute(['sid' => $serviceId, 'ozid' => $ozId, 'ozid2' => $ozId]);
+        $stmt->execute(['sid' => $serviceId, 'ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             crm_flash_set('⚠ Služba nenalezena.');
@@ -1556,9 +1638,9 @@ final class OzController
 
         // Validace vlastnictví kontaktu
         $check = $this->pdo->prepare(
-            "SELECT id FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid LIMIT 1"
+            "SELECT id FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid AND tenant_id = :tid LIMIT 1"
         );
-        $check->execute(['cid' => $contactId, 'ozid' => $ozId]);
+        $check->execute(['cid' => $contactId, 'ozid' => $ozId, 'tid' => crm_tenant_id()]);
         if (!$check->fetch(PDO::FETCH_ASSOC)) {
             crm_flash_set('⚠ Kontakt nenalezen.');
             crm_redirect('/oz/leads?tab=' . urlencode($tab));
@@ -1588,9 +1670,9 @@ final class OzController
             $existingBmsl    = 0;
             $wfStmt = $this->pdo->prepare(
                 "SELECT bmsl, nabidka_id FROM oz_contact_workflow
-                 WHERE contact_id = :cid AND oz_id = :oid LIMIT 1"
+                 WHERE contact_id = :cid AND oz_id = :oid AND tenant_id = :tid LIMIT 1"
             );
-            $wfStmt->execute(['cid' => $contactId, 'oid' => $ozId]);
+            $wfStmt->execute(['cid' => $contactId, 'oid' => $ozId, 'tid' => crm_tenant_id()]);
             if ($wfRow = $wfStmt->fetch(PDO::FETCH_ASSOC)) {
                 $existingBmsl    = (int) ($wfRow['bmsl'] ?? 0);
                 $existingNabidka = trim((string) ($wfRow['nabidka_id'] ?? ''));
@@ -1690,14 +1772,16 @@ final class OzController
         $checked = !empty($_POST['checked']);
 
         // Ověřit, že kontakt patří tomuto OZ a workflow existuje
+        // Multi-tenant filter
         $check = $this->pdo->prepare(
             "SELECT w.id, w.stav, w.podpis_potvrzen
              FROM oz_contact_workflow w
              INNER JOIN contacts c ON c.id = w.contact_id
              WHERE w.contact_id = :cid AND w.oz_id = :oid AND c.assigned_sales_id = :oid2
+               AND c.tenant_id = :tid
              LIMIT 1"
         );
-        $check->execute(['cid' => $contactId, 'oid' => $ozId, 'oid2' => $ozId]);
+        $check->execute(['cid' => $contactId, 'oid' => $ozId, 'oid2' => $ozId, 'tid' => crm_tenant_id()]);
         $row = $check->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             $jsonError('⚠ Kontakt nenalezen.');
@@ -1721,12 +1805,13 @@ final class OzController
             // HOOK: pokud byl tento kontakt předtím zachráněn navolávačkou,
             // teď je čas „lock-in" bonusu = bmsl (měsíční hodnota smlouvy).
             // Helper sám odfiltruje case, kdy bonus už byl nastaven nebo záchrana neexistuje.
+            $bmsl = 0.0;
             try {
                 $bmStmt = $this->pdo->prepare(
                     "SELECT COALESCE(bmsl, 0) FROM oz_contact_workflow
-                     WHERE contact_id = :cid AND oz_id = :oid LIMIT 1"
+                     WHERE contact_id = :cid AND oz_id = :oid AND tenant_id = :tid LIMIT 1"
                 );
-                $bmStmt->execute(['cid' => $contactId, 'oid' => $ozId]);
+                $bmStmt->execute(['cid' => $contactId, 'oid' => $ozId, 'tid' => crm_tenant_id()]);
                 $bmsl = (float) ($bmStmt->fetchColumn() ?: 0);
                 if ($bmsl > 0 && function_exists('rescue_finalize_bonus')) {
                     rescue_finalize_bonus($this->pdo, $contactId, $bmsl);
@@ -1737,6 +1822,12 @@ final class OzController
                     crm_db_log_error($e, __METHOD__);
                 }
             }
+
+            // Activity log — Smlouva podepsaná! Ultimate goal (50 bodů default)
+            crm_activity_log_record(
+                $this->pdo, $ozId, 'sales.contract_signed', 'contact', $contactId,
+                ['bmsl' => $bmsl]
+            );
         } else {
             $this->pdo->prepare(
                 "UPDATE oz_contact_workflow
@@ -1793,9 +1884,9 @@ final class OzController
         $actionText = trim((string) ($_POST['action_text'] ?? ''));
 
         $check = $this->pdo->prepare(
-            "SELECT id FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid LIMIT 1"
+            "SELECT id FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid AND tenant_id = :tid LIMIT 1"
         );
-        $check->execute(['cid' => $contactId, 'ozid' => $ozId]);
+        $check->execute(['cid' => $contactId, 'ozid' => $ozId, 'tid' => crm_tenant_id()]);
         if (!$check->fetch(PDO::FETCH_ASSOC)) {
             $jsonError('⚠ Kontakt nenalezen.');
         }
@@ -1825,6 +1916,11 @@ final class OzController
             'txt' => $actionText,
         ]);
         $newId = (int) $this->pdo->lastInsertId();
+
+        // Activity log — záznam do deníku
+        crm_activity_log_record(
+            $this->pdo, $ozId, 'sales.action_logged', 'contact', $contactId
+        );
 
         if ($isAjax) {
             header('Content-Type: application/json; charset=UTF-8');
@@ -2014,7 +2110,7 @@ final class OzController
         header('Content-Type: application/json; charset=UTF-8');
 
         $user = crm_require_user($this->pdo);
-        crm_require_roles($user, ['obchodak', 'majitel', 'superadmin', 'backoffice']);
+        crm_require_roles($user, ['obchodak', 'majitel', 'superadmin', 'backoffice', 'navolavacka']);
 
         $ico = crm_normalize_ico((string) ($_GET['ico'] ?? ''));
         if ($ico === '' || strlen($ico) !== 8) {
@@ -2108,16 +2204,14 @@ final class OzController
         $ico       = trim((string) ($_POST['ico'] ?? ''));
         $adresa    = trim((string) ($_POST['adresa'] ?? ''));
 
-        // ── Příležitost (2-stavová: má / nemá) + volitelný termín "do kdy" ──
-        $hasPrilez = !empty($_POST['has_prilez']);
+        // ── Příležitost — jen volná poznámka + volitelný termín "do kdy". ──
+        // Žádné zaškrtávátko: vyplněná poznámka = má příležitost, prázdná = nemá.
+        // (Každý OZ si píše vlastními slovy: karanténa, požádáno o uvolnění, …)
         $prilezTxt = trim((string) ($_POST['prilez'] ?? ''));
         $prilezDo  = trim((string) ($_POST['prilez_do'] ?? ''));
-        if (!$hasPrilez) {
-            $prilezTxt = '';
-            $prilezDo  = '';
-        } else {
-            // Když OZ zaškrtl "má", ale nevyplnil text → použij sentinel "ano"
-            if ($prilezTxt === '') { $prilezTxt = 'ano'; }
+        // Bez poznámky nemá termín smysl
+        if ($prilezTxt === '') {
+            $prilezDo = '';
         }
         // Validace formátu data (YYYY-MM-DD) — jinak prázdné
         if ($prilezDo !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $prilezDo)) {
@@ -2127,9 +2221,9 @@ final class OzController
 
         // Ověřit, že kontakt patří OZ (resp. byl mu přiřazen)
         $check = $this->pdo->prepare(
-            "SELECT id FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid LIMIT 1"
+            "SELECT id FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid AND tenant_id = :tid LIMIT 1"
         );
-        $check->execute(['cid' => $contactId, 'ozid' => $ozId]);
+        $check->execute(['cid' => $contactId, 'ozid' => $ozId, 'tid' => crm_tenant_id()]);
         if (!$check->fetch(PDO::FETCH_ASSOC)) {
             crm_flash_set('⚠ Kontakt nenalezen.');
             crm_redirect('/oz/leads?tab=' . urlencode($tab));
@@ -2148,6 +2242,7 @@ final class OzController
         $ico = crm_normalize_ico($ico);
         if (mb_strlen($ico) > 20)      { $ico     = mb_substr($ico, 0, 20); }
 
+        // Multi-tenant filter
         $this->pdo->prepare(
             "UPDATE contacts
              SET firma      = :firma,
@@ -2158,7 +2253,7 @@ final class OzController
                  prilez     = :prilez,
                  prilez_do  = :prilez_do,
                  updated_at = NOW(3)
-             WHERE id = :cid"
+             WHERE id = :cid AND tenant_id = :tid"
         )->execute([
             'firma'    => $firma,
             'telefon'  => $telefon === '' ? null : $telefon,
@@ -2168,10 +2263,66 @@ final class OzController
             'prilez'   => $prilezTxt === '' ? null : $prilezTxt,
             'prilez_do'=> $prilezDo  === '' ? null : $prilezDo,
             'cid'      => $contactId,
+            'tid'      => crm_tenant_id(),
         ]);
 
         crm_flash_set('✓ Údaje kontaktu uloženy.');
         crm_redirect('/oz/leads?tab=' . urlencode($tab) . '#c-' . $contactId);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  POST /oz/set-prilez  –  rychlá inline úprava příležitosti (AJAX)
+    //  Klik na příležitost na kartě → text + datum → uložit, bez otevírání
+    //  celé editace kontaktu. Vrací JSON.
+    // ────────────────────────────────────────────────────────────────
+    public function postSetPrilez(): void
+    {
+        header('Content-Type: application/json; charset=UTF-8');
+
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['obchodak', 'majitel', 'superadmin']);
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            echo json_encode(['ok' => false, 'error' => 'Neplatný CSRF token.']);
+            exit;
+        }
+
+        $ozId      = (int) $user['id'];
+        $contactId = (int) ($_POST['contact_id'] ?? 0);
+        $prilez    = trim((string) ($_POST['prilez'] ?? ''));
+        $prilezDo  = trim((string) ($_POST['prilez_do'] ?? ''));
+
+        // Prázdná poznámka = bez příležitosti (smaž i termín).
+        if ($prilez === '') { $prilezDo = ''; }
+        if ($prilezDo !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $prilezDo)) { $prilezDo = ''; }
+        if (mb_strlen($prilez) > 255) { $prilez = mb_substr($prilez, 0, 255); }
+
+        // Ověřit vlastnictví (kontakt přiřazen tomuto OZ) + tenant
+        $check = $this->pdo->prepare(
+            "SELECT id FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid AND tenant_id = :tid LIMIT 1"
+        );
+        $check->execute(['cid' => $contactId, 'ozid' => $ozId, 'tid' => crm_tenant_id()]);
+        if (!$check->fetch(PDO::FETCH_ASSOC)) {
+            echo json_encode(['ok' => false, 'error' => 'Kontakt nenalezen.']);
+            exit;
+        }
+
+        $this->pdo->prepare(
+            "UPDATE contacts SET prilez = :p, prilez_do = :pd, updated_at = NOW(3)
+             WHERE id = :cid AND tenant_id = :tid"
+        )->execute([
+            'p'   => $prilez   === '' ? null : $prilez,
+            'pd'  => $prilezDo === '' ? null : $prilezDo,
+            'cid' => $contactId,
+            'tid' => crm_tenant_id(),
+        ]);
+
+        echo json_encode([
+            'ok'        => true,
+            'prilez'    => $prilez,
+            'prilez_do' => $prilezDo,
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -2296,9 +2447,9 @@ final class OzController
         try {
             $tStmt = $this->pdo->prepare(
                 'SELECT region, target_count FROM oz_targets
-                 WHERE user_id = :uid AND year = :y AND month = :m'
+                 WHERE user_id = :uid AND year = :y AND month = :m AND tenant_id = :tid'
             );
-            $tStmt->execute(['uid' => $ozId, 'y' => $year, 'm' => $month]);
+            $tStmt->execute(['uid' => $ozId, 'y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
             foreach ($tStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 $targets[(string) $row['region']] = (int) $row['target_count'];
             }
@@ -2307,6 +2458,7 @@ final class OzController
         }
 
         $this->ensureFlagsTable();
+        // Multi-tenant filter
         $contactStmt = $this->pdo->prepare(
             "SELECT c.id, c.firma, c.telefon, c.region, c.datum_volani, c.poznamka,
                     COALESCE(u.jmeno, '—') AS caller_name,
@@ -2320,9 +2472,10 @@ final class OzController
                AND c.assigned_sales_id = :oz_id2
                AND YEAR(c.datum_volani) = :y
                AND MONTH(c.datum_volani) = :m
+               AND c.tenant_id = :tid
              ORDER BY c.region ASC, c.datum_volani DESC"
         );
-        $contactStmt->execute(['oz_id' => $ozId, 'oz_id2' => $ozId, 'y' => $year, 'm' => $month]);
+        $contactStmt->execute(['oz_id' => $ozId, 'oz_id2' => $ozId, 'y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
         $myContacts = $contactStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $contactsByRegion = [];
@@ -2360,6 +2513,7 @@ final class OzController
                 "SELECT COUNT(*), COALESCE(SUM(bmsl), 0)
                  FROM oz_contact_workflow
                  WHERE oz_id = :ozid
+                   AND tenant_id = :tid
                    AND (
                      (podpis_potvrzen = 1
                       AND YEAR(podpis_potvrzen_at)  = :y
@@ -2369,7 +2523,7 @@ final class OzController
                       AND YEAR(updated_at) = :y2 AND MONTH(updated_at) = :m2)
                    )"
             );
-            $winsStmt->execute(['ozid' => $ozId, 'y' => $year, 'm' => $month, 'y2' => $year, 'm2' => $month]);
+            $winsStmt->execute(['ozid' => $ozId, 'y' => $year, 'm' => $month, 'y2' => $year, 'm2' => $month, 'tid' => crm_tenant_id()]);
             [$monthWins, $monthBmsl] = $winsStmt->fetch(PDO::FETCH_NUM) ?: [0, 0];
             $monthWins = (int) $monthWins;
             $monthBmsl = (int) $monthBmsl;
@@ -2385,26 +2539,27 @@ final class OzController
                 "SELECT COUNT(w.id) AS contracts, COALESCE(SUM(w.bmsl), 0) AS bmsl
                  FROM oz_contact_workflow w
                  INNER JOIN users u ON u.id = w.oz_id AND u.role = 'obchodak' AND u.aktivni = 1
-                 WHERE (
-                   (w.podpis_potvrzen = 1
-                    AND YEAR(w.podpis_potvrzen_at)  = :y
-                    AND MONTH(w.podpis_potvrzen_at) = :m)
-                   OR
-                   (w.podpis_potvrzen = 0 AND w.stav = 'SMLOUVA'
-                    AND YEAR(w.updated_at) = :y2 AND MONTH(w.updated_at) = :m2)
-                 )"
+                 WHERE w.tenant_id = :tid
+                   AND (
+                     (w.podpis_potvrzen = 1
+                      AND YEAR(w.podpis_potvrzen_at)  = :y
+                      AND MONTH(w.podpis_potvrzen_at) = :m)
+                     OR
+                     (w.podpis_potvrzen = 0 AND w.stav = 'SMLOUVA'
+                      AND YEAR(w.updated_at) = :y2 AND MONTH(w.updated_at) = :m2)
+                   )"
             );
-            $tStmt->execute(['y' => $year, 'm' => $month, 'y2' => $year, 'm2' => $month]);
+            $tStmt->execute(['y' => $year, 'm' => $month, 'y2' => $year, 'm2' => $month, 'tid' => crm_tenant_id()]);
             $teamStats = $tStmt->fetch(PDO::FETCH_ASSOC) ?: $teamStats;
 
             $this->ensureStagesTable();
             $sgStmt = $this->pdo->prepare(
                 'SELECT stage_number, label, target_bmsl
                  FROM oz_team_stages
-                 WHERE year = :y AND month = :m
+                 WHERE year = :y AND month = :m AND tenant_id = :tid
                  ORDER BY target_bmsl ASC'
             );
-            $sgStmt->execute(['y' => $year, 'm' => $month]);
+            $sgStmt->execute(['y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
             $teamStages = $sgStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -2417,10 +2572,10 @@ final class OzController
             $pmStmt = $this->pdo->prepare(
                 'SELECT id, label, target_bmsl, reward_note
                  FROM oz_personal_milestones
-                 WHERE oz_id = :ozid AND year = :y AND month = :m
+                 WHERE oz_id = :ozid AND year = :y AND month = :m AND tenant_id = :tid
                  ORDER BY target_bmsl ASC'
             );
-            $pmStmt->execute(['ozid' => $ozId, 'y' => $year, 'm' => $month]);
+            $pmStmt->execute(['ozid' => $ozId, 'y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
             $personalMilestones = $pmStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -2449,9 +2604,10 @@ final class OzController
                    AND rr.outcome = 'success'
                    AND YEAR(rr.rescued_at)  = :y
                    AND MONTH(rr.rescued_at) = :m
+                   AND rr.tenant_id = :tid
                  ORDER BY rr.rescued_at ASC"
             );
-            $rdStmt->execute(['oz1' => $ozId, 'oz2' => $ozId, 'y' => $year, 'm' => $month]);
+            $rdStmt->execute(['oz1' => $ozId, 'oz2' => $ozId, 'y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
             $rescueDebt = $rdStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
             foreach ($rescueDebt as $rd) {
                 $amt = (float) ($rd['bonus_amount'] ?? 0);
@@ -2497,10 +2653,13 @@ final class OzController
         $year      = max(2024, min(2030, (int) ($_POST['year']  ?? date('Y'))));
         $month     = max(1,    min(12,   (int) ($_POST['month'] ?? date('n'))));
 
+        // Multi-tenant filter
         $cStmt = $this->pdo->prepare(
-            "SELECT id FROM contacts WHERE id = :cid AND assigned_sales_id = :ozid AND stav = 'CALLED_OK'"
+            "SELECT id FROM contacts
+             WHERE id = :cid AND assigned_sales_id = :ozid AND stav = 'CALLED_OK'
+               AND tenant_id = :tid"
         );
-        $cStmt->execute(['cid' => $contactId, 'ozid' => $ozId]);
+        $cStmt->execute(['cid' => $contactId, 'ozid' => $ozId, 'tid' => crm_tenant_id()]);
         if (!$cStmt->fetch()) {
             crm_flash_set('Kontakt nenalezen nebo nespadá do vašich leadů.');
             crm_redirect('/oz?year=' . $year . '&month=' . $month);
@@ -2508,8 +2667,8 @@ final class OzController
 
         if ($action === 'unflag') {
             $this->pdo->prepare(
-                'DELETE FROM contact_oz_flags WHERE contact_id = :cid AND oz_id = :oid'
-            )->execute(['cid' => $contactId, 'oid' => $ozId]);
+                'DELETE FROM contact_oz_flags WHERE contact_id = :cid AND oz_id = :oid AND tenant_id = :tid'
+            )->execute(['cid' => $contactId, 'oid' => $ozId, 'tid' => crm_tenant_id()]);
             crm_flash_set('Označení chybného leadu bylo staženo.');
         } else {
             if ($reason === '') {
@@ -2606,9 +2765,9 @@ final class OzController
     {
         $this->ensureTabPrefsTable();
         $stmt = $this->pdo->prepare(
-            "SELECT hidden_tabs FROM oz_tab_prefs WHERE user_id = :uid LIMIT 1"
+            "SELECT hidden_tabs FROM oz_tab_prefs WHERE user_id = :uid AND tenant_id = :tid LIMIT 1"
         );
-        $stmt->execute(['uid' => $userId]);
+        $stmt->execute(['uid' => $userId, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             return [];
@@ -2645,9 +2804,9 @@ final class OzController
     {
         $this->ensureTabPrefsTable();
         $stmt = $this->pdo->prepare(
-            "SELECT tab_order FROM oz_tab_prefs WHERE user_id = :uid LIMIT 1"
+            "SELECT tab_order FROM oz_tab_prefs WHERE user_id = :uid AND tenant_id = :tid LIMIT 1"
         );
-        $stmt->execute(['uid' => $userId]);
+        $stmt->execute(['uid' => $userId, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row || $row['tab_order'] === null) {
             return [];
@@ -2686,10 +2845,10 @@ final class OzController
     {
         $this->ensureTabPrefsTable();
         $stmt = $this->pdo->prepare(
-            "SELECT sub_tab_order FROM oz_tab_prefs WHERE user_id = :uid LIMIT 1"
+            "SELECT sub_tab_order FROM oz_tab_prefs WHERE user_id = :uid AND tenant_id = :tid LIMIT 1"
         );
         try {
-            $stmt->execute(['uid' => $userId]);
+            $stmt->execute(['uid' => $userId, 'tid' => crm_tenant_id()]);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
         } catch (\PDOException) {
             return [];
@@ -2928,6 +3087,7 @@ final class OzController
 
         $pendingLeads = [];
         try {
+            // Multi-tenant filter
             $pStmt = $this->pdo->prepare(
                 "SELECT c.id, c.firma, c.region, c.telefon, c.email, c.ico,
                         c.adresa, c.datum_volani,
@@ -2947,18 +3107,20 @@ final class OzController
                      ) t WHERE rn = 1
                  ) cn ON cn.contact_id = c.id
                  WHERE c.assigned_sales_id = :ozid2
+                   AND c.tenant_id = :tid
                    AND c.stav = 'CALLED_OK'
                    AND w.id IS NULL
                  {$sortOrder}
                  LIMIT 200"
             );
-            $pStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $pStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
             $pendingLeads = $pStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             // Pokud window function ROW_NUMBER nebo contact_notes neexistuje,
             // fallback na jednodušší dotaz bez poznámky.
             crm_db_log_error($e, __METHOD__);
             try {
+                // Multi-tenant filter — fallback bez window function
                 $pStmt = $this->pdo->prepare(
                     "SELECT c.id, c.firma, c.region, c.telefon, c.email, c.ico,
                             c.adresa, c.datum_volani,
@@ -2970,12 +3132,13 @@ final class OzController
                      LEFT JOIN oz_contact_workflow w
                             ON w.contact_id = c.id AND w.oz_id = :ozid
                      WHERE c.assigned_sales_id = :ozid2
+                       AND c.tenant_id = :tid
                        AND c.stav = 'CALLED_OK'
                        AND w.id IS NULL
                      {$sortOrder}
                      LIMIT 200"
                 );
-                $pStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+                $pStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
                 $pendingLeads = $pStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
             } catch (\PDOException $e2) {
                 crm_db_log_error($e2, __METHOD__);
@@ -3068,15 +3231,16 @@ final class OzController
             $pIds = array_map(fn($p) => (int) $p['id'], $pendingLeads);
             $ph   = implode(',', array_fill(0, count($pIds), '?'));
             try {
+                // Multi-tenant filter
                 $bpStmt = $this->pdo->prepare(
                     "SELECT bcl.contact_id, bcl.position, bcr.delivery_type,
                             bc.id AS campaign_id, bc.name AS campaign_name
                      FROM bet_campaign_leads bcl
                      JOIN bet_campaign_recipients bcr ON bcr.id = bcl.recipient_id
                      JOIN bet_campaigns bc ON bc.id = bcl.campaign_id
-                     WHERE bcl.contact_id IN ($ph)"
+                     WHERE bcl.contact_id IN ($ph) AND bcl.tenant_id = ?"
                 );
-                $bpStmt->execute($pIds);
+                $bpStmt->execute(array_merge($pIds, [crm_tenant_id()]));
                 foreach ($bpStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
                     $betPendingMap[(int) $r['contact_id']] = [
                         'campaign_id'   => (int) $r['campaign_id'],
@@ -3099,13 +3263,14 @@ final class OzController
                         DATEDIFF(vyrocni_smlouvy, CURDATE()) AS days_until
                  FROM contacts
                  WHERE assigned_sales_id = :ozid
+                   AND tenant_id = :tid
                    AND vyrocni_smlouvy IS NOT NULL
                    AND vyrocni_smlouvy >= CURDATE()
                    AND vyrocni_smlouvy <= CURDATE() + INTERVAL 30 DAY
                  ORDER BY vyrocni_smlouvy ASC
                  LIMIT 20"
             );
-            $rnStmt->execute(['ozid' => $ozId]);
+            $rnStmt->execute(['ozid' => $ozId, 'tid' => crm_tenant_id()]);
             $renewals = $rnStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -3121,9 +3286,10 @@ final class OzController
                 "SELECT COUNT(*) FROM contacts c
                  JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :ozid
                  WHERE c.assigned_sales_id = :ozid2
+                   AND c.tenant_id = :tid
                    AND w.stav IN ('NOVE','ZPRACOVAVA','NABIDKA','SCHUZKA','CALLBACK','SANCE')"
             );
-            $ipStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $ipStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
             $inProgressCount = (int) $ipStmt->fetchColumn();
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -3159,11 +3325,13 @@ final class OzController
         $ozId      = (int) $user['id'];
         $contactId = (int) ($_POST['contact_id'] ?? 0);
 
+        // Multi-tenant filter
         $cStmt = $this->pdo->prepare(
             "SELECT id, firma FROM contacts
-             WHERE id = :cid AND assigned_sales_id = :ozid AND stav = 'CALLED_OK'"
+             WHERE id = :cid AND assigned_sales_id = :ozid AND stav = 'CALLED_OK'
+               AND tenant_id = :tid"
         );
-        $cStmt->execute(['cid' => $contactId, 'ozid' => $ozId]);
+        $cStmt->execute(['cid' => $contactId, 'ozid' => $ozId, 'tid' => crm_tenant_id()]);
         $contact = $cStmt->fetch(PDO::FETCH_ASSOC);
         if (!$contact) {
             crm_flash_set('Kontakt nenalezen nebo již byl zpracován.');
@@ -3229,6 +3397,7 @@ final class OzController
         // Načíst kontakt + workflow stav. Lead musí patřit OZ a mít workflow
         // záznam (= byl přijat z queue).
         // POZN: sloupec contacts.poznamka = poznámka od navolávačky (caller_poznamka).
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             "SELECT c.id, c.firma, c.region, c.telefon, c.email, c.ico,
                     c.adresa, c.datum_volani,
@@ -3242,9 +3411,10 @@ final class OzController
              JOIN oz_contact_workflow w
                   ON w.contact_id = c.id AND w.oz_id = :ozid
              WHERE c.id = :cid AND c.assigned_sales_id = :ozid2
+               AND c.tenant_id = :tid
              LIMIT 1"
         );
-        $stmt->execute(['cid' => $contactId, 'ozid' => $ozId, 'ozid2' => $ozId]);
+        $stmt->execute(['cid' => $contactId, 'ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
         $contact = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$contact) {
             crm_flash_set('Lead nenalezen nebo nebyl přijat.');
@@ -3257,11 +3427,11 @@ final class OzController
             $nStmt = $this->pdo->prepare(
                 "SELECT note, created_at
                  FROM oz_contact_notes
-                 WHERE contact_id = :cid AND oz_id = :oid
+                 WHERE contact_id = :cid AND oz_id = :oid AND tenant_id = :tid
                  ORDER BY created_at DESC
                  LIMIT 5"
             );
-            $nStmt->execute(['cid' => $contactId, 'oid' => $ozId]);
+            $nStmt->execute(['cid' => $contactId, 'oid' => $ozId, 'tid' => crm_tenant_id()]);
             $recentNotes = $nStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -3275,10 +3445,11 @@ final class OzController
                  LEFT JOIN oz_contact_workflow w
                         ON w.contact_id = c.id AND w.oz_id = :ozid
                  WHERE c.assigned_sales_id = :ozid2
+                   AND c.tenant_id = :tid
                    AND c.stav = 'CALLED_OK'
                    AND w.id IS NULL"
             );
-            $rStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId]);
+            $rStmt->execute(['ozid' => $ozId, 'ozid2' => $ozId, 'tid' => crm_tenant_id()]);
             $remainingPending = (int) $rStmt->fetchColumn();
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -3338,14 +3509,16 @@ final class OzController
         }
 
         // Ověření že kontakt patří tomuto OZ a má workflow záznam (byl přijat).
+        // Multi-tenant filter
         $cStmt = $this->pdo->prepare(
             "SELECT c.id, c.firma
              FROM contacts c
              JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = :oid
              WHERE c.id = :cid AND c.assigned_sales_id = :oid2
+               AND c.tenant_id = :tid
              LIMIT 1"
         );
-        $cStmt->execute(['cid' => $contactId, 'oid' => $ozId, 'oid2' => $ozId]);
+        $cStmt->execute(['cid' => $contactId, 'oid' => $ozId, 'oid2' => $ozId, 'tid' => crm_tenant_id()]);
         $contact = $cStmt->fetch(PDO::FETCH_ASSOC);
         if (!$contact) {
             crm_flash_set('Lead nenalezen.');
@@ -3356,9 +3529,10 @@ final class OzController
 
         // Načti starý workflow stav PRO audit log (před UPDATE)
         $oldStavStmt = $this->pdo->prepare(
-            "SELECT stav FROM oz_contact_workflow WHERE contact_id = :cid AND oz_id = :oid LIMIT 1"
+            "SELECT stav FROM oz_contact_workflow
+             WHERE contact_id = :cid AND oz_id = :oid AND tenant_id = :tid LIMIT 1"
         );
-        $oldStavStmt->execute(['cid' => $contactId, 'oid' => $ozId]);
+        $oldStavStmt->execute(['cid' => $contactId, 'oid' => $ozId, 'tid' => crm_tenant_id()]);
         $oldStav = (string) ($oldStavStmt->fetchColumn() ?: '');
 
         // Poznámka je povinná u všech stavů (kromě explicit prázdné NOTE_ONLY).
@@ -3413,12 +3587,8 @@ final class OzController
         }
 
         // Uložit poznámku do historie (pokud něco je). OZ je sám autorem.
-        if ($poznamka !== '') {
-            $this->pdo->prepare(
-                'INSERT INTO oz_contact_notes (contact_id, oz_id, author_user_id, note)
-                 VALUES (:cid, :oid, :aid, :note)'
-            )->execute(['cid' => $contactId, 'oid' => $ozId, 'aid' => $ozId, 'note' => $poznamka]);
-        }
+        // Helper insertOzContactNote() má vlastní try/catch fallback pro chybějící migraci 028.
+        $this->insertOzContactNote($contactId, $ozId, $ozId, $poznamka);
 
         // NOTE_ONLY: jen poznámka, stav beze změny (zůstane ZPRACOVAVA)
         if ($newStav === 'NOTE_ONLY') {

@@ -65,6 +65,10 @@ final class LoginController
             crm_flash_set('Neplatné přihlašovací údaje.');
             crm_redirect('/login');
         }
+        if ($result['type'] === 'no_tenant_access') {
+            crm_flash_set('Tento účet nemá přístup do této firmy.');
+            crm_redirect('/login');
+        }
         if ($result['type'] === 'twofa_required') {
             crm_redirect('/login/two-factor');
         }
@@ -129,6 +133,10 @@ final class LoginController
         if ($result['type'] === 'bad_code') {
             crm_flash_set('Neplatný ověřovací kód.');
             crm_redirect('/login/two-factor');
+        }
+        if ($result['type'] === 'no_tenant_access') {
+            crm_flash_set('Tento účet nemá přístup do této firmy.');
+            crm_redirect('/login');
         }
         // 2FA OK
         $user = (array) ($result['user'] ?? []);

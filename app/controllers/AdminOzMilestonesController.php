@@ -30,11 +30,17 @@ final class AdminOzMilestonesController
 
         $this->ensureTable();
 
-        // Všichni aktivní OZ
-        $uStmt = $this->pdo->query(
-            "SELECT id, jmeno FROM users WHERE role = 'obchodak' AND aktivni = 1 ORDER BY jmeno ASC"
+        // Všichni aktivní OZ — multi-tenant přes user_tenants
+        $uStmt = $this->pdo->prepare(
+            "SELECT u.id, u.jmeno
+             FROM users u
+             INNER JOIN user_tenants ut
+                 ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1
+             WHERE u.role = 'obchodak' AND u.aktivni = 1
+             ORDER BY u.jmeno ASC"
         );
-        $ozUsers = $uStmt ? ($uStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        $uStmt->execute(['tid' => crm_tenant_id()]);
+        $ozUsers = $uStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         // Vybraný OZ
         $selectedOzId = (int) ($_GET['oz_id'] ?? ($ozUsers[0]['id'] ?? 0));
@@ -42,13 +48,17 @@ final class AdminOzMilestonesController
         // Milníky pro vybraného OZ
         $milestones = [];
         if ($selectedOzId > 0) {
+            // Multi-tenant filter
             $mStmt = $this->pdo->prepare(
                 'SELECT id, label, target_bmsl, reward_note
                  FROM oz_personal_milestones
-                 WHERE oz_id = :oid AND year = :y AND month = :m
+                 WHERE oz_id = :oid AND year = :y AND month = :m AND tenant_id = :tid
                  ORDER BY target_bmsl ASC'
             );
-            $mStmt->execute(['oid' => $selectedOzId, 'y' => $year, 'm' => $month]);
+            $mStmt->execute([
+                'oid' => $selectedOzId, 'y' => $year, 'm' => $month,
+                'tid' => crm_tenant_id(),
+            ]);
             $milestones = $mStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         }
 
@@ -97,12 +107,15 @@ final class AdminOzMilestonesController
 
         $targetVal = (int) (floor((float) $target / 100) * 100);
 
-        // Duplicitní cíl?
+        // Duplicitní cíl? (per-tenant)
         $dupStmt = $this->pdo->prepare(
             'SELECT id FROM oz_personal_milestones
-             WHERE oz_id = :oid AND year = :y AND month = :m AND target_bmsl = :t'
+             WHERE oz_id = :oid AND year = :y AND month = :m AND target_bmsl = :t AND tenant_id = :tid'
         );
-        $dupStmt->execute(['oid' => $ozId, 'y' => $year, 'm' => $month, 't' => $targetVal]);
+        $dupStmt->execute([
+            'oid' => $ozId, 'y' => $year, 'm' => $month, 't' => $targetVal,
+            'tid' => crm_tenant_id(),
+        ]);
         if ($dupStmt->fetch()) {
             crm_flash_set('Milník s touto hodnotou již existuje.');
             crm_redirect('/admin/oz-milestones?year=' . $year . '&month=' . $month . '&oz_id=' . $ozId);
@@ -141,9 +154,10 @@ final class AdminOzMilestonesController
         $ozId  = (int) ($_POST['oz_id'] ?? 0);
         $msId  = (int) ($_POST['milestone_id'] ?? 0);
 
+        // Multi-tenant: smazat jen vlastní záznam
         $this->pdo->prepare(
-            'DELETE FROM oz_personal_milestones WHERE id = :id'
-        )->execute(['id' => $msId]);
+            'DELETE FROM oz_personal_milestones WHERE id = :id AND tenant_id = :tid'
+        )->execute(['id' => $msId, 'tid' => crm_tenant_id()]);
 
         crm_flash_set('Milník smazán.');
         crm_redirect('/admin/oz-milestones?year=' . $year . '&month=' . $month . '&oz_id=' . $ozId);

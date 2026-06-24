@@ -1406,43 +1406,98 @@ select option:checked   { background: var(--color-surface); color: var(--color-t
 
 /* Inline editace polí */
 .editable-group { display: inline-flex; align-items: center; gap: 0.2rem; }
+/* ── Inline edit (tužka u polí firma/telefon/email/IČO/adresa) ──
+   Decentní šedý kruh, neviditelný dokud uživatel nehoverne KONKRÉTNÍ pole.
+   Pravidlo `.contact-row:hover` (které ukazovalo všech 5 tužek naráz) je nahrazeno
+   `.editable-group:hover` — pole jsou klidná, tlačítko vykoukne jen kde ho user hledá. */
 .btn-edit-field {
-  background: none;
-  border: none;
+  background: transparent;
+  border: 1px solid transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 0.78rem;
-  padding: 0 0.15rem;
+  font-size: 0.72rem;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.25rem;
+  padding: 0;
   line-height: 1;
-  opacity: 0.4;
-  transition: opacity 0.15s;
+  opacity: 0;
+  transition: opacity 120ms, background 120ms, color 120ms, border-color 120ms;
+  vertical-align: middle;
 }
-.contact-row:hover .btn-edit-field { opacity: 1; }
-.btn-edit-field:hover { color: var(--accent); }
+.editable-group:hover .btn-edit-field,
+.editable-group:focus-within .btn-edit-field {
+  opacity: 1;
+}
+.btn-edit-field:hover {
+  background: rgba(37, 99, 235, 0.10);
+  color: var(--accent);
+  border-color: rgba(37, 99, 235, 0.25);
+}
+.btn-edit-field:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+/* Stav "právě edituju" — světle modrý highlight celé skupiny + slabý border.
+   Toggluje se z crmEdit() v caller/index.php přes classList.add('editing'). */
+.editable-group.editing {
+  background: rgba(37, 99, 235, 0.06);
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  border-radius: 6px;
+  padding: 0.2rem 0.4rem;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 0.3rem;
+}
 .contact-muted { color: var(--muted); font-size: 0.85rem; }
 
 .input-inline-edit {
-  padding: 0.15rem 0.4rem;
-  border-radius: 5px;
+  padding: 0.3rem 0.55rem;
+  border-radius: 6px;
   border: 1px solid var(--accent);
   background: var(--color-input-bg);
   color: var(--text);
-  font-size: 0.85rem;
-  min-width: 80px;
-  max-width: 200px;
+  font-size: 0.9rem;
+  /* Pružný input — adresa i email se vejdou; nepřebíhá kartu. */
+  flex: 1 1 180px;
+  min-width: 140px;
+  max-width: 380px;
   outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+  transition: box-shadow 120ms, border-color 120ms;
+}
+.input-inline-edit:focus {
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
 }
 .btn-inline-save, .btn-inline-cancel {
-  border: none;
-  border-radius: 5px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   cursor: pointer;
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   font-weight: 700;
-  padding: 0.15rem 0.35rem;
-  line-height: 1.4;
+  padding: 0.3rem 0.5rem;
+  line-height: 1;
+  min-width: 30px;
+  transition: transform 100ms, box-shadow 120ms, background 120ms;
 }
-.btn-inline-save   { background: #2ecc71; color: #fff; }
-.btn-inline-cancel { background: rgba(0,0,0,0.1); color: var(--muted); }
+.btn-inline-save:hover, .btn-inline-cancel:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.10);
+}
+.btn-inline-save   { background: #16a34a; color: #fff; border-color: #15803d; }
+.btn-inline-save:hover { background: #15803d; }
+.btn-inline-cancel { background: #f3f4f6; color: #4b5563; border-color: #d1d5db; }
+.btn-inline-cancel:hover { background: #e5e7eb; color: #1f2937; }
+.btn-inline-save:disabled {
+  background: #94a3b8; cursor: not-allowed; transform: none;
+}
 
 /* ── Kalendář callbacků ── */
 .cal-nav {

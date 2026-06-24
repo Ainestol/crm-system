@@ -110,6 +110,11 @@ final class AdminContactsDeleteController
             $where[] = '1=0'; // safety: bez explicitního filtru nemažeme nic
         }
 
+        // Multi-tenant: VŽDY filtr na aktivní tenant
+        // Bez tohoto by admin tenant 1 mohl smazat data tenant 2 přes formulář.
+        $where[]  = 'c.tenant_id = ?';
+        $params[] = crm_tenant_id();
+
         $whereSql = $where === [] ? '1=0' : implode(' AND ', $where);
         return [$whereSql, $params, $hasUserFilter];
     }
@@ -334,8 +339,9 @@ final class AdminContactsDeleteController
                         // Tabulka nemusí existovat / může mít jiný sloupec — neselhat
                     }
                 }
-                // Konečně contacts
-                $this->pdo->prepare("DELETE FROM contacts WHERE id IN ($ph)")->execute($chunk);
+                // Konečně contacts — multi-tenant defense
+                $this->pdo->prepare("DELETE FROM contacts WHERE id IN ($ph) AND tenant_id = ?")
+                    ->execute(array_merge($chunk, [crm_tenant_id()]));
             }
 
             $this->pdo->commit();

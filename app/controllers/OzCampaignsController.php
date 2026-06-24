@@ -45,6 +45,7 @@ final class OzCampaignsController
 
         // ── 1) Všechny kampaně, kde je tento OZ recipient ──
         // INCLUSIVE: open + closed + cancelled (aby OZ viděl i historii)
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             "SELECT bc.id, bc.name, bc.region, bc.target_count, bc.cleaned_count,
                     bc.status, bc.note, bc.created_at, bc.closed_at,
@@ -52,10 +53,10 @@ final class OzCampaignsController
                     bcr.received_count AS my_received, bcr.delivery_type
              FROM bet_campaigns bc
              JOIN bet_campaign_recipients bcr ON bcr.campaign_id = bc.id
-             WHERE bcr.oz_id = :oz
+             WHERE bcr.oz_id = :oz AND bc.tenant_id = :tid
              ORDER BY (bc.status = 'open') DESC, bc.created_at DESC"
         );
-        $stmt->execute(['oz' => $ozId]);
+        $stmt->execute(['oz' => $ozId, 'tid' => crm_tenant_id()]);
         $campaignRows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         // ── 2) Pro každou kampaň: rozbor stavů call-type leadů ──
@@ -70,6 +71,7 @@ final class OzCampaignsController
             $myRcv  = (int) $r['my_received'];
 
             // Stats z bet_campaign_leads JOIN contacts pro tohoto recipient
+            // Multi-tenant filter
             $statsStmt = $this->pdo->prepare(
                 "SELECT
                     SUM(CASE WHEN c.stav = 'READY'                                   THEN 1 ELSE 0 END) AS waiting,
@@ -80,9 +82,9 @@ final class OzCampaignsController
                     COUNT(*) AS total
                  FROM bet_campaign_leads bcl
                  JOIN contacts c ON c.id = bcl.contact_id
-                 WHERE bcl.recipient_id = ?"
+                 WHERE bcl.recipient_id = ? AND c.tenant_id = ?"
             );
-            $statsStmt->execute([$recId]);
+            $statsStmt->execute([$recId, crm_tenant_id()]);
             $stats = $statsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
             // Workflow stages: kolik z výhry se posunulo do SCHUZKA / SMLOUVA atd.
@@ -162,6 +164,7 @@ final class OzCampaignsController
                 }
             }
             if ($detailItem !== null) {
+                // Multi-tenant filter
                 $dlStmt = $this->pdo->prepare(
                     "SELECT bcl.position, bcl.cleaned_at,
                             c.id AS contact_id, c.firma, c.telefon, c.email, c.region,
@@ -170,10 +173,10 @@ final class OzCampaignsController
                      FROM bet_campaign_leads bcl
                      JOIN contacts c ON c.id = bcl.contact_id
                      LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = ?
-                     WHERE bcl.recipient_id = ?
+                     WHERE bcl.recipient_id = ? AND c.tenant_id = ?
                      ORDER BY bcl.position ASC"
                 );
-                $dlStmt->execute([$ozId, $detailItem['recipient_id']]);
+                $dlStmt->execute([$ozId, $detailItem['recipient_id'], crm_tenant_id()]);
                 $detailLeads = $dlStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
             }
         }

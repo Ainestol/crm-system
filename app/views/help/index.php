@@ -57,8 +57,9 @@ declare(strict_types=1);
         </div>
     <?php } ?>
 
-    <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:0.9rem 1.1rem;font-size:0.88rem;color:#92400e;">
-        💡 <strong>Tip:</strong> Tato nápověda je viditelná jen pro majitele a superadmina. Běžní uživatelé (čistička, navolávačka, OZ) ji nevidí.
-        Pokud chceš něco doplnit nebo opravit, dej vědět vývojáři — texty jsou v <code>app/views/help/topic_*.php</code>.
+    <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:0.9rem 1.1rem;font-size:0.88rem;color:#1e3a8a;">
+        💡 <strong>Tip:</strong> Vidíš jen ty návody, které se týkají tvé role.
+        Pokud něco potřebuješ vědět, zeptej se majitele firmy nebo napiš na
+        <a href="mailto:support@snecinatripu.eu" style="color:#1d4ed8; font-weight:600;">support@snecinatripu.eu</a>.
     </div>
 </div>

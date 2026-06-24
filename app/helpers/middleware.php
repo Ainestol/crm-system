@@ -44,6 +44,27 @@ if (!function_exists('crm_require_user')) {
             }
         }
 
+        // ── Tenant lifecycle guard ────────────────────────────────────
+        // Pokud je tenant suspendovaný (auto nebo manuálně), běžné uživatele
+        // přesměrujeme na /suspended. Super-admin smí dál (root access).
+        if (function_exists('crm_tenant_lifecycle_state')
+            && function_exists('crm_tenant_id')
+            && function_exists('crm_tenant_is_super_admin')) {
+            $tid = crm_tenant_id();
+            if ($tid > 0 && !crm_tenant_is_super_admin()) {
+                try {
+                    $life = crm_tenant_lifecycle_state($pdo, $tid);
+                    if (!$life['can_login']) {
+                        $path = strtolower((string) (parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/'));
+                        $exemptPaths = ['/suspended', '/logout', '/login'];
+                        if (!in_array($path, $exemptPaths, true)) {
+                            crm_redirect('/suspended');
+                        }
+                    }
+                } catch (\Throwable $_) { /* tichý fallback */ }
+            }
+        }
+
         return $user;
     }
 }

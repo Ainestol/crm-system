@@ -29,6 +29,7 @@ final class OzEmailLeadsController
         $ozId = (int) $user['id'];
 
         // Načti kontakty stav=EMAIL_READY přiřazené tomuto OZ
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             "SELECT c.id, c.firma, c.ico, c.telefon, c.email, c.adresa,
                     c.region, c.operator, c.updated_at,
@@ -38,10 +39,11 @@ final class OzEmailLeadsController
              LEFT JOIN bet_campaigns bc ON bc.id = bcl.campaign_id
              WHERE c.stav = 'EMAIL_READY'
                AND c.assigned_sales_id = :oz
+               AND c.tenant_id = :tid
              ORDER BY c.updated_at DESC
              LIMIT 5000"
         );
-        $stmt->execute(['oz' => $ozId]);
+        $stmt->execute(['oz' => $ozId, 'tid' => crm_tenant_id()]);
         $leads = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $flash = crm_flash_take();
@@ -61,6 +63,7 @@ final class OzEmailLeadsController
 
         $ozId = (int) $user['id'];
 
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             "SELECT c.firma, c.ico, c.email, c.telefon, c.adresa, c.region,
                     c.operator, c.updated_at,
@@ -70,9 +73,10 @@ final class OzEmailLeadsController
              LEFT JOIN bet_campaigns bc ON bc.id = bcl.campaign_id
              WHERE c.stav = 'EMAIL_READY'
                AND c.assigned_sales_id = :oz
+               AND c.tenant_id = :tid
              ORDER BY c.updated_at DESC"
         );
-        $stmt->execute(['oz' => $ozId]);
+        $stmt->execute(['oz' => $ozId, 'tid' => crm_tenant_id()]);
 
         // Lazy generátor řádků — šetří paměť při velkém datasetu
         $rowsGenerator = (function () use ($stmt) {

@@ -150,6 +150,8 @@ final class CistickaController
         // Když existují goals → goalRegionsAll (vč. splněných — tile "Praha 10/10 ✓"
         // musí být vidět i po splnění, aby čistička viděla, že kraj je hotový).
         // Jinak fallback: regiony s NEW kontaktem v rámci user_regions.
+        // Multi-tenant filter pro všechny contacts queries
+        $tid = crm_tenant_id();
         if ($goalRegionsAll !== []) {
             $availableRegions = $goalRegionsAll;
         } elseif ($hasUserRegions) {
@@ -157,16 +159,20 @@ final class CistickaController
             $avStmt = $this->pdo->prepare(
                 "SELECT DISTINCT region FROM contacts
                  WHERE stav = 'NEW' AND region IN ($placeholders) AND region != ''
+                   AND tenant_id = ?
                  ORDER BY region"
             );
-            $avStmt->execute($userRegions);
+            $avStmt->execute(array_merge($userRegions, [$tid]));
             /** @var list<string> $availableRegions */
             $availableRegions = $avStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
         } else {
-            $avStmt = $this->pdo->query(
-                "SELECT DISTINCT region FROM contacts WHERE stav = 'NEW' AND region != '' ORDER BY region"
+            $avStmt = $this->pdo->prepare(
+                "SELECT DISTINCT region FROM contacts
+                 WHERE stav = 'NEW' AND region != '' AND tenant_id = ?
+                 ORDER BY region"
             );
-            $availableRegions = $avStmt ? ($avStmt->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
+            $avStmt->execute([$tid]);
+            $availableRegions = $avStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
         }
 
         // Vybraný region (GET param, validace)
@@ -183,6 +189,7 @@ final class CistickaController
         if ($availableRegions !== []) {
             $ph2 = implode(',', array_fill(0, count($availableRegions), '?'));
             if ($tab === 'zkontrolovano') {
+                // Multi-tenant filter
                 $rcStmt = $this->pdo->prepare(
                     "SELECT c.region, COUNT(DISTINCT c.id) AS cnt
                      FROM contacts c
@@ -190,17 +197,18 @@ final class CistickaController
                      WHERE wl.user_id = ?
                        AND wl.new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')
                        AND c.region IN ($ph2)
+                       AND c.tenant_id = ?
                      GROUP BY c.region"
                 );
-                $rcStmt->execute(array_merge([$cistickaId], $availableRegions));
+                $rcStmt->execute(array_merge([$cistickaId], $availableRegions, [$tid]));
             } else {
                 $rcStmt = $this->pdo->prepare(
                     "SELECT region, COUNT(*) AS cnt
                      FROM contacts
-                     WHERE stav = 'NEW' AND region IN ($ph2)
+                     WHERE stav = 'NEW' AND region IN ($ph2) AND tenant_id = ?
                      GROUP BY region"
                 );
-                $rcStmt->execute($availableRegions);
+                $rcStmt->execute(array_merge($availableRegions, [$tid]));
             }
             foreach ($rcStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 $regionCounts[(string) $row['region']] = (int) $row['cnt'];
@@ -214,13 +222,14 @@ final class CistickaController
         $newInDbPerRegion = [];
         if ($availableRegions !== []) {
             $ph3 = implode(',', array_fill(0, count($availableRegions), '?'));
+            // Multi-tenant filter
             $newStmt = $this->pdo->prepare(
                 "SELECT region, COUNT(*) AS cnt
                  FROM contacts
-                 WHERE stav = 'NEW' AND region IN ($ph3)
+                 WHERE stav = 'NEW' AND region IN ($ph3) AND tenant_id = ?
                  GROUP BY region"
             );
-            $newStmt->execute($availableRegions);
+            $newStmt->execute(array_merge($availableRegions, [$tid]));
             foreach ($newStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 $newInDbPerRegion[(string) $row['region']] = (int) $row['cnt'];
             }
@@ -260,6 +269,7 @@ final class CistickaController
             $regionFilter = $regionParams !== []
                 ? 'AND c.region IN (' . implode(',', array_fill(0, count($regionParams), '?')) . ')'
                 : '';
+            // Multi-tenant filter na c.tenant_id (workflow_log také má tenant_id ale stačí filter na contacts)
             $stmt = $this->pdo->prepare(
                 'SELECT c.id, c.firma, c.telefon, c.operator, c.region, c.stav,
                         wl.created_at AS verified_at
@@ -272,11 +282,11 @@ final class CistickaController
                        AND new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
                      GROUP BY contact_id
                  ) latest ON latest.last_id = wl.id
-                 WHERE 1=1 ' . $regionFilter . '
+                 WHERE c.tenant_id = ? ' . $regionFilter . '
                  ORDER BY wl.created_at DESC
                  LIMIT ? OFFSET ?'
             );
-            $stmt->execute(array_merge([$cistickaId], $regionParams, [self::PAGE_SIZE, $offset]));
+            $stmt->execute(array_merge([$cistickaId, $tid], $regionParams, [self::PAGE_SIZE, $offset]));
             $contacts = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
             $cntStmt = $this->pdo->prepare(
@@ -284,9 +294,10 @@ final class CistickaController
                  JOIN workflow_log wl ON wl.contact_id = c.id
                  WHERE wl.user_id = ?
                    AND wl.new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
+                   AND c.tenant_id = ?
                    ' . ($regionParams !== [] ? 'AND c.region IN (' . implode(',', array_fill(0, count($regionParams), '?')) . ')' : '')
             );
-            $cntStmt->execute(array_merge([$cistickaId], $regionParams));
+            $cntStmt->execute(array_merge([$cistickaId, $tid], $regionParams));
             $totalCount = (int) $cntStmt->fetchColumn();
         } else {
             // K ověření: stav = NEW + region filtr (effectiveRegions / selectedRegion)
@@ -297,10 +308,11 @@ final class CistickaController
             //   3) id ASC — fallback pro deterministickou shodu
             //
             // ISNULL trick: ISNULL(queue_mix_seq)=0 pro hodnotu, =1 pro NULL → ASC = NULL na konec
+            // Multi-tenant filter
             $stmt = $this->pdo->prepare(
                 "SELECT id, firma, telefon, operator, region
                  FROM contacts
-                 WHERE stav = 'NEW'
+                 WHERE stav = 'NEW' AND tenant_id = ?
                    $regionInSql
                  ORDER BY
                      ISNULL(queue_mix_seq) ASC,
@@ -309,13 +321,13 @@ final class CistickaController
                      id ASC
                  LIMIT ? OFFSET ?"
             );
-            $stmt->execute(array_merge($regionParams, [self::PAGE_SIZE, $offset]));
+            $stmt->execute(array_merge([$tid], $regionParams, [self::PAGE_SIZE, $offset]));
             $contacts = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
             $cntStmt = $this->pdo->prepare(
-                "SELECT COUNT(*) FROM contacts WHERE stav = 'NEW' $regionInSql"
+                "SELECT COUNT(*) FROM contacts WHERE stav = 'NEW' AND tenant_id = ? $regionInSql"
             );
-            $cntStmt->execute($regionParams);
+            $cntStmt->execute(array_merge([$tid], $regionParams));
             $totalCount = (int) $cntStmt->fetchColumn();
         }
 
@@ -330,6 +342,7 @@ final class CistickaController
         // Today stats — počítáme PER TELEFON (z contact_phones), ne per kontakt.
         // Důvod: kontakt s 5 telefony = 5 ověření do faktury, badge "Dnes ověřeno"
         // musí ukazovat stejné číslo, jinak je to matoucí.
+        // Multi-tenant filter
         $statsStmt = $this->pdo->prepare(
             "SELECT
                 SUM(CASE WHEN cp.operator IN ('TM','O2') THEN 1 ELSE 0 END) AS ready_count,
@@ -339,9 +352,10 @@ final class CistickaController
              FROM contact_phones cp
              WHERE cp.verified_by = :uid
                AND cp.verified_at IS NOT NULL
-               AND DATE(cp.verified_at) = CURDATE()"
+               AND DATE(cp.verified_at) = CURDATE()
+               AND cp.tenant_id = :tid"
         );
-        $statsStmt->execute(['uid' => $cistickaId]);
+        $statsStmt->execute(['uid' => $cistickaId, 'tid' => $tid]);
         $todayStats = $statsStmt->fetch(PDO::FETCH_ASSOC)
             ?: ['ready_count' => 0, 'vf_count' => 0, 'chybny_count' => 0, 'total_today' => 0];
 
@@ -351,9 +365,13 @@ final class CistickaController
         if (!$hasGoals) {
             $newCount = 0;
         } else {
+            // Multi-tenant filter
             $basePh = 'AND region IN (' . implode(',', array_fill(0, count($goalRegions), '?')) . ')';
-            $newCntStmt = $this->pdo->prepare("SELECT COUNT(*) FROM contacts WHERE stav = 'NEW' $basePh");
-            $newCntStmt->execute($goalRegions);
+            $newCntStmt = $this->pdo->prepare(
+                "SELECT COUNT(*) FROM contacts
+                 WHERE stav = 'NEW' AND tenant_id = ? $basePh"
+            );
+            $newCntStmt->execute(array_merge([$tid], $goalRegions));
             $newCount = (int) $newCntStmt->fetchColumn();
         }
 
@@ -367,18 +385,20 @@ final class CistickaController
         // verify → undo → NEW, nesmí se počítat. Bez tohoto fixu badge rostl
         // i po každém undo (kontakt v historii má READY záznam, COUNT(DISTINCT)
         // ho stále počítal navzdory aktuálnímu NEW stavu).
+        // Multi-tenant filter
         $zkontTotalStmt = $this->pdo->prepare(
             "SELECT COUNT(*) FROM workflow_log wl
              INNER JOIN (
                  SELECT contact_id, MAX(id) AS last_id
                  FROM workflow_log
-                 WHERE user_id = :uid1
+                 WHERE user_id = :uid1 AND tenant_id = :tid1
                  GROUP BY contact_id
              ) last_per_contact ON last_per_contact.last_id = wl.id
              WHERE wl.user_id = :uid2
+               AND wl.tenant_id = :tid2
                AND wl.new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')"
         );
-        $zkontTotalStmt->execute(['uid1' => $cistickaId, 'uid2' => $cistickaId]);
+        $zkontTotalStmt->execute(['uid1' => $cistickaId, 'uid2' => $cistickaId, 'tid1' => $tid, 'tid2' => $tid]);
         $zkontrolovaneTotal = (int) $zkontTotalStmt->fetchColumn();
 
         // ── Widget Moje výplata: měsíční počet ověření + sazba + Kč ──
@@ -397,6 +417,7 @@ final class CistickaController
         //
         // Pokud kontakt byl CHYBNY (= špatný telefon), platí se taky — čistička
         // odvedla práci ověření, i kdyby výsledek byl "nepoužitelný".
+        // Multi-tenant filter
         $cwCntStmt = $this->pdo->prepare(
             "SELECT
                 COUNT(*)                                                       AS total,
@@ -407,9 +428,10 @@ final class CistickaController
              WHERE cp.verified_by = :uid
                AND cp.verified_at IS NOT NULL
                AND YEAR(cp.verified_at)  = :y
-               AND MONTH(cp.verified_at) = :m"
+               AND MONTH(cp.verified_at) = :m
+               AND cp.tenant_id = :tid"
         );
-        $cwCntStmt->execute(['uid' => $cistickaId, 'y' => $cwYear, 'm' => $cwMonth]);
+        $cwCntStmt->execute(['uid' => $cistickaId, 'y' => $cwYear, 'm' => $cwMonth, 'tid' => $tid]);
         $cwCounts = $cwCntStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'ready_count' => 0, 'vf_count' => 0, 'chybny_count' => 0];
         $cwTotalCount = (int) ($cwCounts['total'] ?? 0);
         $cwReadyCount = (int) ($cwCounts['ready_count'] ?? 0);
@@ -473,10 +495,12 @@ final class CistickaController
         // Ověř existenci kontaktu ve stavu NEW
         // FETCH region — potřebujeme pro hook bet_assign_lead (sázky)
         // FETCH telefon — potřebujeme pro contact_phones sync
+        // Multi-tenant filter
         $check = $this->pdo->prepare(
-            'SELECT id, stav, operator, region, telefon FROM contacts WHERE id = :id AND stav = \'NEW\' LIMIT 1'
+            'SELECT id, stav, operator, region, telefon FROM contacts
+             WHERE id = :id AND stav = \'NEW\' AND tenant_id = :tid LIMIT 1'
         );
-        $check->execute([':id' => $contactId]);
+        $check->execute([':id' => $contactId, ':tid' => crm_tenant_id()]);
         $contact = $check->fetch(PDO::FETCH_ASSOC);
         if (!$contact) {
             if ($isAjax) {
@@ -497,12 +521,12 @@ final class CistickaController
             'chybny'  => ['CHYBNY_KONTAKT', '',   'Chybný / nepoužitelný kontakt'],
         };
 
-        // Aktualizace kontaktu
+        // Aktualizace kontaktu — multi-tenant filter
         $this->pdo->prepare(
             'UPDATE contacts
              SET stav = :stav, operator = :op, updated_at = NOW(3)
-             WHERE id = :id'
-        )->execute([':stav' => $newStatus, ':op' => $operatorVal, ':id' => $contactId]);
+             WHERE id = :id AND tenant_id = :tid'
+        )->execute([':stav' => $newStatus, ':op' => $operatorVal, ':id' => $contactId, ':tid' => crm_tenant_id()]);
 
         // Sync do contact_phones — aby fakturní query mohla počítat z jednoho zdroje
         // (per-phone). Pro single-phone kontakt by zde měl být 1 řádek — aktualizujeme ho.
@@ -523,8 +547,8 @@ final class CistickaController
             $this->pdo->prepare(
                 'UPDATE contact_phones
                  SET operator = :op, verified_at = NOW(3), verified_by = :uid
-                 WHERE contact_id = :cid'
-            )->execute(['op' => $action_label, 'uid' => $cistickaId, 'cid' => $contactId]);
+                 WHERE contact_id = :cid AND tenant_id = :tid'
+            )->execute(['op' => $action_label, 'uid' => $cistickaId, 'cid' => $contactId, 'tid' => crm_tenant_id()]);
         } catch (\Throwable $e) {
             if (function_exists('crm_db_log_error')) crm_db_log_error(new \PDOException($e->getMessage()), __METHOD__ . '/sync');
         }
@@ -611,11 +635,11 @@ final class CistickaController
             $this->jsonResponse(['ok' => false, 'error' => 'Neplatný požadavek.']);
         }
 
-        // Ověř existenci kontaktu — pro reklasifikaci je povolený i non-NEW stav
+        // Ověř existenci kontaktu — multi-tenant filter
         $check = $this->pdo->prepare(
-            "SELECT id, stav, region FROM contacts WHERE id = :id LIMIT 1"
+            "SELECT id, stav, region FROM contacts WHERE id = :id AND tenant_id = :tid LIMIT 1"
         );
-        $check->execute(['id' => $contactId]);
+        $check->execute(['id' => $contactId, 'tid' => crm_tenant_id()]);
         $contact = $check->fetch(PDO::FETCH_ASSOC);
         if (!$contact) {
             $this->jsonResponse(['ok' => false, 'error' => 'Kontakt nenalezen.']);
@@ -624,10 +648,12 @@ final class CistickaController
         $isReclassify = ((string) $contact['stav'] !== 'NEW');
 
         // Ověř že telefon patří tomu kontaktu
+        // Multi-tenant filter
         $checkP = $this->pdo->prepare(
-            'SELECT id, phone FROM contact_phones WHERE id = :pid AND contact_id = :cid LIMIT 1'
+            'SELECT id, phone FROM contact_phones
+             WHERE id = :pid AND contact_id = :cid AND tenant_id = :tid LIMIT 1'
         );
-        $checkP->execute(['pid' => $phoneId, 'cid' => $contactId]);
+        $checkP->execute(['pid' => $phoneId, 'cid' => $contactId, 'tid' => crm_tenant_id()]);
         $phoneRow = $checkP->fetch(PDO::FETCH_ASSOC);
         if (!$phoneRow) {
             $this->jsonResponse(['ok' => false, 'error' => 'Telefon nepatří tomuto kontaktu.']);
@@ -641,12 +667,12 @@ final class CistickaController
             'chybny' => 'CHYBNY',
         };
 
-        // Uložit ověření 1 telefonu
+        // Uložit ověření 1 telefonu — multi-tenant filter
         $this->pdo->prepare(
             'UPDATE contact_phones
              SET operator = :op, verified_at = NOW(3), verified_by = :uid
-             WHERE id = :pid'
-        )->execute(['op' => $opUpper, 'uid' => $cistickaId, 'pid' => $phoneId]);
+             WHERE id = :pid AND tenant_id = :tid'
+        )->execute(['op' => $opUpper, 'uid' => $cistickaId, 'pid' => $phoneId, 'tid' => crm_tenant_id()]);
 
         // Vyhodnotit stav kontaktu po tomto ověření
         $eval = crm_phone_evaluate_contact_status($this->pdo, $contactId);
@@ -679,11 +705,12 @@ final class CistickaController
 
         // Update contacts.stav + operator (jen pokud se mění)
         if ($newStatus !== $oldStav || (string) ($contact['operator'] ?? '') !== $operatorVal) {
+            // Multi-tenant filter
             $this->pdo->prepare(
                 'UPDATE contacts
                  SET stav = :stav, operator = :op, updated_at = NOW(3)
-                 WHERE id = :id'
-            )->execute(['stav' => $newStatus, 'op' => $operatorVal, 'id' => $contactId]);
+                 WHERE id = :id AND tenant_id = :tid'
+            )->execute(['stav' => $newStatus, 'op' => $operatorVal, 'id' => $contactId, 'tid' => crm_tenant_id()]);
         }
 
         // Workflow log (pro reklasifikaci s explicitním old → new)
@@ -752,13 +779,16 @@ final class CistickaController
         }
 
         $processed = 0;
+        // Multi-tenant: tenant filter v batch
+        $tidBatch = crm_tenant_id();
         // FETCH region a operator už při SELECT — potřeba pro hook bet_assign_lead
         $regionStmt = $this->pdo->prepare(
-            "SELECT id, region, operator FROM contacts WHERE id = :id AND stav = 'NEW' LIMIT 1"
+            "SELECT id, region, operator FROM contacts
+             WHERE id = :id AND stav = 'NEW' AND tenant_id = :tid LIMIT 1"
         );
         $upd = $this->pdo->prepare(
             'UPDATE contacts SET stav = :stav, operator = :op, updated_at = NOW(3)
-             WHERE id = :id AND stav = \'NEW\''
+             WHERE id = :id AND stav = \'NEW\' AND tenant_id = :tid'
         );
         $wf = $this->pdo->prepare(
             'INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
@@ -771,7 +801,7 @@ final class CistickaController
                 continue;
             }
             // Fetch region PŘED update — po UPDATE už není stav=NEW a SELECT by nevrátil nic
-            $regionStmt->execute([':id' => $contactId]);
+            $regionStmt->execute([':id' => $contactId, ':tid' => $tidBatch]);
             $contactRow = $regionStmt->fetch(PDO::FETCH_ASSOC);
             if (!$contactRow) {
                 continue; // už nezpracovatelný (race condition)
@@ -784,7 +814,7 @@ final class CistickaController
                 'o2'      => ['READY',          'O2', 'Čistička: O2 – připraveno'],
                 'chybny'  => ['CHYBNY_KONTAKT', '',   'Čistička: Chybný / nepoužitelný kontakt'],
             };
-            $upd->execute([':stav' => $newStatus, ':op' => $operatorVal, ':id' => $contactId]);
+            $upd->execute([':stav' => $newStatus, ':op' => $operatorVal, ':id' => $contactId, ':tid' => $tidBatch]);
             if ($upd->rowCount() > 0) {
                 $wf->execute([':cid' => $contactId, ':uid' => $cistickaId, ':new' => $newStatus, ':note' => $label]);
                 $processed++;
@@ -832,10 +862,13 @@ final class CistickaController
         }
 
         // Kontakt musí být ve stavu READY, VF_SKIP nebo CHYBNY_KONTAKT (čistička může vrátit i chybně označený)
+        // Multi-tenant filter
         $check = $this->pdo->prepare(
-            "SELECT id, stav, operator FROM contacts WHERE id = ? AND stav IN ('READY','VF_SKIP','CHYBNY_KONTAKT') LIMIT 1"
+            "SELECT id, stav, operator FROM contacts
+             WHERE id = ? AND stav IN ('READY','VF_SKIP','CHYBNY_KONTAKT') AND tenant_id = ?
+             LIMIT 1"
         );
-        $check->execute([$contactId]);
+        $check->execute([$contactId, crm_tenant_id()]);
         $contact = $check->fetch(PDO::FETCH_ASSOC);
 
         if (!$contact) {
@@ -845,10 +878,11 @@ final class CistickaController
 
         $oldStav = (string) $contact['stav'];
 
-        // Vrátit do NEW
+        // Vrátit do NEW — multi-tenant filter
         $this->pdo->prepare(
-            "UPDATE contacts SET stav = 'NEW', operator = '', updated_at = NOW(3) WHERE id = ?"
-        )->execute([$contactId]);
+            "UPDATE contacts SET stav = 'NEW', operator = '', updated_at = NOW(3)
+             WHERE id = ? AND tenant_id = ?"
+        )->execute([$contactId, crm_tenant_id()]);
 
         // Workflow log
         $this->pdo->prepare(
@@ -896,10 +930,12 @@ final class CistickaController
             exit;
         }
 
+        // Multi-tenant filter
         $check = $this->pdo->prepare(
-            "SELECT id, stav, operator FROM contacts WHERE id = ? AND stav IN ('READY','VF_SKIP') LIMIT 1"
+            "SELECT id, stav, operator FROM contacts
+             WHERE id = ? AND stav IN ('READY','VF_SKIP') AND tenant_id = ? LIMIT 1"
         );
-        $check->execute([$contactId]);
+        $check->execute([$contactId, crm_tenant_id()]);
         $contact = $check->fetch(PDO::FETCH_ASSOC);
 
         if (!$contact) {
@@ -916,9 +952,11 @@ final class CistickaController
         $oldOperator = (string) ($contact['operator'] ?? '');
         $oldStav     = (string) ($contact['stav'] ?? '');
 
+        // Multi-tenant filter
         $this->pdo->prepare(
-            "UPDATE contacts SET stav = ?, operator = ?, updated_at = NOW(3) WHERE id = ?"
-        )->execute([$newStatus, $operatorVal, $contactId]);
+            "UPDATE contacts SET stav = ?, operator = ?, updated_at = NOW(3)
+             WHERE id = ? AND tenant_id = ?"
+        )->execute([$newStatus, $operatorVal, $contactId, crm_tenant_id()]);
 
         $this->pdo->prepare(
             "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
@@ -1008,6 +1046,7 @@ final class CistickaController
         // každý kontakt se započítá maximálně jednou (s finálním stavem).
         // FIX (5/2026): subquery hledá MAX(id) napříč všemi stavy v daném měsíci;
         // outer WHERE filtruje jen verify-like, takže kontakt po undo není počítán.
+        // Multi-tenant: filter ve vnitřní subquery (latest) podle workflow_log.tenant_id
         $sumStmt = $this->pdo->prepare(
             'SELECT
                 wl.new_status,
@@ -1021,12 +1060,14 @@ final class CistickaController
                  WHERE user_id = :uid1
                    AND YEAR(created_at)  = :yr1
                    AND MONTH(created_at) = :mo1
+                   AND tenant_id = :tid1
                  GROUP BY contact_id
              ) latest ON latest.last_id = wl.id
              WHERE wl.new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
+               AND c.tenant_id = :tid2
              GROUP BY wl.new_status, c.operator'
         );
-        $sumStmt->execute(['uid1' => $cistickaId, 'yr1' => $year, 'mo1' => $month]);
+        $sumStmt->execute(['uid1' => $cistickaId, 'yr1' => $year, 'mo1' => $month, 'tid1' => crm_tenant_id(), 'tid2' => crm_tenant_id()]);
         $sumRaw = $sumStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $summary = ['TM' => 0, 'O2' => 0, 'VF_SKIP' => 0];
@@ -1047,6 +1088,7 @@ final class CistickaController
         // přepne kontakt 3× během dne, ten den se započítá jen jednou.
         // FIX (5/2026): subquery hledá MAX(id) napříč všemi stavy v dni;
         // outer WHERE filtruje jen verify-like, takže undo se neignoruje.
+        // Multi-tenant
         $dailyStmt = $this->pdo->prepare(
             'SELECT
                 DAY(wl.created_at)          AS day,
@@ -1061,13 +1103,15 @@ final class CistickaController
                  WHERE user_id = :uid1
                    AND YEAR(created_at)  = :yr1
                    AND MONTH(created_at) = :mo1
+                   AND tenant_id = :tid1
                  GROUP BY DAY(created_at), contact_id
              ) latest ON latest.last_id = wl.id
              WHERE wl.new_status IN (\'READY\', \'VF_SKIP\', \'CHYBNY_KONTAKT\')
+               AND c.tenant_id = :tid2
              GROUP BY DAY(wl.created_at), wl.new_status, c.operator
              ORDER BY DAY(wl.created_at) ASC'
         );
-        $dailyStmt->execute(['uid1' => $cistickaId, 'yr1' => $year, 'mo1' => $month]);
+        $dailyStmt->execute(['uid1' => $cistickaId, 'yr1' => $year, 'mo1' => $month, 'tid1' => crm_tenant_id(), 'tid2' => crm_tenant_id()]);
         $dailyRaw = $dailyStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $daysInMonth = (int) date('t', mktime(0, 0, 0, $month, 1, $year));
@@ -1290,11 +1334,15 @@ final class CistickaController
     private function currentRewardRate(): ?float
     {
         try {
-            $row = $this->pdo->query(
+            // Multi-tenant: per-tenant rate
+            $stmt = $this->pdo->prepare(
                 "SELECT amount_czk FROM cisticka_rewards_config
                  WHERE valid_from <= CURDATE() AND (valid_to IS NULL OR valid_to >= CURDATE())
+                   AND tenant_id = :tid
                  ORDER BY valid_from DESC LIMIT 1"
-            )->fetchColumn();
+            );
+            $stmt->execute(['tid' => crm_tenant_id()]);
+            $row = $stmt->fetchColumn();
             return $row !== false ? (float) $row : null;
         } catch (\PDOException) {
             return null;
@@ -1447,13 +1495,14 @@ final class CistickaController
         try {
             // Načti targety POUZE pro vybraný měsíc, vč. priority.
             // Sort: priority ASC, region ASC (tie-break abecedně).
+            // Multi-tenant: per-tenant goals
             $gStmt = $this->pdo->prepare(
                 'SELECT region, monthly_target, priority
                  FROM cisticka_region_goals
-                 WHERE monthly_target > 0 AND period_yyyymm = :p
+                 WHERE monthly_target > 0 AND period_yyyymm = :p AND tenant_id = :tid
                  ORDER BY priority ASC, region ASC'
             );
-            $gStmt->execute(['p' => $period]);
+            $gStmt->execute(['p' => $period, 'tid' => crm_tenant_id()]);
             $goalRows = $gStmt->fetchAll(PDO::FETCH_ASSOC);
             if (!is_array($goalRows) || $goalRows === []) return [];
 
@@ -1472,12 +1521,14 @@ final class CistickaController
                  WHERE wl.new_status IN ('READY','VF_SKIP')
                    AND wl.created_at BETWEEN ? AND ?
                    AND c.region IN ($ph)
+                   AND c.tenant_id = ?
                  GROUP BY c.region"
             );
-            $cStmt->execute(array_merge([$mStart, $mEnd], $regions));
+            $cStmt->execute(array_merge([$mStart, $mEnd], $regions, [crm_tenant_id()]));
             $progress = $cStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
 
             // PER-USER progress (jen má část) — pro info "z toho ty: X"
+            // Multi-tenant filter
             $myStmt = $this->pdo->prepare(
                 "SELECT c.region, COUNT(DISTINCT wl.contact_id) AS my_done
                  FROM workflow_log wl
@@ -1486,9 +1537,10 @@ final class CistickaController
                    AND wl.new_status IN ('READY','VF_SKIP')
                    AND wl.created_at BETWEEN ? AND ?
                    AND c.region IN ($ph)
+                   AND c.tenant_id = ?
                  GROUP BY c.region"
             );
-            $myStmt->execute(array_merge([$cistickaId, $mStart, $mEnd], $regions));
+            $myStmt->execute(array_merge([$cistickaId, $mStart, $mEnd], $regions, [crm_tenant_id()]));
             $myProgress = $myStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
 
             foreach ($goalRows as $row) {
@@ -1532,6 +1584,7 @@ final class CistickaController
         try {
             [$mStart, $mEnd] = $this->monthRangeFromPeriod($period);
             $ph = implode(',', array_fill(0, count($regions), '?'));
+            // Multi-tenant filter
             $stmt = $this->pdo->prepare(
                 "SELECT c.region, COUNT(DISTINCT wl.contact_id) AS done
                  FROM workflow_log wl
@@ -1539,9 +1592,10 @@ final class CistickaController
                  WHERE wl.new_status IN ('READY','VF_SKIP')
                    AND wl.created_at BETWEEN ? AND ?
                    AND c.region IN ($ph)
+                   AND c.tenant_id = ?
                  GROUP BY c.region"
             );
-            $stmt->execute(array_merge([$mStart, $mEnd], $regions));
+            $stmt->execute(array_merge([$mStart, $mEnd], $regions, [crm_tenant_id()]));
             $rows = $stmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
             return is_array($rows) ? array_map('intval', $rows) : [];
         } catch (\PDOException $e) {
@@ -1579,6 +1633,7 @@ final class CistickaController
         // Najít všechny aktivní čističky a pro každou spočítat ověření v měsíci.
         // LEFT JOIN se subquery na DISTINCT contact_id → každý kontakt 1× per čistička.
         try {
+            // Multi-tenant: workflow_log tenant filter v subquery
             $cwAllStmt = $this->pdo->prepare(
                 "SELECT u.id, u.jmeno,
                         COALESCE(t.total, 0)   AS total,
@@ -1594,12 +1649,13 @@ final class CistickaController
                      WHERE new_status IN ('READY','VF_SKIP')
                        AND YEAR(created_at)  = :y
                        AND MONTH(created_at) = :m
+                       AND tenant_id = :tid
                      GROUP BY user_id
                  ) t ON t.user_id = u.id
                  WHERE u.role = 'cisticka' AND u.aktivni = 1
                  ORDER BY total DESC, u.jmeno ASC"
             );
-            $cwAllStmt->execute(['y' => $cwAdminYear, 'm' => $cwAdminMonth]);
+            $cwAllStmt->execute(['y' => $cwAdminYear, 'm' => $cwAdminMonth, 'tid' => crm_tenant_id()]);
             $cwAllCisticky = $cwAllStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -1615,11 +1671,12 @@ final class CistickaController
 
         // Načti existující cíle pro VYBRANÝ měsíc.
         // Vrátí dvě asociativní pole: region → monthly_target, region → priority.
+        // Multi-tenant: goals per-tenant
         $gStmt = $this->pdo->prepare(
             'SELECT region, monthly_target, priority FROM cisticka_region_goals
-             WHERE period_yyyymm = :p'
+             WHERE period_yyyymm = :p AND tenant_id = :tid'
         );
-        $gStmt->execute(['p' => $selectedPeriod]);
+        $gStmt->execute(['p' => $selectedPeriod, 'tid' => crm_tenant_id()]);
         $rows = $gStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $existing = [];
         $existingPriority = [];
@@ -1755,11 +1812,12 @@ final class CistickaController
 
         // Načti cíle z předchozího měsíce (period_yyyymm v DB je INT)
         try {
+            // Multi-tenant filter
             $src = $this->pdo->prepare(
                 "SELECT region, monthly_target, priority FROM cisticka_region_goals
-                 WHERE period_yyyymm = :p"
+                 WHERE period_yyyymm = :p AND tenant_id = :tid"
             );
-            $src->execute(['p' => $prevPeriod]);
+            $src->execute(['p' => $prevPeriod, 'tid' => crm_tenant_id()]);
             $prevRows = $src->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\Throwable $e) {
             if (function_exists('crm_db_log_error')) crm_db_log_error($e, __METHOD__);
@@ -1924,6 +1982,7 @@ final class CistickaController
         // řádek = NEW) se ve výplatě nezobrazí a NEPOČÍTÁ se do odměny.
         // Bez tohoto fixu se výplata navyšovala i za kontakty, které čistička
         // vrátila zpět do NEW.
+        // Multi-tenant filter
         $sqlEvents = $this->pdo->prepare(
             "SELECT c.id            AS contact_id,
                     c.firma,
@@ -1939,16 +1998,19 @@ final class CistickaController
                  WHERE user_id = :uid1
                    AND YEAR(created_at)  = :y
                    AND MONTH(created_at) = :m
+                   AND tenant_id = :tid1
                  GROUP BY contact_id
              ) last_per_contact ON last_per_contact.last_id = wl.id
              INNER JOIN contacts c ON c.id = wl.contact_id
              WHERE wl.user_id = :uid2
                AND wl.new_status IN ('READY', 'VF_SKIP', 'CHYBNY_KONTAKT')
+               AND c.tenant_id = :tid2
              ORDER BY wl.created_at DESC, c.id DESC"
         );
         $sqlEvents->execute([
             'uid1' => $cistickaId, 'uid2' => $cistickaId,
             'y'    => $year,        'm'    => $month,
+            'tid1' => crm_tenant_id(), 'tid2' => crm_tenant_id(),
         ]);
         $events = $sqlEvents->fetchAll(PDO::FETCH_ASSOC) ?: [];
 

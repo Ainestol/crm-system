@@ -21,22 +21,44 @@ final class AdminUsersController
     {
         $actor = $this->actor();
 
-        $sql = 'SELECT id, jmeno, email, role, aktivni, primary_region, created_at, deactivated_at FROM users';
+        // Multi-tenant: zobrazit jen uživatele aktuálního tenantu (přes user_tenants mapping).
+        // Super-admin se přepíná dropdownem v topbaru a vidí JEN tenant, na kterém je právě.
+        // Uživatelé z jiných firem jsou skrytí.
+        $tid = crm_tenant_id();
+
+        $sql = "SELECT u.id, u.jmeno, u.email, u.role, u.aktivni, u.primary_region, u.created_at, u.deactivated_at,
+                       ut.role AS tenant_role
+                FROM users u
+                INNER JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1";
         if (($actor['role'] ?? '') === 'majitel') {
-            $sql .= " WHERE role <> 'superadmin'";
+            $sql .= " WHERE u.role <> 'superadmin'";
         }
-        $sql .= ' ORDER BY aktivni DESC, jmeno ASC';
-        $users = $this->pdo->query($sql)->fetchAll();
+        $sql .= ' ORDER BY u.aktivni DESC, u.jmeno ASC';
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute(['tid' => $tid]);
+        $users = $stmt->fetchAll();
         if (!is_array($users)) {
             $users = [];
         }
 
-        $callers = $this->pdo->query(
-            "SELECT id, jmeno FROM users WHERE aktivni = 1 AND role = 'navolavacka' ORDER BY jmeno ASC"
-        )->fetchAll();
-        $salesmen = $this->pdo->query(
-            "SELECT id, jmeno FROM users WHERE aktivni = 1 AND role = 'obchodak' ORDER BY jmeno ASC"
-        )->fetchAll();
+        // Per-tenant: callers + salesmen pro select boxy (přiřazení regionu/atd.)
+        $callersStmt = $this->pdo->prepare(
+            "SELECT u.id, u.jmeno FROM users u
+             INNER JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1
+             WHERE u.aktivni = 1 AND u.role = 'navolavacka'
+             ORDER BY u.jmeno ASC"
+        );
+        $callersStmt->execute(['tid' => $tid]);
+        $callers = $callersStmt->fetchAll();
+
+        $salesmenStmt = $this->pdo->prepare(
+            "SELECT u.id, u.jmeno FROM users u
+             INNER JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1
+             WHERE u.aktivni = 1 AND u.role = 'obchodak'
+             ORDER BY u.jmeno ASC"
+        );
+        $salesmenStmt->execute(['tid' => $tid]);
+        $salesmen = $salesmenStmt->fetchAll();
         if (!is_array($callers)) {
             $callers = [];
         }
@@ -135,6 +157,24 @@ final class AdminUsersController
             ]);
             $newId = (int) $this->pdo->lastInsertId();
             $this->syncRegions($newId, $regions);
+
+            // Multi-tenant: automaticky mapuj nového uživatele do aktuálního tenantu.
+            // Bez tohoto by user nemohl projít loginem (crm_auth_finish_login vyžaduje
+            // záznam v user_tenants pro daný tenant).
+            $tidNew = crm_tenant_id();
+            if ($tidNew > 0) {
+                $mapStmt = $this->pdo->prepare(
+                    'INSERT IGNORE INTO user_tenants (user_id, tenant_id, role, roles_extra, active)
+                     VALUES (:u, :t, :r, :re, 1)'
+                );
+                $mapStmt->execute([
+                    'u'  => $newId,
+                    't'  => $tidNew,
+                    'r'  => $role,
+                    're' => $rolesExtraJson,
+                ]);
+            }
+
             $this->pdo->commit();
         } catch (Throwable $e) {
             $this->pdo->rollBack();
@@ -144,6 +184,13 @@ final class AdminUsersController
         }
 
         crm_audit_log($this->pdo, $actorId, 'user_create', 'user', $newId, ['email' => $email, 'role' => $role]);
+
+        // Activity log — vytvořen nový uživatel
+        crm_activity_log_record(
+            $this->pdo, $actorId, 'admin.user_created', 'user', $newId,
+            ['email' => $email, 'role' => $role]
+        );
+
         $mailOk = crm_mail_welcome_user($email, $jmeno, $plain);
         if (!$mailOk) {
             // SMTP zatím nenastaveno — ukaž heslo adminovi, ať ho může předat ručně
@@ -248,6 +295,21 @@ final class AdminUsersController
                 'cb' => $actorId,
             ]);
             $newId = (int) $this->pdo->lastInsertId();
+
+            // Multi-tenant: mapuj testovací účet do aktuálního tenantu (= ten, do kterého
+            // jsi přepnutý jako super-admin). Test účet patří kontextové firmě.
+            $tidTest = crm_tenant_id();
+            if ($tidTest > 0) {
+                $this->pdo->prepare(
+                    'INSERT IGNORE INTO user_tenants (user_id, tenant_id, role, roles_extra, active)
+                     VALUES (:u, :t, :r, :re, 1)'
+                )->execute([
+                    'u'  => $newId,
+                    't'  => $tidTest,
+                    'r'  => $role,
+                    're' => $rolesExtraJson,
+                ]);
+            }
         } catch (Throwable $e) {
             error_log('[AdminUsers::postNewTest] ' . $e->getMessage() . ' | ' . $e->getFile() . ':' . $e->getLine());
             crm_flash_set('Vytvoření testovacího účtu se nezdařilo. Detail: ' . $e->getMessage());

@@ -39,8 +39,9 @@ final class AdminPremiumOverviewController
         // ── Filtr: ?oz_id=N (default all) ──
         $ozFilter = (int) ($_GET['oz_id'] ?? 0);
 
-        $where  = ['1=1'];
-        $params = [];
+        // Multi-tenant: vždy filtrujeme přes aktuální tenant
+        $where  = ['po.tenant_id = :tid'];
+        $params = ['tid' => crm_tenant_id()];
         if ($statusFilter !== 'all') {
             $where[] = 'po.status = :status';
             $params['status'] = $statusFilter;
@@ -52,18 +53,19 @@ final class AdminPremiumOverviewController
         $whereSql = 'WHERE ' . implode(' AND ', $where);
 
         // ── Hlavní tabulka objednávek ──
+        // Subqueries vážou tenant_id přes po.tenant_id (defence in depth)
         $sql = "SELECT po.*,
                        u_oz.jmeno    AS oz_name,
                        u_pc.jmeno    AS preferred_caller_name,
                        u_pcb.jmeno   AS paid_cleaner_by_name,
                        u_pcr.jmeno   AS paid_caller_by_name,
-                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id) AS pool_total,
-                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.cleaning_status = 'pending') AS pool_pending,
-                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.cleaning_status = 'tradeable') AS pool_tradeable,
-                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.cleaning_status = 'non_tradeable') AS pool_non_tradeable,
-                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.call_status = 'success') AS pool_called_success,
-                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.cleaning_status IN ('tradeable','non_tradeable') AND p.flagged_for_refund = 0) AS payable_to_cleaner,
-                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.cleaning_status = 'tradeable' AND p.call_status = 'success' AND p.flagged_for_refund = 0) AS payable_to_caller
+                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.tenant_id = po.tenant_id) AS pool_total,
+                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.tenant_id = po.tenant_id AND p.cleaning_status = 'pending') AS pool_pending,
+                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.tenant_id = po.tenant_id AND p.cleaning_status = 'tradeable') AS pool_tradeable,
+                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.tenant_id = po.tenant_id AND p.cleaning_status = 'non_tradeable') AS pool_non_tradeable,
+                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.tenant_id = po.tenant_id AND p.call_status = 'success') AS pool_called_success,
+                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.tenant_id = po.tenant_id AND p.cleaning_status IN ('tradeable','non_tradeable') AND p.flagged_for_refund = 0) AS payable_to_cleaner,
+                       (SELECT COUNT(*) FROM premium_lead_pool p WHERE p.order_id = po.id AND p.tenant_id = po.tenant_id AND p.cleaning_status = 'tradeable' AND p.call_status = 'success' AND p.flagged_for_refund = 0) AS payable_to_caller
                 FROM premium_orders po
                 JOIN users u_oz       ON u_oz.id = po.oz_id
                 LEFT JOIN users u_pc  ON u_pc.id  = po.preferred_caller_id
@@ -76,8 +78,9 @@ final class AdminPremiumOverviewController
         $stmt->execute($params);
         $orders = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-        // ── Globální statistiky (přes celou DB, nezávisle na filtru) ──
-        $statsStmt = $this->pdo->query(
+        // ── Globální statistiky (přes celý tenant) ──
+        // Multi-tenant filter
+        $statsStmt = $this->pdo->prepare(
             "SELECT
                 COUNT(*) AS orders_total,
                 SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS orders_open,
@@ -85,11 +88,14 @@ final class AdminPremiumOverviewController
                 SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS orders_cancelled,
                 SUM(requested_count) AS leads_ordered_total,
                 SUM(reserved_count)  AS leads_reserved_total
-             FROM premium_orders"
+             FROM premium_orders
+             WHERE tenant_id = :tid"
         );
-        $stats = $statsStmt ? $statsStmt->fetch(PDO::FETCH_ASSOC) : [];
+        $statsStmt->execute(['tid' => crm_tenant_id()]);
+        $stats = $statsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
-        $poolStatsStmt = $this->pdo->query(
+        // Multi-tenant filter
+        $poolStatsStmt = $this->pdo->prepare(
             "SELECT
                 COUNT(*) AS pool_total,
                 SUM(cleaning_status = 'pending') AS cleaning_pending,
@@ -98,22 +104,27 @@ final class AdminPremiumOverviewController
                 SUM(call_status = 'success') AS call_success,
                 SUM(call_status = 'failed') AS call_failed,
                 SUM(flagged_for_refund = 1) AS flagged_refund
-             FROM premium_lead_pool"
+             FROM premium_lead_pool
+             WHERE tenant_id = :tid"
         );
-        $poolStats = $poolStatsStmt ? $poolStatsStmt->fetch(PDO::FETCH_ASSOC) : [];
+        $poolStatsStmt->execute(['tid' => crm_tenant_id()]);
+        $poolStats = $poolStatsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
         // ── Sumy plateb (kdo komu kolik dluží/zaplatil) ──
-        $moneyStmt = $this->pdo->query(
+        // Multi-tenant filter (outer + subqueries vážou tenant_id přes po.tenant_id)
+        $moneyStmt = $this->pdo->prepare(
             "SELECT
                 SUM(po.price_per_lead *
                     (SELECT COUNT(*) FROM premium_lead_pool p
                        WHERE p.order_id = po.id
+                         AND p.tenant_id = po.tenant_id
                          AND p.cleaning_status IN ('tradeable','non_tradeable')
                          AND p.flagged_for_refund = 0)
                 ) AS due_to_cleaner_total,
                 SUM(po.caller_bonus_per_lead *
                     (SELECT COUNT(*) FROM premium_lead_pool p
                        WHERE p.order_id = po.id
+                         AND p.tenant_id = po.tenant_id
                          AND p.cleaning_status = 'tradeable'
                          AND p.call_status = 'success'
                          AND p.flagged_for_refund = 0)
@@ -122,6 +133,7 @@ final class AdminPremiumOverviewController
                          THEN po.price_per_lead *
                               (SELECT COUNT(*) FROM premium_lead_pool p
                                  WHERE p.order_id = po.id
+                                   AND p.tenant_id = po.tenant_id
                                    AND p.cleaning_status IN ('tradeable','non_tradeable')
                                    AND p.flagged_for_refund = 0)
                          ELSE 0 END) AS paid_to_cleaner_total,
@@ -129,21 +141,30 @@ final class AdminPremiumOverviewController
                          THEN po.caller_bonus_per_lead *
                               (SELECT COUNT(*) FROM premium_lead_pool p
                                  WHERE p.order_id = po.id
+                                   AND p.tenant_id = po.tenant_id
                                    AND p.cleaning_status = 'tradeable'
                                    AND p.call_status = 'success'
                                    AND p.flagged_for_refund = 0)
                          ELSE 0 END) AS paid_to_caller_total
-             FROM premium_orders po"
+             FROM premium_orders po
+             WHERE po.tenant_id = :tid"
         );
-        $money = $moneyStmt ? $moneyStmt->fetch(PDO::FETCH_ASSOC) : [];
+        $moneyStmt->execute(['tid' => crm_tenant_id()]);
+        $money = $moneyStmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
         // ── OZ list pro filter dropdown ──
-        $ozListStmt = $this->pdo->query(
+        // Multi-tenant filter (premium_orders + ověření user patří k tenantu)
+        $ozListStmt = $this->pdo->prepare(
             "SELECT DISTINCT u.id, u.jmeno
-             FROM premium_orders po JOIN users u ON u.id = po.oz_id
+             FROM premium_orders po
+             JOIN users u ON u.id = po.oz_id
+             INNER JOIN user_tenants ut
+                 ON ut.user_id = u.id AND ut.tenant_id = :tid_u AND ut.active = 1
+             WHERE po.tenant_id = :tid_po
              ORDER BY u.jmeno ASC"
         );
-        $ozList = $ozListStmt ? $ozListStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+        $ozListStmt->execute(['tid_u' => crm_tenant_id(), 'tid_po' => crm_tenant_id()]);
+        $ozList = $ozListStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $title = '💎 Premium pipeline — admin přehled';
         $csrf  = crm_csrf_token();

@@ -63,14 +63,17 @@ final class PremiumCallerController
 
         // Auto-promote NEDOVOLANO ≥ 3× → NEZAJEM (stejně jako /caller)
         try {
-            $this->pdo->exec(
+            // Multi-tenant filter v auto-promote
+            $autoPromoteStmt = $this->pdo->prepare(
                 "UPDATE contacts c
                  JOIN premium_lead_pool p ON p.contact_id = c.id
                  SET c.stav = 'NEZAJEM', c.updated_at = NOW(3)
                  WHERE c.stav = 'NEDOVOLANO'
                    AND c.nedovolano_count >= " . self::MAX_NEDOVOLANO . "
-                   AND p.cleaning_status = 'tradeable'"
+                   AND p.cleaning_status = 'tradeable'
+                   AND c.tenant_id = :tid"
             );
+            $autoPromoteStmt->execute(['tid' => crm_tenant_id()]);
         } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
 
         // Tab badges
@@ -90,18 +93,20 @@ final class PremiumCallerController
              WHERE p.caller_id = :cid AND p.call_status = 'success'
                AND p.cleaning_status = 'tradeable' AND p.flagged_for_refund = 0
                AND po.caller_bonus_per_lead > 0
-               AND YEAR(p.called_at) = :y AND MONTH(p.called_at) = :m"
+               AND YEAR(p.called_at) = :y AND MONTH(p.called_at) = :m
+               AND po.tenant_id = :tid"
         );
-        $bonusStmt->execute(['cid' => $callerId, 'y' => $year, 'm' => $month]);
+        $bonusStmt->execute(['cid' => $callerId, 'y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
         $bonusRow = $bonusStmt->fetch(PDO::FETCH_ASSOC);
         $monthBonus      = (float) ($bonusRow['bonus_czk'] ?? 0);
         $monthBonusCount = (int)   ($bonusRow['bonus_count'] ?? 0);
 
         $todayStmt = $this->pdo->prepare(
             "SELECT COUNT(*) FROM premium_lead_pool
-             WHERE caller_id = :cid AND call_status = 'success' AND DATE(called_at) = CURDATE()"
+             WHERE caller_id = :cid AND call_status = 'success' AND DATE(called_at) = CURDATE()
+               AND tenant_id = :tid"
         );
-        $todayStmt->execute(['cid' => $callerId]);
+        $todayStmt->execute(['cid' => $callerId, 'tid' => crm_tenant_id()]);
         $todayWins = (int) $todayStmt->fetchColumn();
 
         $title = '💎 Premium navolávky';
@@ -185,10 +190,14 @@ final class PremiumCallerController
                 JOIN contacts c        ON c.id  = p.contact_id
                 WHERE p.cleaning_status = 'tradeable'
                   AND po.status IN ('open', 'closed')
+                  AND po.tenant_id = :tid_tc
                   $accSql";
 
         $stmt = $this->pdo->prepare($sql);
-        $stmt->execute(array_merge(['max_nedo' => self::MAX_NEDOVOLANO], $accParams));
+        $stmt->execute(array_merge(
+            ['max_nedo' => self::MAX_NEDOVOLANO, 'tid_tc' => crm_tenant_id()],
+            $accParams
+        ));
         $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
         // Objednavky badge: počet objednávek s alespoň 1 callable lead (nezávisí na contacts.stav)
@@ -199,6 +208,7 @@ final class PremiumCallerController
              JOIN contacts c        ON c.id  = p.contact_id
              WHERE p.cleaning_status = 'tradeable'
                AND po.status IN ('open', 'closed')
+               AND po.tenant_id = :tid_obj
                AND (
                    (p.call_status = 'pending'
                     AND (c.stav IS NULL OR c.stav NOT IN ('CALLED_OK','FOR_SALES','NEZAJEM','CALLED_BAD','IZOLACE','CHYBNY_KONTAKT')))
@@ -207,7 +217,10 @@ final class PremiumCallerController
                )
                $accSql"
         );
-        $objStmt->execute(array_merge(['max_nedo3' => self::MAX_NEDOVOLANO], $accParams));
+        $objStmt->execute(array_merge(
+            ['max_nedo3' => self::MAX_NEDOVOLANO, 'tid_obj' => crm_tenant_id()],
+            $accParams
+        ));
         $row['objednavky'] = (int) $objStmt->fetchColumn();
 
         return array_map('intval', $row);
@@ -255,6 +268,7 @@ final class PremiumCallerController
                 JOIN users u_oz ON u_oz.id = po.oz_id
                 LEFT JOIN users u_pc ON u_pc.id = po.preferred_caller_id
                 WHERE po.status IN ('open', 'closed')
+                  AND po.tenant_id = :tid_load
                   AND EXISTS (
                       SELECT 1 FROM premium_lead_pool p
                       JOIN contacts c ON c.id = p.contact_id
@@ -265,9 +279,10 @@ final class PremiumCallerController
                          callable_count DESC,
                          po.created_at ASC";
 
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute(array_merge(
-            ['cid_done' => $callerId, 'cid_priority' => $callerId],
+            ['cid_done' => $callerId, 'cid_priority' => $callerId, 'tid_load' => crm_tenant_id()],
             $accParams
         ));
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -289,6 +304,7 @@ final class PremiumCallerController
             default             => 'ORDER BY c.id ASC',
         };
 
+        // Multi-tenant filter
         $sql = "SELECT p.id AS pool_id, p.contact_id, p.call_status, p.caller_id, p.called_at,
                        po.id AS order_id, po.oz_id, po.caller_bonus_per_lead, po.status AS order_status,
                        u_oz.jmeno AS oz_name,
@@ -303,13 +319,14 @@ final class PremiumCallerController
                 LEFT JOIN users u_call ON u_call.id = p.caller_id
                 WHERE p.cleaning_status = 'tradeable'
                   AND po.status IN ('open', 'closed')
+                  AND po.tenant_id = :tid_load
                   AND ($tabSql)
                   $accSql
                 $orderBy
                 LIMIT 200";
 
         $stmt = $this->pdo->prepare($sql);
-        $stmt->execute(array_merge($tabParams, $accParams));
+        $stmt->execute(array_merge($tabParams, $accParams, ['tid_load' => crm_tenant_id()]));
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
 
@@ -338,20 +355,21 @@ final class PremiumCallerController
                  WHERE c.stav = 'NEDOVOLANO'
                    AND c.nedovolano_count >= " . self::MAX_NEDOVOLANO . "
                    AND p.cleaning_status = 'tradeable'
-                   AND p.order_id = :oid"
+                   AND p.order_id = :oid
+                   AND c.tenant_id = :tid"
             );
-            $stmt->execute(['oid' => $orderId]);
+            $stmt->execute(['oid' => $orderId, 'tid' => crm_tenant_id()]);
         } catch (\PDOException $e) { crm_db_log_error($e, __METHOD__); }
 
-        // Hlavička objednávky
+        // Hlavička objednávky — multi-tenant
         $oStmt = $this->pdo->prepare(
             "SELECT po.*, u_oz.jmeno AS oz_name, u_pc.jmeno AS preferred_caller_name
              FROM premium_orders po
              JOIN users u_oz ON u_oz.id = po.oz_id
              LEFT JOIN users u_pc ON u_pc.id = po.preferred_caller_id
-             WHERE po.id = :id LIMIT 1"
+             WHERE po.id = :id AND po.tenant_id = :tid LIMIT 1"
         );
-        $oStmt->execute(['id' => $orderId]);
+        $oStmt->execute(['id' => $orderId, 'tid' => crm_tenant_id()]);
         $order = $oStmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$order) {
@@ -392,6 +410,7 @@ final class PremiumCallerController
     {
         // Stejná logika jako computeTabCounts: K-volání primárně přes call_status='pending',
         // callbacky/nedovolano přes contacts.stav, navolané/prohra přes obojí.
+        // Multi-tenant filter
         $sql = "SELECT
                   SUM(CASE WHEN p.call_status = 'pending'
                             AND (c.stav IS NULL OR c.stav NOT IN ('CALLBACK','NEDOVOLANO','CALLED_OK','FOR_SALES','NEZAJEM','CALLED_BAD'))
@@ -405,10 +424,10 @@ final class PremiumCallerController
                             THEN 1 ELSE 0 END)                                             AS prohra
                 FROM premium_lead_pool p
                 JOIN contacts c ON c.id = p.contact_id
-                WHERE p.order_id = :oid AND p.cleaning_status = 'tradeable'";
+                WHERE p.order_id = :oid AND p.cleaning_status = 'tradeable' AND p.tenant_id = :tid";
 
         $stmt = $this->pdo->prepare($sql);
-        $stmt->execute(['oid' => $orderId, 'max_nedo' => self::MAX_NEDOVOLANO]);
+        $stmt->execute(['oid' => $orderId, 'max_nedo' => self::MAX_NEDOVOLANO, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
         return array_map('intval', $row);
     }
@@ -428,6 +447,7 @@ final class PremiumCallerController
             default             => 'ORDER BY c.id ASC',
         };
 
+        // Multi-tenant filter
         $sql = "SELECT p.id AS pool_id, p.contact_id, p.call_status, p.caller_id, p.called_at,
                        u_call.jmeno AS caller_name,
                        c.firma, c.telefon, c.email, c.region, c.operator, c.prilez,
@@ -436,12 +456,12 @@ final class PremiumCallerController
                 FROM premium_lead_pool p
                 JOIN contacts c ON c.id = p.contact_id
                 LEFT JOIN users u_call ON u_call.id = p.caller_id
-                WHERE p.order_id = :oid AND p.cleaning_status = 'tradeable'
+                WHERE p.order_id = :oid AND p.cleaning_status = 'tradeable' AND p.tenant_id = :tid_ord
                   AND ($tabSql)
                 $orderBy
                 LIMIT 200";
 
-        $params = array_merge(['oid' => $orderId], $tabParams);
+        $params = array_merge(['oid' => $orderId, 'tid_ord' => crm_tenant_id()], $tabParams);
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -482,16 +502,16 @@ final class PremiumCallerController
             crm_redirect('/caller/premium');
         }
 
-        // Načíst pool řádek + ověřit oprávnění
+        // Načíst pool řádek + ověřit oprávnění — multi-tenant
         $stmt = $this->pdo->prepare(
             "SELECT p.id, p.contact_id, p.order_id, p.cleaning_status, p.call_status,
                     po.oz_id, po.preferred_caller_id, po.status AS order_status,
                     po.caller_bonus_per_lead
              FROM premium_lead_pool p
              JOIN premium_orders po ON po.id = p.order_id
-             WHERE p.id = :id LIMIT 1"
+             WHERE p.id = :id AND p.tenant_id = :tid LIMIT 1"
         );
-        $stmt->execute(['id' => $poolId]);
+        $stmt->execute(['id' => $poolId, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$row || (int) $row['contact_id'] !== $contactId) {
@@ -570,8 +590,10 @@ final class PremiumCallerController
                 // Final loss — counter můžeme resetovat (lead je definitivně mrtvý)
                 $contactSql .= ", nedovolano_count = 0";
             }
-            $contactSql .= " WHERE id = :id";
+            // Multi-tenant defense in depth
+            $contactSql .= " WHERE id = :id AND tenant_id = :tid";
             $contactParams['id'] = $contactId;
+            $contactParams['tid'] = crm_tenant_id();
 
             $this->pdo->prepare($contactSql)->execute($contactParams);
 
@@ -584,16 +606,19 @@ final class PremiumCallerController
                      SET call_status = :st,
                          caller_id   = :cid,
                          called_at   = NOW(3)
-                     WHERE id = :id"
-                )->execute(['st' => $callStatus, 'cid' => $callerId, 'id' => $poolId]);
+                     WHERE id = :id AND tenant_id = :tid"
+                )->execute([
+                    'st' => $callStatus, 'cid' => $callerId, 'id' => $poolId,
+                    'tid' => crm_tenant_id(),
+                ]);
             } else {
                 // Callback — jen nastavit caller_id (kdo volal naposled), called_at, ale status zustává pending
                 $this->pdo->prepare(
                     "UPDATE premium_lead_pool
                      SET caller_id = :cid,
                          called_at = NOW(3)
-                     WHERE id = :id"
-                )->execute(['cid' => $callerId, 'id' => $poolId]);
+                     WHERE id = :id AND tenant_id = :tid"
+                )->execute(['cid' => $callerId, 'id' => $poolId, 'tid' => crm_tenant_id()]);
             }
 
             // 3) Workflow log
@@ -635,6 +660,20 @@ final class PremiumCallerController
             ]
         );
 
+        // Activity log — premium call result
+        $premiumAction = match ($action) {
+            'success'                                => 'call.premium_success',
+            'nezajem', 'called_bad', 'nedovolano'    => 'call.premium_failed',
+            'callback'                               => 'call.callback_scheduled',
+            default                                  => null,
+        };
+        if ($premiumAction !== null) {
+            crm_activity_log_record(
+                $this->pdo, $callerId, $premiumAction, 'premium_lead_pool', $poolId,
+                ['order_id' => $orderId, 'contact_id' => $contactId, 'action' => $action]
+            );
+        }
+
         $msg = match ($action) {
             'success'    => '🎉 Úspěšně navoláno! Lead předán OZ.',
             'callback'   => '📅 Callback domluven.',
@@ -673,11 +712,15 @@ final class PremiumCallerController
         $orderId = (int) ($_GET['order_id'] ?? 0);
         $singleOrder = $orderId > 0;
 
-        // Info o navolávačce
+        // Info o navolávačce — multi-tenant ověření přes user_tenants
         $uStmt = $this->pdo->prepare(
-            "SELECT id, jmeno FROM users WHERE id = :id LIMIT 1"
+            "SELECT u.id, u.jmeno
+             FROM users u
+             INNER JOIN user_tenants ut
+                 ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1
+             WHERE u.id = :id LIMIT 1"
         );
-        $uStmt->execute(['id' => $callerId]);
+        $uStmt->execute(['id' => $callerId, 'tid' => crm_tenant_id()]);
         $caller = $uStmt->fetch(PDO::FETCH_ASSOC);
         if (!$caller) {
             http_response_code(404);
@@ -688,6 +731,7 @@ final class PremiumCallerController
         // Hlavička objednávky pro single-order mode
         $singleOrderHeader = null;
         if ($singleOrder) {
+            // Multi-tenant filter
             $oStmt = $this->pdo->prepare(
                 "SELECT po.id, po.year, po.month, po.requested_count, po.reserved_count,
                         po.caller_bonus_per_lead, po.status, po.note,
@@ -695,9 +739,9 @@ final class PremiumCallerController
                         u_oz.jmeno AS oz_name
                  FROM premium_orders po
                  JOIN users u_oz ON u_oz.id = po.oz_id
-                 WHERE po.id = :id LIMIT 1"
+                 WHERE po.id = :id AND po.tenant_id = :tid LIMIT 1"
             );
-            $oStmt->execute(['id' => $orderId]);
+            $oStmt->execute(['id' => $orderId, 'tid' => crm_tenant_id()]);
             $singleOrderHeader = $oStmt->fetch(PDO::FETCH_ASSOC) ?: null;
             if (!$singleOrderHeader) {
                 http_response_code(404);
@@ -743,8 +787,9 @@ final class PremiumCallerController
                 JOIN contacts c       ON c.id = p.contact_id
                 WHERE p.caller_id = :uid
                   AND p.call_status = 'success'
-                  AND p.cleaning_status = 'tradeable'";
-        $params = ['uid' => $callerId];
+                  AND p.cleaning_status = 'tradeable'
+                  AND p.tenant_id = :tid";
+        $params = ['uid' => $callerId, 'tid' => crm_tenant_id()];
         if ($singleOrder) {
             $sql .= " AND po.id = :oid";
             $params['oid'] = $orderId;
@@ -824,24 +869,28 @@ final class PremiumCallerController
 
         if ($orderIds !== []) {
             $ph = implode(',', array_fill(0, count($orderIds), '?'));
+            // Multi-tenant filter — subqueries i hlavní WHERE
             $funnelStmt = $this->pdo->prepare(
                 "SELECT po.id,
                         po.requested_count,
                         po.reserved_count,
                         (SELECT COUNT(*) FROM premium_lead_pool p
                            WHERE p.order_id = po.id
-                             AND p.cleaning_status IN ('tradeable','non_tradeable')) AS cleaned_total,
-                        (SELECT COUNT(*) FROM premium_lead_pool p
-                           WHERE p.order_id = po.id
-                             AND p.cleaning_status = 'tradeable') AS tradeable_total,
+                             AND p.cleaning_status IN ('tradeable','non_tradeable')
+                             AND p.tenant_id = po.tenant_id) AS cleaned_total,
                         (SELECT COUNT(*) FROM premium_lead_pool p
                            WHERE p.order_id = po.id
                              AND p.cleaning_status = 'tradeable'
-                             AND p.call_status = 'success') AS called_success
+                             AND p.tenant_id = po.tenant_id) AS tradeable_total,
+                        (SELECT COUNT(*) FROM premium_lead_pool p
+                           WHERE p.order_id = po.id
+                             AND p.cleaning_status = 'tradeable'
+                             AND p.call_status = 'success'
+                             AND p.tenant_id = po.tenant_id) AS called_success
                  FROM premium_orders po
-                 WHERE po.id IN ($ph)"
+                 WHERE po.id IN ($ph) AND po.tenant_id = ?"
             );
-            $funnelStmt->execute($orderIds);
+            $funnelStmt->execute(array_merge($orderIds, [crm_tenant_id()]));
             $funnelData = [];
             foreach ($funnelStmt->fetchAll(PDO::FETCH_ASSOC) as $f) {
                 $funnelData[(int) $f['id']] = $f;

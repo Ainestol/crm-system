@@ -90,10 +90,12 @@ final class PremiumCistickaController
              LEFT JOIN users u_pc  ON u_pc.id  = po.preferred_caller_id
              LEFT JOIN users u_acc ON u_acc.id = po.accepted_by_cleaner_id
              WHERE po.status = 'open'
+               AND po.tenant_id = :tid
              $accessSql
              ORDER BY pending_count DESC, po.created_at ASC"
         );
-        $params = [];
+        // Multi-tenant filter
+        $params = ['tid' => crm_tenant_id()];
         if (!$isAdmin) $params['cid_acc'] = $cistickaId;
         $stmt->execute($params);
         $orders = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -124,6 +126,7 @@ final class PremiumCistickaController
              FROM premium_orders po
              JOIN users u_oz ON u_oz.id = po.oz_id
              WHERE po.status IN ('closed','cancelled')
+               AND po.tenant_id = :tid
                AND EXISTS (
                    SELECT 1 FROM premium_lead_pool p
                    WHERE p.order_id = po.id AND p.cleaner_id = :uid4
@@ -135,6 +138,7 @@ final class PremiumCistickaController
             'uid2' => $cistickaId,
             'uid3' => $cistickaId,
             'uid4' => $cistickaId,
+            'tid'  => crm_tenant_id(),
         ]);
         $closedOrders = $closedStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
@@ -145,9 +149,9 @@ final class PremiumCistickaController
                 SUM(CASE WHEN cleaning_status = 'non_tradeable' THEN 1 ELSE 0 END) AS non_tradeable_today,
                 COUNT(*) AS total_today
              FROM premium_lead_pool
-             WHERE cleaner_id = :uid AND DATE(cleaned_at) = CURDATE()"
+             WHERE cleaner_id = :uid AND DATE(cleaned_at) = CURDATE() AND tenant_id = :tid"
         );
-        $todayStmt->execute(['uid' => $cistickaId]);
+        $todayStmt->execute(['uid' => $cistickaId, 'tid' => crm_tenant_id()]);
         $todayStats = $todayStmt->fetch(PDO::FETCH_ASSOC)
             ?: ['tradeable_today' => 0, 'non_tradeable_today' => 0, 'total_today' => 0];
 
@@ -162,9 +166,10 @@ final class PremiumCistickaController
                AND p.cleaning_status IN ('tradeable','non_tradeable')
                AND p.flagged_for_refund = 0
                AND YEAR(p.cleaned_at)  = :y
-               AND MONTH(p.cleaned_at) = :m"
+               AND MONTH(p.cleaned_at) = :m
+               AND po.tenant_id = :tid"
         );
-        $earnStmt->execute(['uid' => $cistickaId, 'y' => $year, 'm' => $month]);
+        $earnStmt->execute(['uid' => $cistickaId, 'y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
         $monthEarned = (float) ($earnStmt->fetchColumn() ?: 0);
 
         $title = '💎 Pracovní plocha 2 — Premium';
@@ -217,9 +222,10 @@ final class PremiumCistickaController
                      accepted_at            = NOW(3)
                  WHERE id = :id
                    AND status = 'open'
-                   AND accepted_by_cleaner_id IS NULL"
+                   AND accepted_by_cleaner_id IS NULL
+                   AND tenant_id = :tid"
             );
-            $stmt->execute(['cid' => $cistickaId, 'id' => $orderId]);
+            $stmt->execute(['cid' => $cistickaId, 'id' => $orderId, 'tid' => crm_tenant_id()]);
             $accepted = $stmt->rowCount() > 0;
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -270,14 +276,15 @@ final class PremiumCistickaController
         }
 
         // Načíst hlavičku objednávky
+        // Multi-tenant
         $oStmt = $this->pdo->prepare(
             "SELECT po.*, u_oz.jmeno AS oz_name, u_pc.jmeno AS preferred_caller_name
              FROM premium_orders po
              JOIN users u_oz ON u_oz.id = po.oz_id
              LEFT JOIN users u_pc ON u_pc.id = po.preferred_caller_id
-             WHERE po.id = :id LIMIT 1"
+             WHERE po.id = :id AND po.tenant_id = :tid LIMIT 1"
         );
-        $oStmt->execute(['id' => $orderId]);
+        $oStmt->execute(['id' => $orderId, 'tid' => crm_tenant_id()]);
         $order = $oStmt->fetch(PDO::FETCH_ASSOC);
         if (!$order) {
             crm_flash_set('⚠ Objednávka nenalezena.');
@@ -300,10 +307,10 @@ final class PremiumCistickaController
                     p.contact_id,
                     p.cleaning_status,
                     p.cleaned_at,
-                    c.firma, c.ico, c.telefon, c.email, c.region, c.operator, c.prilez
+                    c.firma, c.ico, c.telefon, c.email, c.region, c.operator, c.prilez, c.prilez_do
              FROM premium_lead_pool p
              JOIN contacts c ON c.id = p.contact_id
-             WHERE p.order_id = :oid
+             WHERE p.order_id = :oid AND c.tenant_id = :tid
              ORDER BY
                  CASE p.cleaning_status
                      WHEN 'pending'       THEN 1
@@ -312,7 +319,7 @@ final class PremiumCistickaController
                  END,
                  c.id ASC"
         );
-        $pStmt->execute(['oid' => $orderId]);
+        $pStmt->execute(['oid' => $orderId, 'tid' => crm_tenant_id()]);
         $leads = $pStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         // Aggregované počty podle cleaning_status (pro modal v hlavičce + summary)
@@ -332,6 +339,74 @@ final class PremiumCistickaController
         require dirname(__DIR__) . '/views/cisticka/premium/order.php';
         $content = (string) ob_get_clean();
         require dirname(__DIR__) . '/views/layout/base.php';
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  POST /cisticka/premium/prilez — čistička zapíše/upraví příležitost
+    //  kontaktu (stejné pole `prilez` + `prilez_do`, které pak vidí OZ).
+    //  Prázdná poznámka = bez příležitosti (smaže i termín).
+    // ════════════════════════════════════════════════════════════════
+    public function postPrilez(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['cisticka', 'majitel', 'superadmin']);
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            crm_flash_set('Neplatný CSRF token.');
+            crm_redirect('/cisticka/premium');
+        }
+
+        $poolId   = (int) ($_POST['pool_id'] ?? 0);
+        $orderId  = (int) ($_POST['order_id'] ?? 0);
+        $prilez   = trim((string) ($_POST['prilez'] ?? ''));
+        $prilezDo = trim((string) ($_POST['prilez_do'] ?? ''));
+
+        // Stejná pravidla jako u OZ: prázdná poznámka = nemá příležitost.
+        if ($prilez === '') { $prilezDo = ''; }
+        if ($prilezDo !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $prilezDo)) { $prilezDo = ''; }
+        if (mb_strlen($prilez) > 255) { $prilez = mb_substr($prilez, 0, 255); }
+
+        $backUrl = $orderId > 0
+            ? '/cisticka/premium/order?id=' . $orderId
+            : '/cisticka/premium';
+
+        if ($poolId <= 0) {
+            crm_flash_set('⚠ Neplatný požadavek.');
+            crm_redirect($backUrl);
+        }
+
+        // Ověřit, že pool řádek patří do aktivního tenanta + získat contact_id
+        $stmt = $this->pdo->prepare(
+            "SELECT p.contact_id, p.order_id
+             FROM premium_lead_pool p
+             JOIN premium_orders po ON po.id = p.order_id
+             WHERE p.id = :id AND po.tenant_id = :tid LIMIT 1"
+        );
+        $stmt->execute(['id' => $poolId, 'tid' => crm_tenant_id()]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            crm_flash_set('⚠ Lead nenalezen.');
+            crm_redirect($backUrl);
+        }
+        $contactId = (int) $row['contact_id'];
+        if ($orderId <= 0) {
+            $orderId = (int) $row['order_id'];
+            $backUrl = '/cisticka/premium/order?id=' . $orderId;
+        }
+
+        $this->pdo->prepare(
+            "UPDATE contacts
+             SET prilez = :p, prilez_do = :pd, updated_at = NOW(3)
+             WHERE id = :cid AND tenant_id = :tid"
+        )->execute([
+            'p'   => $prilez   === '' ? null : $prilez,
+            'pd'  => $prilezDo === '' ? null : $prilezDo,
+            'cid' => $contactId,
+            'tid' => crm_tenant_id(),
+        ]);
+
+        crm_flash_set('✓ Příležitost uložena.');
+        crm_redirect($backUrl);
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -371,9 +446,9 @@ final class PremiumCistickaController
                     po.preferred_caller_id, po.status AS order_status
              FROM premium_lead_pool p
              JOIN premium_orders po ON po.id = p.order_id
-             WHERE p.id = :id LIMIT 1"
+             WHERE p.id = :id AND po.tenant_id = :tid LIMIT 1"
         );
-        $stmt->execute(['id' => $poolId]);
+        $stmt->execute(['id' => $poolId, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$row) {
@@ -409,8 +484,8 @@ final class PremiumCistickaController
                  SET cleaning_status = :st,
                      cleaner_id      = :uid,
                      cleaned_at      = NOW(3)
-                 WHERE id = :id"
-            )->execute(['st' => $action, 'uid' => $cistickaId, 'id' => $poolId]);
+                 WHERE id = :id AND tenant_id = :tid"
+            )->execute(['st' => $action, 'uid' => $cistickaId, 'id' => $poolId, 'tid' => crm_tenant_id()]);
 
             // 2) Premium leady: kdyz tradeable → musíme contacts.stav nastavit na READY,
             //    aby je navolávačka mohla volat ze /caller/premium (její filter vyžaduje
@@ -426,8 +501,9 @@ final class PremiumCistickaController
                          updated_at = NOW(3)
                      WHERE id = :cid
                        AND stav IN ('NEW', '')
-                       AND assigned_caller_id IS NULL"
-                )->execute(['cid' => $contactId]);
+                       AND assigned_caller_id IS NULL
+                       AND tenant_id = :tid"
+                )->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
             }
             //    Pro non_tradeable: čistička vyhodnotila kontakt jako nepoužitelný v premium —
             //    neměníme contacts.stav, ať se nepletl do standardního poolu (premium
@@ -464,6 +540,13 @@ final class PremiumCistickaController
                 'action'     => $action,
                 'caller_assigned' => $action === 'tradeable' && $preferredCaller > 0 ? $preferredCaller : null,
             ]
+        );
+
+        // Activity log — premium cleaning verified (tradeable i non_tradeable se počítají stejně)
+        crm_activity_log_record(
+            $this->pdo, $cistickaId, 'cleaning.premium_verified',
+            'premium_lead_pool', $poolId,
+            ['order_id' => (int) $row['order_id'], 'cleaning_status' => $action]
         );
 
         if ($isAjax) {
@@ -504,15 +587,15 @@ final class PremiumCistickaController
             crm_redirect('/cisticka/premium');
         }
 
-        // Načíst pool řádek + preferred_caller objednávky
+        // Načíst pool řádek + preferred_caller objednávky — multi-tenant
         $stmt = $this->pdo->prepare(
             "SELECT p.id, p.contact_id, p.order_id, p.cleaning_status,
                     po.preferred_caller_id
              FROM premium_lead_pool p
              JOIN premium_orders po ON po.id = p.order_id
-             WHERE p.id = :id LIMIT 1"
+             WHERE p.id = :id AND po.tenant_id = :tid LIMIT 1"
         );
-        $stmt->execute(['id' => $poolId]);
+        $stmt->execute(['id' => $poolId, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$row || $row['cleaning_status'] === 'pending') {
@@ -539,8 +622,8 @@ final class PremiumCistickaController
                  SET cleaning_status = 'pending',
                      cleaner_id      = NULL,
                      cleaned_at      = NULL
-                 WHERE id = :id"
-            )->execute(['id' => $poolId]);
+                 WHERE id = :id AND tenant_id = :tid"
+            )->execute(['id' => $poolId, 'tid' => crm_tenant_id()]);
 
             // Premium leady neměníme v `contacts` — všechno je v poolu.
             // Undo tedy jen vrací `cleaning_status` zpět na pending,
@@ -617,6 +700,7 @@ final class PremiumCistickaController
         // Načíst data:
         //   single order — všechny vyčištěné leady té objednávky touto čističkou (bez ohledu na měsíc)
         //   jinak — všechny vyčištěné leady této čističky za daný měsíc
+        // Multi-tenant
         $sql = "SELECT p.id            AS pool_id,
                        p.contact_id,
                        p.cleaning_status,
@@ -641,8 +725,9 @@ final class PremiumCistickaController
                        p.cleaner_id = :uid
                        OR (p.cleaner_id IS NULL AND po.accepted_by_cleaner_id = :uid_acc)
                       )
-                  AND p.cleaning_status IN ('tradeable','non_tradeable')";
-        $params = ['uid' => $cistickaId, 'uid_acc' => $cistickaId];
+                  AND p.cleaning_status IN ('tradeable','non_tradeable')
+                  AND po.tenant_id = :tid";
+        $params = ['uid' => $cistickaId, 'uid_acc' => $cistickaId, 'tid' => crm_tenant_id()];
         if ($singleOrder) {
             $sql .= " AND po.id = :oid";
             $params['oid'] = $orderId;

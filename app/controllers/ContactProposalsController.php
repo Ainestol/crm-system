@@ -69,16 +69,20 @@ final class ContactProposalsController
         );
     }
 
-    /** Seznam aktivních OZ pro dropdown. Vrací i obchodáky v roles_extra (multi-role). */
+    /** Seznam aktivních OZ pro dropdown. Vrací i obchodáky v roles_extra (multi-role).
+     *  Multi-tenant: jen obchodáky aktivního tenantu (přes user_tenants). */
     private function activeSalesUsers(): array
     {
-        $rows = $this->pdo->query(
-            "SELECT id, jmeno FROM users
-             WHERE aktivni = 1
-               AND (role = 'obchodak'
-                    OR JSON_SEARCH(COALESCE(roles_extra, '[]'), 'one', 'obchodak') IS NOT NULL)
-             ORDER BY jmeno ASC"
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $stmt = $this->pdo->prepare(
+            "SELECT u.id, u.jmeno FROM users u
+             INNER JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1
+             WHERE u.aktivni = 1
+               AND (u.role = 'obchodak'
+                    OR JSON_SEARCH(COALESCE(u.roles_extra, '[]'), 'one', 'obchodak') IS NOT NULL)
+             ORDER BY u.jmeno ASC"
+        );
+        $stmt->execute(['tid' => crm_tenant_id()]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         return is_array($rows) ? $rows : [];
     }
 
@@ -104,10 +108,12 @@ final class ContactProposalsController
     public static function pendingCount(PDO $pdo): int
     {
         try {
-            $cnt = $pdo->query(
-                "SELECT COUNT(*) FROM contact_proposals WHERE status = 'pending'"
-            )->fetchColumn();
-            return (int) $cnt;
+            // Multi-tenant filter
+            $cntStmt = $pdo->prepare(
+                "SELECT COUNT(*) FROM contact_proposals WHERE status = 'pending' AND tenant_id = :tid"
+            );
+            $cntStmt->execute(['tid' => function_exists('crm_tenant_id') ? crm_tenant_id() : 0]);
+            return (int) $cntStmt->fetchColumn();
         } catch (\PDOException $e) {
             // Tabulka ještě neexistuje (migrace nepuštěná) → 0
             return 0;
@@ -211,12 +217,15 @@ final class ContactProposalsController
         if (mb_strlen($poznamka) < 3)          { $bounce('⚠ Poznámka je povinná — popište proč je to hot lead.'); }
         if (mb_strlen($poznamka) > 1000)       { $poznamka = mb_substr($poznamka, 0, 1000); }
 
-        // Zkontrolovat platnost zvoleného OZ (pokud byl zvolen)
+        // Zkontrolovat platnost zvoleného OZ (pokud byl zvolen) — multi-tenant:
+        // OZ MUSÍ být mapped v user_tenants pro aktivní tenant, jinak ho odmítneme.
         if ($suggested > 0) {
             $check = $this->pdo->prepare(
-                "SELECT 1 FROM users WHERE id = :id AND role = 'obchodak' AND aktivni = 1 LIMIT 1"
+                "SELECT 1 FROM users u
+                 INNER JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1
+                 WHERE u.id = :id AND u.role = 'obchodak' AND u.aktivni = 1 LIMIT 1"
             );
-            $check->execute(['id' => $suggested]);
+            $check->execute(['id' => $suggested, 'tid' => crm_tenant_id()]);
             if (!$check->fetchColumn()) { $suggested = 0; }
         }
 
@@ -235,10 +244,11 @@ final class ContactProposalsController
         //  klikne na existující kontakt, nebo zaškrtne "Přidat přesto".)
         $allowDup = !empty($_POST['allow_duplicate']);
         if (!$allowDup) {
+            // Multi-tenant: duplicita per-tenant
             $dupStmt = $this->pdo->prepare(
-                "SELECT id, firma FROM contacts WHERE ico = :ico LIMIT 1"
+                "SELECT id, firma FROM contacts WHERE ico = :ico AND tenant_id = :tid LIMIT 1"
             );
-            $dupStmt->execute(['ico' => $ico]);
+            $dupStmt->execute(['ico' => $ico, 'tid' => crm_tenant_id()]);
             $dup = $dupStmt->fetch(PDO::FETCH_ASSOC);
             if ($dup) {
                 // Bounce s konkrétní hláškou — server-side ochrana, klient ji uvidí
@@ -300,10 +310,19 @@ final class ContactProposalsController
         // Hláška podle toho, komu kontakt patří
         $assignedToSelf = $userIsOz && $suggested === (int) $user['id'];
         crm_flash_set($assignedToSelf
-            ? '✓ Kontakt přidán — najdeš ho v Příchozí leady (klikni „Přijmout").'
-            : '✓ Kontakt přidán a přiřazen OZ — uvidí ho v Příchozí leady.'
+            ? '✓ Kontakt „' . mb_substr($firma, 0, 80) . '" přidán — najdeš ho v Příchozí leady (klikni „Přijmout").'
+            : '✓ Kontakt „' . mb_substr($firma, 0, 80) . '" přidán a přiřazen OZ — uvidí ho v Příchozí leady.'
         );
-        crm_redirect('/contacts/new');
+
+        // Activity log — vytvořen nový kontakt (návrh)
+        crm_activity_log_record(
+            $this->pdo, (int) $user['id'], 'sales.contact_created', 'contact', $newContactId,
+            ['firma' => mb_substr($firma, 0, 80), 'assigned_sales_id' => $suggested]
+        );
+
+        // Po úspěchu redirect na seznam vlastních doporučenek (= jasná zpětná vazba:
+        // user vidí svůj nově vytvořený kontakt v seznamu nahoře, ne prázdný formulář).
+        crm_redirect('/me/added-contacts');
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -327,6 +346,7 @@ final class ContactProposalsController
         }
 
         try {
+            // Multi-tenant
             $stmt = $this->pdo->prepare(
                 "SELECT c.id, c.firma, c.region, c.stav,
                         COALESCE(w.stav, c.stav)   AS effective_stav,
@@ -335,10 +355,10 @@ final class ContactProposalsController
                  FROM contacts c
                  LEFT JOIN users su ON su.id = c.assigned_sales_id
                  LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id AND w.oz_id = c.assigned_sales_id
-                 WHERE c.ico = :ico
+                 WHERE c.ico = :ico AND c.tenant_id = :tid
                  LIMIT 1"
             );
-            $stmt->execute(['ico' => $ico]);
+            $stmt->execute(['ico' => $ico, 'tid' => crm_tenant_id()]);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -394,6 +414,7 @@ final class ContactProposalsController
         };
 
         // Hlavní seznam — moje doporučenky v daném období
+        // Multi-tenant
         $sql = "SELECT c.id, c.firma, c.ico, c.telefon, c.email, c.region, c.stav,
                        c.created_at,
                        COALESCE(oz.jmeno, '—')   AS oz_name,
@@ -403,11 +424,12 @@ final class ContactProposalsController
                 LEFT JOIN oz_contact_workflow w
                        ON w.contact_id = c.id AND w.oz_id = c.assigned_sales_id
                 WHERE c.created_by_user_id = :uid
+                  AND c.tenant_id = :tid
                   {$periodWhere}
                 ORDER BY c.created_at DESC
                 LIMIT 500";
         $stmt = $this->pdo->prepare($sql);
-        $stmt->execute(['uid' => $myId]);
+        $stmt->execute(['uid' => $myId, 'tid' => crm_tenant_id()]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         // Konverzní statistiky — jen z mých doporučenek (bez period filteru)
@@ -425,9 +447,9 @@ final class ContactProposalsController
              FROM contacts c
              LEFT JOIN oz_contact_workflow w
                     ON w.contact_id = c.id AND w.oz_id = c.assigned_sales_id
-             WHERE c.created_by_user_id = :uid"
+             WHERE c.created_by_user_id = :uid AND c.tenant_id = :tid"
         );
-        $statStmt->execute(['uid' => $myId]);
+        $statStmt->execute(['uid' => $myId, 'tid' => crm_tenant_id()]);
         $stats = $statStmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
         ob_start();
@@ -457,6 +479,7 @@ final class ContactProposalsController
         // Načti kontakt + ověř ownership (created_by_user_id) nebo admin role
         $isAdmin = in_array((string) ($user['role'] ?? ''), ['majitel', 'superadmin'], true);
 
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             "SELECT c.id, c.firma, c.ico, c.telefon, c.email, c.adresa, c.region,
                     c.operator, c.stav, c.poznamka, c.created_at, c.created_by_user_id,
@@ -469,9 +492,9 @@ final class ContactProposalsController
              LEFT JOIN users oz ON oz.id = c.assigned_sales_id
              LEFT JOIN oz_contact_workflow w
                     ON w.contact_id = c.id AND w.oz_id = c.assigned_sales_id
-             WHERE c.id = :id LIMIT 1"
+             WHERE c.id = :id AND c.tenant_id = :tid LIMIT 1"
         );
-        $stmt->execute(['id' => $cid]);
+        $stmt->execute(['id' => $cid, 'tid' => crm_tenant_id()]);
         $contact = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$contact) {
@@ -494,11 +517,11 @@ final class ContactProposalsController
                 "SELECT n.note, n.created_at, COALESCE(u.jmeno, '—') AS author
                  FROM oz_contact_notes n
                  LEFT JOIN users u ON u.id = n.oz_id
-                 WHERE n.contact_id = :cid
+                 WHERE n.contact_id = :cid AND n.tenant_id = :tid
                  ORDER BY n.created_at DESC
                  LIMIT 10"
             );
-            $nStmt->execute(['cid' => $cid]);
+            $nStmt->execute(['cid' => $cid, 'tid' => crm_tenant_id()]);
             $ozNotes = $nStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException) {}
 
@@ -548,7 +571,8 @@ final class ContactProposalsController
             $params['byuid'] = $byUser;
         }
 
-        // Hlavní dotaz — jen kontakty s vyplněným created_by_user_id
+        // Multi-tenant: tenant filter
+        $params['tid'] = crm_tenant_id();
         $sql = "SELECT c.id, c.firma, c.ico, c.telefon, c.email, c.region, c.stav,
                        c.created_at, c.created_by_user_id,
                        COALESCE(adder.jmeno, '—')      AS adder_name,
@@ -561,6 +585,7 @@ final class ContactProposalsController
                 LEFT JOIN oz_contact_workflow w
                        ON w.contact_id = c.id AND w.oz_id = c.assigned_sales_id
                 WHERE c.created_by_user_id IS NOT NULL
+                  AND c.tenant_id = :tid
                   {$periodWhere}
                   {$userWhere}
                 ORDER BY c.created_at DESC
@@ -569,30 +594,32 @@ final class ContactProposalsController
         $stmt->execute($params);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-        // Top přidávači (pro filtr-dropdown a stats)
-        $topStmt = $this->pdo->query(
+        // Top přidávači (pro filtr-dropdown a stats) — multi-tenant
+        $topStmt = $this->pdo->prepare(
             "SELECT c.created_by_user_id AS uid,
                     COALESCE(u.jmeno, '—') AS jmeno,
                     COALESCE(u.role, '')   AS role,
                     COUNT(*)               AS cnt
              FROM contacts c
              LEFT JOIN users u ON u.id = c.created_by_user_id
-             WHERE c.created_by_user_id IS NOT NULL
+             WHERE c.created_by_user_id IS NOT NULL AND c.tenant_id = :tid
              GROUP BY c.created_by_user_id
              ORDER BY cnt DESC
              LIMIT 50"
         );
+        $topStmt->execute(['tid' => crm_tenant_id()]);
         $topAdders = $topStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-        // Total counts pro hlavičku
-        $totalStmt = $this->pdo->query(
+        // Total counts pro hlavičku — multi-tenant
+        $totalStmt = $this->pdo->prepare(
             "SELECT
                 COUNT(*) AS total,
                 SUM(CASE WHEN created_at >= CURDATE()              THEN 1 ELSE 0 END) AS today,
                 SUM(CASE WHEN created_at >= NOW() - INTERVAL 7 DAY THEN 1 ELSE 0 END) AS last7
              FROM contacts
-             WHERE created_by_user_id IS NOT NULL"
+             WHERE created_by_user_id IS NOT NULL AND tenant_id = :tid"
         );
+        $totalStmt->execute(['tid' => crm_tenant_id()]);
         $totals = $totalStmt->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'today' => 0, 'last7' => 0];
 
         ob_start();
@@ -615,6 +642,7 @@ final class ContactProposalsController
             $tab = 'pending';
         }
 
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             "SELECT cp.*,
                     pu.jmeno AS proposer_name,
@@ -624,16 +652,17 @@ final class ContactProposalsController
              LEFT JOIN users pu ON pu.id = cp.proposed_by_user_id
              LEFT JOIN users su ON su.id = cp.suggested_oz_id
              LEFT JOIN users ru ON ru.id = cp.reviewed_by_user_id
-             WHERE cp.status = :st
+             WHERE cp.status = :st AND cp.tenant_id = :tid
              ORDER BY cp.created_at DESC"
         );
-        $stmt->execute(['st' => $tab]);
+        $stmt->execute(['st' => $tab, 'tid' => crm_tenant_id()]);
         $proposals = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-        // Counts per status pro tabby
-        $countsStmt = $this->pdo->query(
-            "SELECT status, COUNT(*) AS c FROM contact_proposals GROUP BY status"
+        // Counts per status pro tabby — multi-tenant
+        $countsStmt = $this->pdo->prepare(
+            "SELECT status, COUNT(*) AS c FROM contact_proposals WHERE tenant_id = :tid GROUP BY status"
         );
+        $countsStmt->execute(['tid' => crm_tenant_id()]);
         $counts = ['pending' => 0, 'approved' => 0, 'rejected' => 0];
         foreach ($countsStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $counts[(string) $row['status']] = (int) $row['c'];
@@ -692,11 +721,12 @@ final class ContactProposalsController
         }
 
         // Načíst návrh
+        // Multi-tenant filter
         $pStmt = $this->pdo->prepare(
             "SELECT * FROM contact_proposals
-             WHERE id = :id AND status = 'pending' LIMIT 1"
+             WHERE id = :id AND status = 'pending' AND tenant_id = :tid LIMIT 1"
         );
-        $pStmt->execute(['id' => $proposalId]);
+        $pStmt->execute(['id' => $proposalId, 'tid' => crm_tenant_id()]);
         $proposal = $pStmt->fetch(PDO::FETCH_ASSOC);
         if (!$proposal) {
             crm_flash_set('⚠ Návrh nenalezen, nebo už byl zpracován.');

@@ -47,7 +47,14 @@ $currentMonthLabel = ($monthNames[$month] ?? $month) . ' ' . $year;
             <h1>Můj výkon</h1>
             <p class="muted">Přihlášena: <strong><?= crm_h((string) ($user['jmeno'] ?? '')) ?></strong></p>
         </div>
-        <a href="<?= crm_h(crm_url('/caller')) ?>" class="btn btn-secondary btn-sm">← Zpět na kontakty</a>
+        <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+            <a href="<?= crm_h(crm_url('/caller/payout/print?year=' . (int) $year . '&month=' . (int) $month)) ?>"
+               class="btn btn-primary btn-sm" target="_blank"
+               title="Otevře stránku přizpůsobenou pro tisk / uložení do PDF">
+                📄 Tisk / PDF výplata
+            </a>
+            <a href="<?= crm_h(crm_url('/caller')) ?>" class="btn btn-secondary btn-sm">← Zpět na kontakty</a>
+        </div>
     </div>
 
     <?php if (!empty($flash)) { ?>

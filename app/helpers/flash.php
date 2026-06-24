@@ -24,3 +24,13 @@ if (!function_exists('crm_flash_take')) {
         return is_string($m) ? $m : null;
     }
 }
+
+if (!function_exists('crm_flash_peek')) {
+    /** Vrátí flash zprávu BEZ konzumace (= zůstane v session pro další crm_flash_take). */
+    function crm_flash_peek(): ?string
+    {
+        crm_session_start();
+        $m = $_SESSION['crm_flash_message'] ?? null;
+        return is_string($m) ? $m : null;
+    }
+}

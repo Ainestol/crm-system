@@ -523,19 +523,16 @@ function ozAresLookup(cId) {
             status.style.color = '#e74c3c';
             return;
         }
-        let filled = [];
-        if (firmaInput && data.firma) {
-            firmaInput.value = data.firma;
-            filled.push('firma');
-        }
+        // Plníme JEN adresu — název firmy necháváme být (oficiální jméno
+        // z ARESu nechceme přepisovat, OZ/navolávačka si ho někdy upraví).
         if (adresaInput && data.adresa) {
             adresaInput.value = data.adresa;
-            filled.push('adresa');
+            status.textContent = '✓ Adresa načtena z ARES. Zkontrolujte a uložte.';
+            status.style.color = '#2ecc71';
+        } else {
+            status.textContent = '⚠ ARES nevrátil adresu.';
+            status.style.color = '#f39c12';
         }
-        status.textContent = filled.length
-            ? '✓ Načteno z ARES (' + filled.join(' + ') + '). Zkontrolujte a uložte.'
-            : '⚠ ARES nevrátil firmu ani adresu.';
-        status.style.color = filled.length ? '#2ecc71' : '#f39c12';
     })
     .catch(() => {
         status.textContent = '⚠ Síťová chyba — zkuste to znovu.';
@@ -560,6 +557,67 @@ function ozContactEditToggle(cId) {
             if (firstInput) firstInput.focus();
         }, 30);
     }
+}
+
+// ═══ Příležitost — rychlá inline úprava klikem (bez otevírání editace) ══
+function ozPrilezEdit(cId, cancel) {
+    var view = document.getElementById('oz-pril-view-' + cId);
+    var edit = document.getElementById('oz-pril-edit-' + cId);
+    if (!view || !edit) return;
+    if (cancel) {
+        edit.style.display = 'none';
+        view.style.display = '';
+        return;
+    }
+    view.style.display = 'none';
+    edit.style.display = 'inline-flex';
+    var txt = document.getElementById('oz-pril-txt-' + cId);
+    if (txt) { txt.focus(); txt.select(); }
+}
+
+function ozPrilezSave(cId) {
+    var txt = document.getElementById('oz-pril-txt-' + cId);
+    var dt  = document.getElementById('oz-pril-do-' + cId);
+    var status = document.getElementById('oz-pril-status-' + cId);
+    if (!txt) return;
+    var prilez   = (txt.value || '').trim();
+    var prilezDo = dt ? (dt.value || '') : '';
+    if (status) { status.textContent = '⏳'; status.style.color = 'var(--muted)'; }
+
+    var body = new URLSearchParams();
+    body.set('contact_id', cId);
+    body.set('prilez', prilez);
+    body.set('prilez_do', prilezDo);
+    body.set(OZC.csrfField, OZC.csrf);
+
+    fetch(OZC.urls.ozSetPrilez, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString()
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+        if (!d || !d.ok) {
+            if (status) { status.textContent = '⚠ ' + ((d && d.error) ? d.error : 'Chyba'); status.style.color = '#e74c3c'; }
+            return;
+        }
+        // Reload je nejjednodušší a spolehlivě promítne i barvy/termín a počítadla.
+        window.location.reload();
+    })
+    .catch(function(){
+        if (status) { status.textContent = '⚠ Síťová chyba'; status.style.color = '#e74c3c'; }
+    });
+}
+
+// ═══ ARES z karty: otevře editaci a předvyplní adresu k revizi ════════
+function ozAresFromCard(cId) {
+    const edit = document.getElementById('oz-info-edit-' + cId);
+    if (edit && edit.style.display === 'none') {
+        ozContactEditToggle(cId);
+    }
+    // krátká prodleva, ať se editace stihne zobrazit, pak načti z ARES
+    setTimeout(() => ozAresLookup(cId), 80);
 }
 
 // ═══ Předat BO dialog (zobrazí se, když chybí ID nabídky) ════════════

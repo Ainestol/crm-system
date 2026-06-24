@@ -12,11 +12,14 @@ if (!function_exists('commissions_pick_sales_multiplier')) {
      */
     function commissions_pick_sales_multiplier(PDO $pdo, float $monthlySalesTotal): float
     {
-        $stmt = $pdo->query(
+        // Multi-tenant filter
+        $stmt = $pdo->prepare(
             'SELECT min_monthly_sales, max_monthly_sales, multiplier
              FROM commission_tiers_sales
+             WHERE tenant_id = :tid
              ORDER BY min_monthly_sales ASC'
         );
+        $stmt->execute(['tid' => crm_tenant_id()]);
         $rows = $stmt->fetchAll();
         if (!is_array($rows) || $rows === []) {
             return 5.0;
@@ -47,15 +50,20 @@ if (!function_exists('commissions_pick_company_multiplier')) {
         string $serviceType,
         float $priceNoVat
     ): ?float {
+        // Multi-tenant filter
         $stmt = $pdo->prepare(
             'SELECT multiplier FROM commission_tiers_company
              WHERE service_type = :st
                AND min_price <= :p
                AND (max_price IS NULL OR max_price >= :p2)
+               AND tenant_id = :tid
              ORDER BY min_price DESC
              LIMIT 1'
         );
-        $stmt->execute(['st' => $serviceType, 'p' => $priceNoVat, 'p2' => $priceNoVat]);
+        $stmt->execute([
+            'st' => $serviceType, 'p' => $priceNoVat, 'p2' => $priceNoVat,
+            'tid' => crm_tenant_id(),
+        ]);
         $row = $stmt->fetch();
         if (!is_array($row)) {
             return null;
@@ -72,13 +80,15 @@ if (!function_exists('commissions_caller_reward_czk')) {
     {
         $on ??= new DateTimeImmutable('now');
         $d = $on->format('Y-m-d');
+        // Multi-tenant filter
         $stmt = $pdo->prepare(
             'SELECT amount_czk FROM caller_rewards_config
              WHERE valid_from <= :d AND (valid_to IS NULL OR valid_to >= :d2)
+               AND tenant_id = :tid
              ORDER BY valid_from DESC
              LIMIT 1'
         );
-        $stmt->execute(['d' => $d, 'd2' => $d]);
+        $stmt->execute(['d' => $d, 'd2' => $d, 'tid' => crm_tenant_id()]);
         $row = $stmt->fetch();
         if (!is_array($row)) {
             return null;

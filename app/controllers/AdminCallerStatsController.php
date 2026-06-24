@@ -35,6 +35,7 @@ final class AdminCallerStatsController
         ];
 
         // ── Srovnávací pivot: všechny navolávačky × stavy ──
+        // Multi-tenant: users přes user_tenants, workflow_log per-tenant
         $pivotStmt = $this->pdo->prepare(
             'SELECT
                 u.id                                                                             AS user_id,
@@ -48,8 +49,11 @@ final class AdminCallerStatsController
                 SUM(CASE WHEN wl.new_status = \'CHYBNY_KONTAKT\' THEN 1 ELSE 0 END)             AS chybny,
                 COUNT(wl.id)                                                                     AS total_actions
              FROM users u
+             INNER JOIN user_tenants ut
+                 ON ut.user_id = u.id AND ut.tenant_id = :tid_u AND ut.active = 1
              LEFT JOIN workflow_log wl
                  ON  wl.user_id      = u.id
+                 AND wl.tenant_id    = :tid_wl
                  AND YEAR(wl.created_at)  = :yr
                  AND MONTH(wl.created_at) = :mo
                  AND wl.new_status IN (\'CALLED_OK\',\'CALLED_BAD\',\'CALLBACK\',
@@ -58,7 +62,10 @@ final class AdminCallerStatsController
              GROUP BY u.id, u.jmeno
              ORDER BY total_actions DESC, u.jmeno ASC'
         );
-        $pivotStmt->execute(['yr' => $year, 'mo' => $month]);
+        $pivotStmt->execute([
+            'yr' => $year, 'mo' => $month,
+            'tid_u' => crm_tenant_id(), 'tid_wl' => crm_tenant_id(),
+        ]);
         $callerRows = $pivotStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         // Celkové součty pro footer

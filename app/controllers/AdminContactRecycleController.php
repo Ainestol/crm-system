@@ -93,6 +93,10 @@ final class AdminContactRecycleController
                 }
             }
 
+            // Multi-tenant: tenant filter ke všem queries
+            $where[]  = 'c.tenant_id = ?';
+            $params[] = crm_tenant_id();
+
             $whereSql = implode(' AND ', $where);
 
             // COUNT
@@ -165,12 +169,13 @@ final class AdminContactRecycleController
         $skipped   = 0;
         $skipReasons = [];
 
+        // Multi-tenant: jen kontakty z aktivního tenantu
         $ph = implode(',', array_fill(0, count($contactIds), '?'));
         $fetchStmt = $this->pdo->prepare(
             "SELECT id, stav, operator, recycle_count, updated_at
-             FROM contacts WHERE id IN ($ph)"
+             FROM contacts WHERE id IN ($ph) AND tenant_id = ?"
         );
-        $fetchStmt->execute($contactIds);
+        $fetchStmt->execute(array_merge($contactIds, [crm_tenant_id()]));
         $contacts = $fetchStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         foreach ($contacts as $c) {
@@ -233,12 +238,13 @@ final class AdminContactRecycleController
                 if ($resetOperator) {
                     $updSql .= ", operator = ''";
                 }
-                $updSql .= " WHERE id = :id";
+                $updSql .= " WHERE id = :id AND tenant_id = :tid";
 
                 $this->pdo->prepare($updSql)->execute([
                     'stav' => $newStav,
                     'uid'  => $adminId,
                     'id'   => $cid,
+                    'tid'  => crm_tenant_id(),
                 ]);
 
                 // Audit log

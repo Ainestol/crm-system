@@ -29,6 +29,19 @@ if (!function_exists('crm_session_start')) {
             return;
         }
 
+        // CLI / headers sent fallback:
+        // V CLI módu (skripty v bin/) nebo když už PHP vypsalo output,
+        // nelze startovat skutečnou PHP session (HTTP cookie). Tady
+        // simulujeme session jako in-memory array, aby kód co očekává
+        // $_SESSION fungoval (např. crm_tenant_id přes wrapper).
+        // Tato cesta NIKDY neukládá data — končí s requestem.
+        if (PHP_SAPI === 'cli' || headers_sent()) {
+            if (!isset($_SESSION) || !is_array($_SESSION)) {
+                $_SESSION = [];
+            }
+            return;
+        }
+
         $secure = crm_session_is_https();
         $params = [
             'lifetime' => CRM_SESSION_LIFETIME,

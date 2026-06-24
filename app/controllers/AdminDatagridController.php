@@ -47,15 +47,24 @@ final class AdminDatagridController
 
         require_once dirname(__DIR__) . '/helpers/contact_phones.php';
 
-        $beforeCount = (int) $this->pdo->query('SELECT COUNT(*) FROM contact_phones')->fetchColumn();
+        $tid = crm_tenant_id();
 
-        // Vybereme jen kontakty s vícero telefony — single-telefon jsou OK
-        $stmt = $this->pdo->query(
+        $beforeStmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM contact_phones WHERE tenant_id = :tid'
+        );
+        $beforeStmt->execute(['tid' => $tid]);
+        $beforeCount = (int) $beforeStmt->fetchColumn();
+
+        // Vybereme jen kontakty s vícero telefony — single-telefon jsou OK.
+        // Multi-tenant: jen kontakty z aktivního tenanta.
+        $stmt = $this->pdo->prepare(
             "SELECT id, telefon, stav, operator
              FROM contacts
              WHERE telefon IS NOT NULL
+               AND tenant_id = :tid
                AND (telefon LIKE '%,%' OR telefon LIKE '%;%' OR telefon LIKE '%\\n%')"
         );
+        $stmt->execute(['tid' => $tid]);
         $processed = 0;
         $errors = 0;
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
@@ -161,29 +170,35 @@ final class AdminDatagridController
                     COALESCE(u_oz.jmeno, '')           AS oz_name,
                     COALESCE(u_cl.jmeno, '')           AS caller_name,
                     (SELECT COUNT(*) FROM oz_contact_actions a WHERE a.contact_id = c.id) AS denik_count,
-                    (SELECT p.cleaning_status FROM premium_lead_pool p WHERE p.contact_id = c.id LIMIT 1) AS premium_clean,
-                    (SELECT p.call_status     FROM premium_lead_pool p WHERE p.contact_id = c.id LIMIT 1) AS premium_call,
-                    (SELECT p.order_id        FROM premium_lead_pool p WHERE p.contact_id = c.id LIMIT 1) AS premium_order
+                    (SELECT p.cleaning_status FROM premium_lead_pool p WHERE p.contact_id = c.id AND p.tenant_id = c.tenant_id LIMIT 1) AS premium_clean,
+                    (SELECT p.call_status     FROM premium_lead_pool p WHERE p.contact_id = c.id AND p.tenant_id = c.tenant_id LIMIT 1) AS premium_call,
+                    (SELECT p.order_id        FROM premium_lead_pool p WHERE p.contact_id = c.id AND p.tenant_id = c.tenant_id LIMIT 1) AS premium_order
                 FROM contacts c
                 LEFT JOIN oz_contact_workflow w
                        ON w.contact_id = c.id
                       AND w.oz_id      = c.assigned_sales_id
                 LEFT JOIN users u_oz ON u_oz.id = c.assigned_sales_id
                 LEFT JOIN users u_cl ON u_cl.id = c.assigned_caller_id
+                WHERE c.tenant_id = :tid
                 ORDER BY COALESCE(w.stav_changed_at, c.updated_at) DESC, c.id DESC
                 LIMIT " . self::MAX_ROWS;
 
         try {
-            $rows = $this->pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            // Multi-tenant: data jen z aktivního tenanta
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute(['tid' => crm_tenant_id()]);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException $e) {
             http_response_code(500);
             echo json_encode(['ok' => false, 'error' => 'DB chyba'], JSON_UNESCAPED_UNICODE);
             return;
         }
 
-        // Spočítat celkový počet (i nad limit) pro info v hlavičce
+        // Spočítat celkový počet (i nad limit) pro info v hlavičce — per-tenant
         try {
-            $total = (int) $this->pdo->query("SELECT COUNT(*) FROM contacts")->fetchColumn();
+            $tStmt = $this->pdo->prepare("SELECT COUNT(*) FROM contacts WHERE tenant_id = :tid");
+            $tStmt->execute(['tid' => crm_tenant_id()]);
+            $total = (int) $tStmt->fetchColumn();
         } catch (\PDOException) {
             $total = count($rows);
         }
@@ -406,11 +421,12 @@ final class AdminDatagridController
 
         // Načti aktuální stav kontaktu (PŘED jakýmkoliv speciálním handlerem,
         // protože handler workflow_stav potřebuje $before['assigned_sales_id']).
+        // Multi-tenant: filtr tenant_id, aby admin tenant 1 nečetl data tenant 2.
         $cur = $this->pdo->prepare(
             "SELECT id, stav, assigned_sales_id, assigned_caller_id, operator, region
-             FROM contacts WHERE id = ? LIMIT 1"
+             FROM contacts WHERE id = ? AND tenant_id = ? LIMIT 1"
         );
-        $cur->execute([$contactId]);
+        $cur->execute([$contactId, crm_tenant_id()]);
         $before = $cur->fetch(PDO::FETCH_ASSOC);
         if (!$before) {
             if (ob_get_length()) ob_clean();
@@ -591,11 +607,12 @@ final class AdminDatagridController
         // Spustit UPDATE v transakci (kvůli workflow_log + workflow row přesunu)
         $this->pdo->beginTransaction();
         try {
-            // 1) UPDATE contacts
+            // 1) UPDATE contacts — multi-tenant: filtr na aktivní tenant
             $upd = $this->pdo->prepare(
-                "UPDATE contacts SET `$field` = :v, updated_at = NOW(3) WHERE id = :id"
+                "UPDATE contacts SET `$field` = :v, updated_at = NOW(3)
+                 WHERE id = :id AND tenant_id = :tid"
             );
-            $upd->execute(['v' => $sqlValue, 'id' => $contactId]);
+            $upd->execute(['v' => $sqlValue, 'id' => $contactId, 'tid' => crm_tenant_id()]);
 
             // 1b) Při změně telefonu — synchronizovat contact_phones.
             //     Pokud admin přidá 5 telefonů "777, 602, 555, ...", funkce
@@ -674,12 +691,13 @@ final class AdminDatagridController
 
                     // Pokud contacts.stav byl raw, povýšit na CALLED_OK
                     if (in_array($oldStav, $rawStavs, true)) {
+                        // Multi-tenant: filtr aby admin tenant 1 nepřepsal data tenant 2
                         $this->pdo->prepare(
                             "UPDATE contacts SET stav = 'CALLED_OK', datum_predani = NOW(3), updated_at = NOW(3)
-                             WHERE id = ?"
-                        )->execute([$contactId]);
+                             WHERE id = ? AND tenant_id = ?"
+                        )->execute([$contactId, crm_tenant_id()]);
 
-                        // Workflow log: stav promote
+                        // Workflow log: stav promote (tenant_id auto-doplní wrapper)
                         $this->pdo->prepare(
                             "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
                              VALUES (?, ?, ?, 'CALLED_OK', 'ADMIN EDIT: auto-promote stav po přiřazení OZ', NOW(3))"
@@ -688,9 +706,9 @@ final class AdminDatagridController
 
                     // Vytvoř workflow řádek pro nového OZ (pokud neexistuje)
                     $wfCheck = $this->pdo->prepare(
-                        "SELECT id FROM oz_contact_workflow WHERE contact_id = ? AND oz_id = ?"
+                        "SELECT id FROM oz_contact_workflow WHERE contact_id = ? AND oz_id = ? AND tenant_id = ?"
                     );
-                    $wfCheck->execute([$contactId, $newOzId]);
+                    $wfCheck->execute([$contactId, $newOzId, crm_tenant_id()]);
                     if ($wfCheck->fetchColumn() === false) {
                         try {
                             $this->pdo->prepare(
@@ -720,10 +738,11 @@ final class AdminDatagridController
                                        'EMAIL_READY', 'CHYBNY_KONTAKT', 'CALLED_BAD',
                                        'NEZAJEM', 'FOR_SALES'];
                     if (in_array($oldStavC, $rawStavsCaller, true)) {
+                        // Multi-tenant filter
                         $this->pdo->prepare(
                             "UPDATE contacts SET stav = 'ASSIGNED', updated_at = NOW(3)
-                             WHERE id = ?"
-                        )->execute([$contactId]);
+                             WHERE id = ? AND tenant_id = ?"
+                        )->execute([$contactId, crm_tenant_id()]);
 
                         $this->pdo->prepare(
                             "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
@@ -886,21 +905,23 @@ final class AdminDatagridController
 
         $this->pdo->beginTransaction();
         try {
+            // Multi-tenant filter pro bulk operace
+            $tid = crm_tenant_id();
             foreach (array_chunk($ids, 250) as $chunk) {
                 $ph = implode(',', array_fill(0, count($chunk), '?'));
-                // 1) Přiřaď navolávačku všem
+                // 1) Přiřaď navolávačku všem — jen v rámci tenanta
                 $this->pdo->prepare(
                     "UPDATE contacts SET assigned_caller_id = ?, updated_at = NOW(3)
-                     WHERE id IN ($ph)"
-                )->execute(array_merge([$callerId], $chunk));
+                     WHERE id IN ($ph) AND tenant_id = ?"
+                )->execute(array_merge([$callerId], $chunk, [$tid]));
 
                 // 2) Auto-promote: VŠECHNY kontakty mimo finálních → ASSIGNED
                 //    (= caller filter v /caller vyžaduje ASSIGNED nebo READY z poolu)
                 $phF = implode(',', array_fill(0, count($finalStavs), '?'));
                 $this->pdo->prepare(
                     "UPDATE contacts SET stav = 'ASSIGNED'
-                     WHERE id IN ($ph) AND stav NOT IN ($phF)"
-                )->execute(array_merge($chunk, $finalStavs));
+                     WHERE id IN ($ph) AND stav NOT IN ($phF) AND tenant_id = ?"
+                )->execute(array_merge($chunk, $finalStavs, [$tid]));
             }
             $this->pdo->commit();
         } catch (\Throwable $e) {
@@ -930,29 +951,31 @@ final class AdminDatagridController
 
         $this->pdo->beginTransaction();
         try {
+            $tid = crm_tenant_id();
             foreach (array_chunk($ids, 250) as $chunk) {
                 $ph = implode(',', array_fill(0, count($chunk), '?'));
 
-                // 1) Přiřaď OZ
+                // 1) Přiřaď OZ — jen v rámci tenanta
                 $this->pdo->prepare(
                     "UPDATE contacts SET assigned_sales_id = ?, updated_at = NOW(3)
-                     WHERE id IN ($ph)"
-                )->execute(array_merge([$ozId], $chunk));
+                     WHERE id IN ($ph) AND tenant_id = ?"
+                )->execute(array_merge([$ozId], $chunk, [$tid]));
 
                 // 2) Auto-promote raw → CALLED_OK + datum_predani
                 $phS = implode(',', array_fill(0, count($rawStavs), '?'));
                 $this->pdo->prepare(
                     "UPDATE contacts SET stav = 'CALLED_OK',
                                           datum_predani = COALESCE(datum_predani, NOW(3))
-                     WHERE id IN ($ph) AND stav IN ($phS)"
-                )->execute(array_merge($chunk, $rawStavs));
+                     WHERE id IN ($ph) AND stav IN ($phS) AND tenant_id = ?"
+                )->execute(array_merge($chunk, $rawStavs, [$tid]));
 
                 // 3) Vytvoř workflow row pro každého (kde neexistuje)
                 foreach ($chunk as $cid) {
                     $wfCheck = $this->pdo->prepare(
-                        "SELECT id FROM oz_contact_workflow WHERE contact_id = ? AND oz_id = ?"
+                        "SELECT id FROM oz_contact_workflow
+                         WHERE contact_id = ? AND oz_id = ? AND tenant_id = ?"
                     );
-                    $wfCheck->execute([$cid, $ozId]);
+                    $wfCheck->execute([$cid, $ozId, $tid]);
                     if ($wfCheck->fetchColumn() === false) {
                         try {
                             $this->pdo->prepare(
@@ -976,8 +999,10 @@ final class AdminDatagridController
     {
         $this->pdo->beginTransaction();
         try {
+            $tid = crm_tenant_id();
             foreach (array_chunk($ids, 250) as $chunk) {
                 $ph = implode(',', array_fill(0, count($chunk), '?'));
+                // Multi-tenant filter — admin tenant 1 nesmí resetovat data tenant 2
                 $this->pdo->prepare(
                     "UPDATE contacts
                      SET assigned_caller_id = NULL,
@@ -985,8 +1010,8 @@ final class AdminDatagridController
                          locked_until = NULL,
                          stav = 'READY',
                          updated_at = NOW(3)
-                     WHERE id IN ($ph)"
-                )->execute($chunk);
+                     WHERE id IN ($ph) AND tenant_id = ?"
+                )->execute(array_merge($chunk, [$tid]));
             }
             $this->pdo->commit();
         } catch (\Throwable $e) {
@@ -1053,10 +1078,11 @@ final class AdminDatagridController
                          'FOR_SALES'];
             $contactStav = $oldContactStav;
             if (in_array($oldContactStav, $rawStavs, true)) {
+                // Multi-tenant filter
                 $this->pdo->prepare(
                     "UPDATE contacts SET stav = 'CALLED_OK', datum_predani = COALESCE(datum_predani, NOW(3)), updated_at = NOW(3)
-                     WHERE id = ?"
-                )->execute([$contactId]);
+                     WHERE id = ? AND tenant_id = ?"
+                )->execute([$contactId, crm_tenant_id()]);
                 $contactStav = 'CALLED_OK';
             }
 
@@ -1174,12 +1200,13 @@ final class AdminDatagridController
                 $du = (string) ($wf['datum_uzavreni'] ?? '');
                 $tr = (int) ($wf['trvani'] ?? 3);
                 if ($du !== '' && $du !== '0000-00-00' && strtotime($du) !== false && $tr >= 1 && $tr <= 10) {
+                    // Multi-tenant filter
                     $this->pdo->prepare(
                         "UPDATE contacts
                          SET vyrocni_smlouvy = DATE_ADD(:du, INTERVAL :tr YEAR),
                              updated_at      = NOW(3)
-                         WHERE id = :cid"
-                    )->execute(['du' => $du, 'tr' => $tr, 'cid' => $contactId]);
+                         WHERE id = :cid AND tenant_id = :tid"
+                    )->execute(['du' => $du, 'tr' => $tr, 'cid' => $contactId, 'tid' => crm_tenant_id()]);
                     $vyrocniNew = date('Y-m-d', strtotime("+{$tr} years", strtotime($du)));
                 }
             }
@@ -1262,8 +1289,11 @@ final class AdminDatagridController
         // aby ji OZ viděl v leads view (OZ čte z oz_contact_notes, ne z contact_notes).
         $ozId = 0;
         try {
-            $ozStmt = $this->pdo->prepare("SELECT assigned_sales_id FROM contacts WHERE id = ?");
-            $ozStmt->execute([$contactId]);
+            // Multi-tenant: filter aby cross-tenant SELECT nevracel cizí data
+            $ozStmt = $this->pdo->prepare(
+                "SELECT assigned_sales_id FROM contacts WHERE id = ? AND tenant_id = ?"
+            );
+            $ozStmt->execute([$contactId, crm_tenant_id()]);
             $ozId = (int) ($ozStmt->fetchColumn() ?: 0);
         } catch (\Throwable $_) {}
 
@@ -1336,7 +1366,7 @@ final class AdminDatagridController
             return;
         }
 
-        // Hlavička kontaktu
+        // Hlavička kontaktu — multi-tenant filter
         try {
             $hStmt = $this->pdo->prepare(
                 "SELECT c.id, c.firma, c.telefon, c.email, c.region,
@@ -1346,9 +1376,9 @@ final class AdminDatagridController
                         w.cislo_smlouvy, w.datum_uzavreni
                  FROM contacts c
                  LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id
-                 WHERE c.id = :cid LIMIT 1"
+                 WHERE c.id = :cid AND c.tenant_id = :tid LIMIT 1"
             );
-            $hStmt->execute(['cid' => $contactId]);
+            $hStmt->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
             $header = $hStmt->fetch(PDO::FETCH_ASSOC) ?: null;
         } catch (\PDOException) {
             $header = null;
@@ -1421,6 +1451,9 @@ final class AdminDatagridController
         //   1) workflow_log     = KOMPLETNÍ HISTORIE změn stavu (navolávačky, čističky, OZ, BO, …)
         //   2) oz_contact_actions = záznamy v pracovním deníku OZ
         //   3) audit_log (premium) = premium pipeline akce (objednávka, čištění, navolávání)
+        // Multi-tenant filter — feed jen z aktivního tenanta.
+        // Filtr přes c.tenant_id v každé větvi UNION (contacts JOIN).
+        $tidLiteral = (int) crm_tenant_id(); // int safe pro SQL literal
         $sql = "(
                   SELECT 'stav_change' AS kind,
                          w.contact_id,
@@ -1431,7 +1464,7 @@ final class AdminDatagridController
                          COALESCE(u.jmeno, '—') AS actor_name,
                          IFNULL(w.note, '') AS extra
                   FROM workflow_log w
-                  INNER JOIN contacts c ON c.id = w.contact_id
+                  INNER JOIN contacts c ON c.id = w.contact_id AND c.tenant_id = {$tidLiteral}
                   LEFT JOIN users u ON u.id = w.user_id
                 ) UNION ALL (
                   SELECT 'action' AS kind,
@@ -1443,7 +1476,7 @@ final class AdminDatagridController
                          COALESCE(u.jmeno, '—') AS actor_name,
                          '' AS extra
                   FROM oz_contact_actions a
-                  INNER JOIN contacts c ON c.id = a.contact_id
+                  INNER JOIN contacts c ON c.id = a.contact_id AND c.tenant_id = {$tidLiteral}
                   LEFT JOIN users u ON u.id = a.oz_id
                 ) UNION ALL (
                   SELECT 'premium' AS kind,
@@ -1490,14 +1523,14 @@ final class AdminDatagridController
                                          w.new_status AS payload, c.firma, c.region,
                                          COALESCE(u.jmeno, '—') AS actor_name, IFNULL(w.note, '') AS extra
                                   FROM workflow_log w
-                                  INNER JOIN contacts c ON c.id = w.contact_id
+                                  INNER JOIN contacts c ON c.id = w.contact_id AND c.tenant_id = {$tidLiteral}
                                   LEFT JOIN users u ON u.id = w.user_id
                                 ) UNION ALL (
                                   SELECT 'action' AS kind, a.contact_id, a.created_at AS event_ts,
                                          LEFT(a.action_text, 120) AS payload, c.firma, c.region,
                                          COALESCE(u.jmeno, '—') AS actor_name, '' AS extra
                                   FROM oz_contact_actions a
-                                  INNER JOIN contacts c ON c.id = a.contact_id
+                                  INNER JOIN contacts c ON c.id = a.contact_id AND c.tenant_id = {$tidLiteral}
                                   LEFT JOIN users u ON u.id = a.oz_id
                                 )";
                 if ($sinceWhere !== '') {

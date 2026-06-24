@@ -15,13 +15,14 @@ declare(strict_types=1);
 
     <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:1.5rem;text-align:center;">
         <div style="font-size:2.5rem;margin-bottom:0.5rem;">📝</div>
-        <h3 style="margin:0 0 0.5rem;color:#92400e;">Detail tohoto tématu se připravuje</h3>
-        <p style="margin:0;color:#92400e;font-size:0.9rem;">
-            Texty pro detailní nápovědu se průběžně doplňují. Pokud máš konkrétní otázku k této oblasti,
-            obraď se na vývojáře nebo si dej žádost o popis.
+        <h3 style="margin:0 0 0.5rem;color:#92400e;">Detailní obsah se připravuje</h3>
+        <p style="margin:0;color:#92400e;font-size:0.95rem;">
+            Pokud potřebuješ rychle poradit, zeptej se <strong>majitele firmy</strong> nebo napiš na
+            <a href="mailto:support@snecinatripu.eu" style="color:#92400e;font-weight:600;">support@snecinatripu.eu</a>.
         </p>
         <p style="margin-top:1rem;font-size:0.85rem;color:#92400e;">
-            Mezitím — zkus <a href="<?= crm_url('/help') ?>" style="color:#92400e;font-weight:600;">jiné téma z rozcestníku</a>.
+            Vrať se zpět na <a href="<?= crm_url('/help') ?>" style="color:#92400e;font-weight:600;">rozcestník</a>
+            a vyber jiné téma.
         </p>
     </div>
 </div>

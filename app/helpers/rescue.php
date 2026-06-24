@@ -43,10 +43,14 @@ function rescue_create(
         return null;
     }
 
-    // Najdi původní caller (= kdo lead dodal OZ s CALLED_OK)
+    // Najdi původní caller (= kdo lead dodal OZ s CALLED_OK) — multi-tenant
     // Použijeme současné assigned_caller_id jako "kdo to navolal".
-    $cStmt = $pdo->prepare("SELECT assigned_caller_id, stav, assigned_sales_id FROM contacts WHERE id = ?");
-    $cStmt->execute([$contactId]);
+    $tid = crm_tenant_id();
+    $cStmt = $pdo->prepare(
+        "SELECT assigned_caller_id, stav, assigned_sales_id FROM contacts
+         WHERE id = ? AND tenant_id = ?"
+    );
+    $cStmt->execute([$contactId, $tid]);
     $c = $cStmt->fetch(PDO::FETCH_ASSOC);
     if (!$c) {
         throw new \RuntimeException('Kontakt neexistuje.');
@@ -82,7 +86,7 @@ function rescue_create(
         ]);
         $rrId = (int) $pdo->lastInsertId();
 
-        // 2. UPDATE contacts.stav = RESCUE_REQUESTED
+        // 2. UPDATE contacts.stav = RESCUE_REQUESTED — multi-tenant
         //    (vyčistíme locked_by/until pro jistotu, ať caller v navolávačce může claimnout)
         $pdo->prepare(
             "UPDATE contacts
@@ -90,8 +94,8 @@ function rescue_create(
                  locked_by = NULL,
                  locked_until = NULL,
                  updated_at = NOW(3)
-             WHERE id = :id"
-        )->execute(['id' => $contactId]);
+             WHERE id = :id AND tenant_id = :tid"
+        )->execute(['id' => $contactId, 'tid' => $tid]);
 
         // 3. Workflow log
         $pdo->prepare(
@@ -105,6 +109,14 @@ function rescue_create(
         ]);
 
         $pdo->commit();
+
+        // Activity log — OZ poslal kontakt na záchranu
+        if (function_exists('crm_activity_log_record')) {
+            crm_activity_log_record(
+                $pdo, $originalSalesId, 'sales.rescue_requested', 'rescue_request', $rrId,
+                ['contact_id' => $contactId, 'target_sales_id' => $targetSalesId]
+            );
+        }
 
         return [
             'id'         => $rrId,
@@ -128,15 +140,16 @@ function rescue_create(
  */
 function rescue_find_active(PDO $pdo, int $contactId): ?array
 {
+    // Multi-tenant filter
     $stmt = $pdo->prepare(
         "SELECT rr.*, uo.jmeno AS original_sales_name, ut.jmeno AS target_sales_name
          FROM rescue_requests rr
          LEFT JOIN users uo ON uo.id = rr.original_sales_id
          LEFT JOIN users ut ON ut.id = rr.target_sales_id
-         WHERE rr.contact_id = ? AND rr.outcome = 'pending'
+         WHERE rr.contact_id = ? AND rr.outcome = 'pending' AND rr.tenant_id = ?
          LIMIT 1"
     );
-    $stmt->execute([$contactId]);
+    $stmt->execute([$contactId, crm_tenant_id()]);
     $r = $stmt->fetch(PDO::FETCH_ASSOC);
     return $r ?: null;
 }
@@ -146,6 +159,7 @@ function rescue_find_active(PDO $pdo, int $contactId): ?array
  */
 function rescue_find_any(PDO $pdo, int $contactId): ?array
 {
+    // Multi-tenant filter
     $stmt = $pdo->prepare(
         "SELECT rr.*, uo.jmeno AS original_sales_name, ut.jmeno AS target_sales_name,
                 uc.jmeno AS rescued_by_caller_name, uf.jmeno AS final_sales_name
@@ -154,11 +168,11 @@ function rescue_find_any(PDO $pdo, int $contactId): ?array
          LEFT JOIN users ut ON ut.id = rr.target_sales_id
          LEFT JOIN users uc ON uc.id = rr.rescued_by_caller_id
          LEFT JOIN users uf ON uf.id = rr.final_sales_id
-         WHERE rr.contact_id = ?
+         WHERE rr.contact_id = ? AND rr.tenant_id = ?
          ORDER BY rr.requested_at DESC
          LIMIT 1"
     );
-    $stmt->execute([$contactId]);
+    $stmt->execute([$contactId, crm_tenant_id()]);
     $r = $stmt->fetch(PDO::FETCH_ASSOC);
     return $r ?: null;
 }
@@ -180,12 +194,16 @@ function rescue_success(
     string $note = '',
     ?int $overrideSalesId = null
 ): ?array {
+    $tid = crm_tenant_id();
     $pdo->beginTransaction();
     try {
+        // Multi-tenant: rescue patří jen aktuálnímu tenantu
         $stmt = $pdo->prepare(
-            "SELECT * FROM rescue_requests WHERE id = ? AND outcome = 'pending' FOR UPDATE"
+            "SELECT * FROM rescue_requests
+             WHERE id = ? AND outcome = 'pending' AND tenant_id = ?
+             FOR UPDATE"
         );
-        $stmt->execute([$rescueId]);
+        $stmt->execute([$rescueId, $tid]);
         $r = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$r) {
             $pdo->rollBack();
@@ -201,14 +219,17 @@ function rescue_success(
         //   3. jinak null (rotace — caller musí vybrat při výhře)
         $finalSalesId = 0;
         if ($overrideSalesId !== null && $overrideSalesId > 0) {
-            // Validace: musí být aktivní obchodák
+            // Validace: musí být aktivní obchodák tohoto tenantu (přes user_tenants)
             $vStmt = $pdo->prepare(
-                "SELECT id FROM users WHERE id = ? AND aktivni = 1 AND (
-                    role = 'obchodak'
-                    OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"')
+                "SELECT u.id FROM users u
+                 INNER JOIN user_tenants ut
+                     ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
+                 WHERE u.id = ? AND u.aktivni = 1 AND (
+                    u.role = 'obchodak'
+                    OR JSON_CONTAINS(IFNULL(u.roles_extra, '[]'), '\"obchodak\"')
                  )"
             );
-            $vStmt->execute([$overrideSalesId]);
+            $vStmt->execute([$tid, $overrideSalesId]);
             if ($vStmt->fetchColumn() !== false) {
                 $finalSalesId = $overrideSalesId;
             }
@@ -223,7 +244,7 @@ function rescue_success(
             throw new \RuntimeException('Záchrana nemá target ani prefer_original — caller musí vybrat OZ ručně.');
         }
 
-        // UPDATE contacts → CALLED_OK + assigned_sales_id
+        // UPDATE contacts → CALLED_OK + assigned_sales_id (multi-tenant)
         $pdo->prepare(
             "UPDATE contacts
              SET stav = 'CALLED_OK',
@@ -232,11 +253,12 @@ function rescue_success(
                  datum_volani = NOW(3),
                  datum_predani = NOW(3),
                  updated_at = NOW(3)
-             WHERE id = :id"
+             WHERE id = :id AND tenant_id = :tid"
         )->execute([
             'sid' => $finalSalesId,
             'cid' => $callerId,
             'id'  => (int) $r['contact_id'],
+            'tid' => $tid,
         ]);
 
         // UPDATE rescue_request — uložíme i poznámku navolávačky (caller note)
@@ -248,12 +270,13 @@ function rescue_success(
                  rescued_by_caller_id = :cid,
                  final_sales_id = :sid,
                  notes = :note
-             WHERE id = :id"
+             WHERE id = :id AND tenant_id = :tid"
         )->execute([
             'cid'  => $callerId,
             'sid'  => $finalSalesId,
             'note' => $trimmedNote !== '' ? $trimmedNote : null,
             'id'   => $rescueId,
+            'tid'  => $tid,
         ]);
 
         // Workflow log — pokud caller přidala poznámku, zaloguj ji (jinak generic)
@@ -282,6 +305,14 @@ function rescue_success(
         }
 
         $pdo->commit();
+
+        // Activity log — záchrana úspěšná (25 b default)
+        if (function_exists('crm_activity_log_record')) {
+            crm_activity_log_record(
+                $pdo, $callerId, 'rescue.success', 'rescue_request', $rescueId,
+                ['contact_id' => (int) $r['contact_id'], 'final_sales_id' => $finalSalesId]
+            );
+        }
         return ['final_sales_id' => $finalSalesId];
     } catch (\PDOException $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
@@ -309,12 +340,16 @@ function rescue_failure(
         return false;
     }
 
+    $tid = crm_tenant_id();
     $pdo->beginTransaction();
     try {
+        // Multi-tenant
         $stmt = $pdo->prepare(
-            "SELECT contact_id FROM rescue_requests WHERE id = ? AND outcome = 'pending' FOR UPDATE"
+            "SELECT contact_id FROM rescue_requests
+             WHERE id = ? AND outcome = 'pending' AND tenant_id = ?
+             FOR UPDATE"
         );
-        $stmt->execute([$rescueId]);
+        $stmt->execute([$rescueId, $tid]);
         $r = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$r) {
             $pdo->rollBack();
@@ -327,11 +362,12 @@ function rescue_failure(
                  assigned_caller_id = :cid,
                  datum_volani = NOW(3),
                  updated_at = NOW(3)
-             WHERE id = :id"
+             WHERE id = :id AND tenant_id = :tid"
         )->execute([
             'stav' => $finalStav,
             'cid'  => $callerId,
             'id'   => (int) $r['contact_id'],
+            'tid'  => $tid,
         ]);
 
         $pdo->prepare(
@@ -340,11 +376,12 @@ function rescue_failure(
                  rescued_at = NOW(3),
                  rescued_by_caller_id = :cid,
                  notes = :note
-             WHERE id = :id"
+             WHERE id = :id AND tenant_id = :tid"
         )->execute([
             'cid'  => $callerId,
             'note' => $note !== '' ? $note : null,
             'id'   => $rescueId,
+            'tid'  => $tid,
         ]);
 
         $pdo->prepare(
@@ -358,6 +395,14 @@ function rescue_failure(
         ]);
 
         $pdo->commit();
+
+        // Activity log — záchrana neúspěšná
+        if (function_exists('crm_activity_log_record')) {
+            crm_activity_log_record(
+                $pdo, $callerId, 'rescue.failure', 'rescue_request', $rescueId,
+                ['contact_id' => (int) $r['contact_id'], 'final_stav' => $finalStav]
+            );
+        }
         return true;
     } catch (\PDOException $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
@@ -380,13 +425,15 @@ function rescue_failure(
 function rescue_expire_overdue(PDO $pdo): int
 {
     try {
+        // Multi-tenant: expirujeme jen rescue v rámci aktivního tenantu
         $stmt = $pdo->prepare(
             "UPDATE rescue_requests
              SET outcome = 'expired',
                  expired_at = NOW(3)
-             WHERE outcome = 'pending' AND expires_at < NOW(3)"
+             WHERE outcome = 'pending' AND expires_at < NOW(3)
+               AND tenant_id = ?"
         );
-        $stmt->execute();
+        $stmt->execute([crm_tenant_id()]);
         return $stmt->rowCount();
     } catch (\PDOException $e) {
         if (function_exists('crm_db_log_error')) {
@@ -407,15 +454,17 @@ function rescue_finalize_bonus(PDO $pdo, int $contactId, float $bmsl): bool
     if ($bmsl <= 0) return false;
 
     try {
+        // Multi-tenant
         $stmt = $pdo->prepare(
             "UPDATE rescue_requests
              SET bonus_amount = :amt,
                  bonus_locked_at = NOW(3)
              WHERE contact_id = :cid
                AND outcome = 'success'
-               AND bonus_amount IS NULL"
+               AND bonus_amount IS NULL
+               AND tenant_id = :tid"
         );
-        $stmt->execute(['amt' => $bmsl, 'cid' => $contactId]);
+        $stmt->execute(['amt' => $bmsl, 'cid' => $contactId, 'tid' => crm_tenant_id()]);
         return $stmt->rowCount() > 0;
     } catch (\PDOException $e) {
         if (function_exists('crm_db_log_error')) {
@@ -431,6 +480,7 @@ function rescue_finalize_bonus(PDO $pdo, int $contactId, float $bmsl): bool
 function rescue_mark_paid(PDO $pdo, int $rescueId, int $adminId): bool
 {
     try {
+        // Multi-tenant
         $stmt = $pdo->prepare(
             "UPDATE rescue_requests
              SET bonus_paid_at = NOW(3),
@@ -438,9 +488,10 @@ function rescue_mark_paid(PDO $pdo, int $rescueId, int $adminId): bool
              WHERE id = :id
                AND outcome = 'success'
                AND bonus_amount IS NOT NULL
-               AND bonus_paid_at IS NULL"
+               AND bonus_paid_at IS NULL
+               AND tenant_id = :tid"
         );
-        $stmt->execute(['by' => $adminId, 'id' => $rescueId]);
+        $stmt->execute(['by' => $adminId, 'id' => $rescueId, 'tid' => crm_tenant_id()]);
         return $stmt->rowCount() > 0;
     } catch (\PDOException $e) {
         if (function_exists('crm_db_log_error')) {
@@ -458,7 +509,8 @@ function rescue_mark_paid(PDO $pdo, int $rescueId, int $adminId): bool
  */
 function rescue_list_pending_for_caller(PDO $pdo): array
 {
-    $stmt = $pdo->query(
+    // Multi-tenant filter
+    $stmt = $pdo->prepare(
         "SELECT rr.id AS rescue_id, rr.contact_id, rr.original_sales_id, rr.target_sales_id,
                 rr.prefer_original, rr.reason, rr.requested_at, rr.expires_at,
                 uo.jmeno AS original_sales_name,
@@ -466,12 +518,14 @@ function rescue_list_pending_for_caller(PDO $pdo): array
                 c.firma, c.telefon, c.region, c.operator, c.email,
                 TIMESTAMPDIFF(HOUR, NOW(), rr.expires_at) AS hours_left
          FROM rescue_requests rr
-         JOIN contacts c ON c.id = rr.contact_id
+         JOIN contacts c ON c.id = rr.contact_id AND c.tenant_id = rr.tenant_id
          LEFT JOIN users uo ON uo.id = rr.original_sales_id
          LEFT JOIN users ut ON ut.id = rr.target_sales_id
          WHERE rr.outcome = 'pending'
            AND c.stav = 'RESCUE_REQUESTED'
+           AND rr.tenant_id = :tid
          ORDER BY rr.expires_at ASC"
     );
-    return $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+    $stmt->execute(['tid' => crm_tenant_id()]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }

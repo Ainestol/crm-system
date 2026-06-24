@@ -23,20 +23,24 @@ final class AdminDailyGoalsController
         // Auto-migrace: zajistí existenci tabulky + sloupce motiv_enabled
         $this->ensureMonthlyGoalsTable();
 
-        // Aktuální základní odměna za výhru
-        $rewardRow = $this->pdo->query(
+        // Aktuální základní odměna za výhru — per tenant
+        $rewardStmt = $this->pdo->prepare(
             "SELECT id, amount_czk, valid_from FROM caller_rewards_config
-             WHERE valid_to IS NULL ORDER BY id DESC LIMIT 1"
+             WHERE valid_to IS NULL AND tenant_id = :tid
+             ORDER BY id DESC LIMIT 1"
         );
-        $reward = ($rewardRow ? $rewardRow->fetch(PDO::FETCH_ASSOC) : null)
+        $rewardStmt->execute(['tid' => crm_tenant_id()]);
+        $reward = $rewardStmt->fetch(PDO::FETCH_ASSOC)
                 ?: ['id' => 0, 'amount_czk' => 0, 'valid_from' => date('Y-m-d')];
 
-        // Aktuální měsíční cíl + bonusy (jeden aktivní záznam — valid_to IS NULL)
-        $mgRow = $this->pdo->query(
+        // Aktuální měsíční cíl + bonusy (jeden aktivní záznam — valid_to IS NULL) — per tenant
+        $mgStmt = $this->pdo->prepare(
             "SELECT id, target_wins, bonus1_at_pct, bonus1_pct, bonus2_at_pct, bonus2_pct, motiv_enabled
-             FROM monthly_goals WHERE valid_to IS NULL ORDER BY id DESC LIMIT 1"
+             FROM monthly_goals WHERE valid_to IS NULL AND tenant_id = :tid
+             ORDER BY id DESC LIMIT 1"
         );
-        $monthlyGoal = ($mgRow ? $mgRow->fetch(PDO::FETCH_ASSOC) : null)
+        $mgStmt->execute(['tid' => crm_tenant_id()]);
+        $monthlyGoal = $mgStmt->fetch(PDO::FETCH_ASSOC)
                      ?: [
                          'id' => 0, 'target_wins' => 150,
                          'bonus1_at_pct' => 100, 'bonus1_pct' => '5.00',
@@ -69,11 +73,12 @@ final class AdminDailyGoalsController
         // ── Základní odměna za výhru ────────────────────────────────────────
         $amountCzk = max(0.0, (float) str_replace(',', '.', (string) ($_POST['amount_czk'] ?? '0')));
         if ($amountCzk > 0) {
-            // Uzavřít aktivní záznamy (valid_to IS NULL) a vložit nový
+            // Uzavřít aktivní záznamy (valid_to IS NULL) a vložit nový — per tenant
             $this->pdo->prepare(
                 "UPDATE caller_rewards_config SET valid_to = DATE_SUB(CURDATE(), INTERVAL 1 DAY)
-                 WHERE valid_to IS NULL"
-            )->execute();
+                 WHERE valid_to IS NULL AND tenant_id = :tid"
+            )->execute(['tid' => crm_tenant_id()]);
+            // INSERT — TenantAwarePDO auto-injektuje tenant_id
             $this->pdo->prepare(
                 "INSERT INTO caller_rewards_config (amount_czk, valid_from, valid_to)
                  VALUES (:amt, CURDATE(), NULL)"
@@ -92,11 +97,12 @@ final class AdminDailyGoalsController
         $workDays   = self::workingDaysInMonth((int) date('Y'), (int) date('n'));
         $targetWins = $workDays > 0 ? (int) ceil($targetWinsMonth / $workDays) : 0;
 
-        // Uzavřít aktivní monthly_goals a vložit nový
+        // Uzavřít aktivní monthly_goals a vložit nový — per tenant
         $this->pdo->prepare(
             "UPDATE monthly_goals SET valid_to = DATE_SUB(CURDATE(), INTERVAL 1 DAY)
-             WHERE valid_to IS NULL"
-        )->execute();
+             WHERE valid_to IS NULL AND tenant_id = :tid"
+        )->execute(['tid' => crm_tenant_id()]);
+        // INSERT — TenantAwarePDO auto-injektuje tenant_id
         $this->pdo->prepare(
             "INSERT INTO monthly_goals
                (target_wins, bonus1_at_pct, bonus1_pct, bonus2_at_pct, bonus2_pct, motiv_enabled, valid_from, valid_to)
@@ -151,14 +157,17 @@ final class AdminDailyGoalsController
             );
         }
 
-        // Výchozí záznam pokud tabulka prázdná
-        $cnt = (int) $this->pdo->query('SELECT COUNT(*) FROM monthly_goals')->fetchColumn();
+        // Výchozí záznam pokud aktuální tenant ještě žádný nemá (per-tenant seed)
+        $cntStmt = $this->pdo->prepare('SELECT COUNT(*) FROM monthly_goals WHERE tenant_id = :tid');
+        $cntStmt->execute(['tid' => crm_tenant_id()]);
+        $cnt = (int) $cntStmt->fetchColumn();
         if ($cnt === 0) {
-            $this->pdo->exec(
+            // INSERT přes prepare → TenantAwarePDO auto-injektuje tenant_id
+            $this->pdo->prepare(
                 "INSERT INTO monthly_goals
                    (target_wins, bonus1_at_pct, bonus1_pct, bonus2_at_pct, bonus2_pct, motiv_enabled, valid_from, valid_to)
                  VALUES (150, 100, 5.00, 120, 5.00, 1, CURDATE(), NULL)"
-            );
+            )->execute();
         }
     }
 

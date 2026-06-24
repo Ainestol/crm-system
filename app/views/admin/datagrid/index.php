@@ -1335,18 +1335,33 @@
             body.innerHTML = events.map(ev => {
                 const dt = new Date(ev.created_at);
                 const dtFmt = isNaN(dt.getTime()) ? ev.created_at : dt.toLocaleString('cs-CZ');
-                const oldStavPill = ev.old_status
-                    ? `<span class="dg-stav-pill ${stavCls(ev.old_status)}">${escapeHtml(ev.old_status)}</span>`
-                    : '<span class="dg-stav-pill">—</span>';
-                const newStavPill = `<span class="dg-stav-pill ${stavCls(ev.new_status)}">${escapeHtml(ev.new_status)}</span>`;
                 const roleClass = ev.user_role ? 'dg-history-event__role--' + ev.user_role : '';
-                return `
-                <div class="dg-history-event">
+                const head = `
                     <div class="dg-history-event__head">
                         <span class="dg-history-event__user">${escapeHtml(ev.user_name)}</span>
                         ${ev.user_role ? `<span class="dg-history-event__role ${roleClass}">${escapeHtml(ev.user_role)}</span>` : ''}
                         <span class="dg-history-event__time">${escapeHtml(dtFmt)}</span>
-                    </div>
+                    </div>`;
+
+                // Akce z deníku / poznámky — bez přechodu stavu, jen štítek + text
+                if (ev.kind === 'action' || ev.kind === 'note') {
+                    const label = ev.kind === 'note' ? '📝 Poznámka' : '✎ Pracovní úkon';
+                    return `
+                    <div class="dg-history-event">
+                        ${head}
+                        <div class="dg-history-event__transition"><span class="dg-stav-pill dg-stav-pill--brand">${label}</span></div>
+                        ${ev.note ? `<div class="dg-history-event__note">${escapeHtml(ev.note)}</div>` : ''}
+                    </div>`;
+                }
+
+                // Změna stavu (workflow_log)
+                const oldStavPill = ev.old_status
+                    ? `<span class="dg-stav-pill ${stavCls(ev.old_status)}">${escapeHtml(ev.old_status)}</span>`
+                    : '<span class="dg-stav-pill">—</span>';
+                const newStavPill = `<span class="dg-stav-pill ${stavCls(ev.new_status)}">${escapeHtml(ev.new_status)}</span>`;
+                return `
+                <div class="dg-history-event">
+                    ${head}
                     <div class="dg-history-event__transition">${oldStavPill} <span style="color:var(--bo-text-3);">→</span> ${newStavPill}</div>
                     ${ev.note ? `<div class="dg-history-event__note">${escapeHtml(ev.note)}</div>` : ''}
                 </div>`;

@@ -479,12 +479,16 @@ if (!function_exists('crm_import_normalize_email')) {
 if (!function_exists('crm_import_row_hits_dnc')) {
     function crm_import_row_hits_dnc(PDO $pdo, ?string $ico, ?string $telefon, ?string $email): bool
     {
+        // Multi-tenant: DNC list je per-tenant (každá firma má svůj blacklist)
+        $tid = crm_tenant_id();
         $icoN = crm_import_normalize_ico($ico);
         if ($icoN !== '') {
             $st = $pdo->prepare(
-                'SELECT id FROM dnc_list WHERE ico IS NOT NULL AND TRIM(ico) <> "" AND TRIM(ico) = :ico LIMIT 1'
+                'SELECT id FROM dnc_list
+                 WHERE ico IS NOT NULL AND TRIM(ico) <> "" AND TRIM(ico) = :ico
+                   AND tenant_id = :tid LIMIT 1'
             );
-            $st->execute(['ico' => $icoN]);
+            $st->execute(['ico' => $icoN, 'tid' => $tid]);
             if ($st->fetch()) {
                 return true;
             }
@@ -492,9 +496,11 @@ if (!function_exists('crm_import_row_hits_dnc')) {
         $em = crm_import_normalize_email($email);
         if ($em !== '') {
             $st = $pdo->prepare(
-                'SELECT id FROM dnc_list WHERE email IS NOT NULL AND LOWER(TRIM(email)) = :em LIMIT 1'
+                'SELECT id FROM dnc_list
+                 WHERE email IS NOT NULL AND LOWER(TRIM(email)) = :em
+                   AND tenant_id = :tid LIMIT 1'
             );
-            $st->execute(['em' => $em]);
+            $st->execute(['em' => $em, 'tid' => $tid]);
             if ($st->fetch()) {
                 return true;
             }
@@ -502,9 +508,12 @@ if (!function_exists('crm_import_row_hits_dnc')) {
         $pd = crm_import_phone_digits($telefon);
         if ($pd !== '') {
             $st = $pdo->prepare(
-                "SELECT id FROM dnc_list WHERE telefon IS NOT NULL AND TRIM(telefon) <> '' AND REGEXP_REPLACE(telefon, '[^0-9]+', '') = :pd LIMIT 1"
+                "SELECT id FROM dnc_list
+                 WHERE telefon IS NOT NULL AND TRIM(telefon) <> ''
+                   AND REGEXP_REPLACE(telefon, '[^0-9]+', '') = :pd
+                   AND tenant_id = :tid LIMIT 1"
             );
-            $st->execute(['pd' => $pd]);
+            $st->execute(['pd' => $pd, 'tid' => $tid]);
             if ($st->fetch()) {
                 return true;
             }
@@ -516,12 +525,16 @@ if (!function_exists('crm_import_row_hits_dnc')) {
 if (!function_exists('crm_import_row_duplicate_in_db')) {
     function crm_import_row_duplicate_in_db(PDO $pdo, ?string $ico, ?string $telefon, ?string $email): bool
     {
+        // Multi-tenant: duplicity hledáme jen v rámci aktivního tenantu
+        $tid = crm_tenant_id();
         $icoN = crm_import_normalize_ico($ico);
         if ($icoN !== '') {
             $st = $pdo->prepare(
-                'SELECT id FROM contacts WHERE ico IS NOT NULL AND TRIM(ico) <> "" AND TRIM(ico) = :ico LIMIT 1'
+                'SELECT id FROM contacts
+                 WHERE ico IS NOT NULL AND TRIM(ico) <> "" AND TRIM(ico) = :ico
+                   AND tenant_id = :tid LIMIT 1'
             );
-            $st->execute(['ico' => $icoN]);
+            $st->execute(['ico' => $icoN, 'tid' => $tid]);
             if ($st->fetch()) {
                 return true;
             }
@@ -529,9 +542,11 @@ if (!function_exists('crm_import_row_duplicate_in_db')) {
         $em = crm_import_normalize_email($email);
         if ($em !== '') {
             $st = $pdo->prepare(
-                'SELECT id FROM contacts WHERE email IS NOT NULL AND LOWER(TRIM(email)) = :em LIMIT 1'
+                'SELECT id FROM contacts
+                 WHERE email IS NOT NULL AND LOWER(TRIM(email)) = :em
+                   AND tenant_id = :tid LIMIT 1'
             );
-            $st->execute(['em' => $em]);
+            $st->execute(['em' => $em, 'tid' => $tid]);
             if ($st->fetch()) {
                 return true;
             }
@@ -539,9 +554,12 @@ if (!function_exists('crm_import_row_duplicate_in_db')) {
         $pd = crm_import_phone_digits($telefon);
         if ($pd !== '') {
             $st = $pdo->prepare(
-                "SELECT id FROM contacts WHERE telefon IS NOT NULL AND TRIM(telefon) <> '' AND REGEXP_REPLACE(telefon, '[^0-9]+', '') = :pd LIMIT 1"
+                "SELECT id FROM contacts
+                 WHERE telefon IS NOT NULL AND TRIM(telefon) <> ''
+                   AND REGEXP_REPLACE(telefon, '[^0-9]+', '') = :pd
+                   AND tenant_id = :tid LIMIT 1"
             );
-            $st->execute(['pd' => $pd]);
+            $st->execute(['pd' => $pd, 'tid' => $tid]);
             if ($st->fetch()) {
                 return true;
             }

@@ -1209,15 +1209,16 @@ $renewalsForOz = $renewalsForOz ?? [];
                                 $icoNorm = crm_normalize_ico((string)$c['ico']);
                             ?>
                                 <span style="font-family:monospace;"><?= crm_h($icoNorm) ?></span>
-                                <a href="<?= crm_h('https://ares.gov.cz/ekonomicke-subjekty?ico=' . urlencode($icoNorm)) ?>"
-                                   target="_blank" rel="noopener noreferrer"
-                                   title="Ověřit firmu v ARES"
-                                   style="margin-left:0.4rem;color:#3498db;text-decoration:none;
-                                          font-size:0.7rem;padding:0.05rem 0.3rem;border-radius:3px;
-                                          background:rgba(52,152,219,0.1);
-                                          border:1px solid rgba(52,152,219,0.25);">
-                                    🔗 ARES
-                                </a>
+                                <button type="button"
+                                        onclick="ozAresFromCard(<?= $cId ?>)"
+                                        title="Doplnit adresu z ARES podle IČO — otevře editaci a předvyplní k revizi"
+                                        style="margin-left:0.4rem;color:#3498db;cursor:pointer;
+                                               font-size:0.7rem;padding:0.1rem 0.4rem;border-radius:3px;
+                                               background:rgba(52,152,219,0.12);
+                                               border:1px solid rgba(52,152,219,0.4);font-weight:700;
+                                               font-family:inherit;">
+                                    📋 Adresa z ARES
+                                </button>
                             <?php } else { ?>
                                 <span style="color:var(--muted);">—</span>
                             <?php } ?>
@@ -1261,13 +1262,41 @@ $renewalsForOz = $renewalsForOz ?? [];
                     <div class="oz-info-row">
                         <span class="oz-info-label">Příležitost</span>
                         <span class="oz-info-val">
-                            <?= crm_h($prilezShow) ?><?php if ($prilezDoFmt !== '') { ?>
-                                <span style="color:<?= $expired ? '#dc2626' : 'var(--muted)' ?>;
-                                             font-size:0.78rem;margin-left:0.4rem;
-                                             <?= $expired ? 'font-weight:700;' : '' ?>">
-                                    <?= $expired ? '(vypršelo ' : '(do ' ?><?= crm_h($prilezDoFmt) ?>)
-                                </span>
-                            <?php } ?>
+                            <!-- View: klikni pro rychlou úpravu (bez otevírání celé editace) -->
+                            <span id="oz-pril-view-<?= $cId ?>"
+                                  onclick="ozPrilezEdit(<?= $cId ?>)"
+                                  title="Klikni pro úpravu příležitosti"
+                                  style="cursor:pointer;border-bottom:1px dashed rgba(52,152,219,0.5);">
+                                <?= crm_h($prilezShow) ?><?php if ($prilezDoFmt !== '') { ?>
+                                    <span style="color:<?= $expired ? '#dc2626' : 'var(--muted)' ?>;
+                                                 font-size:0.78rem;margin-left:0.4rem;
+                                                 <?= $expired ? 'font-weight:700;' : '' ?>">
+                                        <?= $expired ? '(vypršelo ' : '(do ' ?><?= crm_h($prilezDoFmt) ?>)
+                                    </span>
+                                <?php } ?>
+                                <span style="margin-left:0.3rem;font-size:0.7rem;color:#3498db;">✏️</span>
+                            </span>
+                            <!-- Edit: inline (text + datum) -->
+                            <span id="oz-pril-edit-<?= $cId ?>" style="display:none;flex-wrap:wrap;gap:0.3rem;align-items:center;">
+                                <input type="text" id="oz-pril-txt-<?= $cId ?>" maxlength="255"
+                                       value="<?= crm_h($prilezTxt === 'ano' ? '' : $prilezTxt) ?>"
+                                       placeholder="poznámka (prázdné = nemá)"
+                                       onkeydown="if(event.key==='Enter'){event.preventDefault();ozPrilezSave(<?= $cId ?>);}"
+                                       style="background:var(--bg);color:var(--text);border:1px solid rgba(0,0,0,0.2);
+                                              border-radius:4px;padding:0.2rem 0.4rem;font-size:0.82rem;font-family:inherit;min-width:150px;">
+                                <input type="date" id="oz-pril-do-<?= $cId ?>"
+                                       value="<?= crm_h($prilezDo === '0000-00-00' ? '' : $prilezDo) ?>"
+                                       title="Do kdy je platná (volitelné)"
+                                       style="background:var(--bg);color:var(--text);border:1px solid rgba(0,0,0,0.2);
+                                              border-radius:4px;padding:0.2rem 0.4rem;font-size:0.82rem;font-family:inherit;">
+                                <button type="button" onclick="ozPrilezSave(<?= $cId ?>)"
+                                        style="background:#16a34a;color:#fff;border:0;border-radius:4px;
+                                               padding:0.2rem 0.5rem;cursor:pointer;font-weight:700;">✓</button>
+                                <button type="button" onclick="ozPrilezEdit(<?= $cId ?>, true)"
+                                        style="background:#e5e7eb;color:#374151;border:0;border-radius:4px;
+                                               padding:0.2rem 0.5rem;cursor:pointer;">✕</button>
+                                <span id="oz-pril-status-<?= $cId ?>" style="font-size:0.7rem;color:var(--muted);"></span>
+                            </span>
                         </span>
                     </div>
                 </div>
@@ -1343,41 +1372,34 @@ $renewalsForOz = $renewalsForOz ?? [];
 
                         <?php
                         $editPrilez   = trim((string)($c['prilez'] ?? ''));
-                        $editHasPril  = ($editPrilez !== '');
                         $editPrilezDo = (string)($c['prilez_do'] ?? '');
                         if ($editPrilezDo === '0000-00-00') { $editPrilezDo = ''; }
-                        // "ano" je sentinel — neukazuj ho ve volném textu
+                        // "ano" je starý sentinel z původního zaškrtávátka — ve volném textu ho neukazuj
                         $editPrilezTxt = ($editPrilez === 'ano') ? '' : $editPrilez;
                         ?>
                         <div style="border-top:1px dashed rgba(0,0,0,0.1);padding-top:0.4rem;margin-top:0.15rem;
                                     display:flex;flex-direction:column;gap:0.3rem;">
-                            <label style="display:flex;align-items:center;gap:0.35rem;font-size:0.78rem;color:var(--text);cursor:pointer;">
-                                <input type="checkbox" name="has_prilez" value="1"
-                                       id="oz-edit-haspril-<?= $cId ?>"
-                                       <?= $editHasPril ? 'checked' : '' ?>
-                                       onchange="document.getElementById('oz-edit-prildet-<?= $cId ?>').style.display = this.checked ? 'flex' : 'none';">
-                                <strong>Má příležitost</strong>
+                            <span style="font-size:0.78rem;color:var(--text);">
+                                <strong>Příležitost</strong>
+                                <span style="font-weight:400;color:var(--muted);font-size:0.7rem;">— vyplň jen pokud nějaká je</span>
+                            </span>
+                            <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--muted);">
+                                Poznámka (napiš vlastními slovy — např. karanténa, požádáno o uvolnění, co zákazník chce…)
+                                <input type="text" name="prilez" maxlength="255"
+                                       value="<?= crm_h($editPrilezTxt) ?>"
+                                       placeholder="prázdné = bez příležitosti"
+                                       style="background:var(--bg);color:var(--text);
+                                              border:1px solid rgba(0,0,0,0.15);border-radius:4px;
+                                              padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;">
                             </label>
-                            <div id="oz-edit-prildet-<?= $cId ?>"
-                                 style="display:<?= $editHasPril ? 'flex' : 'none' ?>;flex-direction:column;gap:0.3rem;padding-left:1.3rem;">
-                                <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--muted);">
-                                    Popis (volitelné — co zákazník chce)
-                                    <input type="text" name="prilez" maxlength="255"
-                                           value="<?= crm_h($editPrilezTxt) ?>"
-                                           placeholder="např. 3× telefon + internet"
-                                           style="background:var(--bg);color:var(--text);
-                                                  border:1px solid rgba(0,0,0,0.15);border-radius:4px;
-                                                  padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;">
-                                </label>
-                                <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--muted);">
-                                    Do kdy je platná (volitelné)
-                                    <input type="date" name="prilez_do"
-                                           value="<?= crm_h($editPrilezDo) ?>"
-                                           style="background:var(--bg);color:var(--text);
-                                                  border:1px solid rgba(0,0,0,0.15);border-radius:4px;
-                                                  padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;width:max-content;">
-                                </label>
-                            </div>
+                            <label style="display:flex;flex-direction:column;gap:0.15rem;font-size:0.7rem;color:var(--muted);">
+                                Do kdy je platná (volitelné)
+                                <input type="date" name="prilez_do"
+                                       value="<?= crm_h($editPrilezDo) ?>"
+                                       style="background:var(--bg);color:var(--text);
+                                              border:1px solid rgba(0,0,0,0.15);border-radius:4px;
+                                              padding:0.25rem 0.45rem;font-size:0.82rem;font-family:inherit;width:max-content;">
+                            </label>
                         </div>
 
                         <div style="font-size:0.65rem;color:var(--muted);font-style:italic;margin-top:0.15rem;">
@@ -2780,6 +2802,7 @@ window.OZ_CONFIG = {
         callerSearch:     <?= json_encode(crm_url('/caller/search')) ?>,
         ozRaceJson:       <?= json_encode(crm_url('/oz/race.json')) ?>,
         ozAresLookup:     <?= json_encode(crm_url('/oz/ares-lookup')) ?>,
+        ozSetPrilez:      <?= json_encode(crm_url('/oz/set-prilez')) ?>,
         ozTabReorder:     <?= json_encode(crm_url('/oz/tab/reorder')) ?>,
         boCheckboxToggle: <?= json_encode(crm_url('/bo/checkbox-toggle')) ?>,
         ozCheckboxToggle: <?= json_encode(crm_url('/oz/checkbox-toggle')) ?>

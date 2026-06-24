@@ -52,6 +52,7 @@ final class CallerCampaignsController
 
         // Validace: kontakt musí být v sázce, READY, a navolávačka musí být přiřazena
         // k té sázce (bet_campaign_callers).
+        // Multi-tenant filter
         $vStmt = $this->pdo->prepare(
             "SELECT c.id, c.locked_by, c.locked_until, bcl.campaign_id
              FROM contacts c
@@ -62,9 +63,10 @@ final class CallerCampaignsController
              WHERE c.id = :cid
                AND c.stav = 'READY'
                AND bcr.delivery_type = 'call'
+               AND c.tenant_id = :tid
              LIMIT 1"
         );
-        $vStmt->execute(['uid' => $callerId, 'cid' => $contactId]);
+        $vStmt->execute(['uid' => $callerId, 'cid' => $contactId, 'tid' => crm_tenant_id()]);
         $row = $vStmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             crm_flash_set('Kontakt nelze otevřít — buď nepatří do žádné vaší kampaně, není READY, nebo má delivery=email.');
@@ -86,8 +88,8 @@ final class CallerCampaignsController
              SET locked_by = :uid,
                  locked_until = NOW(3) + INTERVAL " . self::LOCK_MINUTES . " MINUTE,
                  updated_at = NOW(3)
-             WHERE id = :cid"
-        )->execute(['uid' => $callerId, 'cid' => $contactId]);
+             WHERE id = :cid AND tenant_id = :tid"
+        )->execute(['uid' => $callerId, 'cid' => $contactId, 'tid' => crm_tenant_id()]);
 
         crm_flash_set('Kontakt zamčen na ' . self::LOCK_MINUTES . ' min. Otevírám pracovní plochu…');
         crm_redirect('/caller#contact-row-' . $contactId);
@@ -107,6 +109,7 @@ final class CallerCampaignsController
         //    Bere open I closed — closed znamená pouze "cleaning hotov", ale call-leady
         //    můžou být pořád READY a čekat na provolání. Vynechá pouze 'cancelled'.
         //    Filtr v PHP pak vyřadí sázky, kde už není žádný call-typ ke zpracování.
+        // Multi-tenant filter
         $campStmt = $this->pdo->prepare(
             "SELECT bc.id, bc.name, bc.region, bc.target_count, bc.cleaned_count, bc.note,
                     bc.created_at, bc.status
@@ -114,9 +117,10 @@ final class CallerCampaignsController
              JOIN bet_campaign_callers bcc ON bcc.campaign_id = bc.id
              WHERE bcc.caller_id = :uid
                AND bc.status IN ('open', 'closed')
+               AND bc.tenant_id = :tid
              ORDER BY (bc.status = 'open') DESC, bc.created_at ASC"
         );
-        $campStmt->execute(['uid' => $callerId]);
+        $campStmt->execute(['uid' => $callerId, 'tid' => crm_tenant_id()]);
         $campaigns = $campStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $items = [];
@@ -125,16 +129,17 @@ final class CallerCampaignsController
 
             // 2. Pro každou sázku: recipients (oz + delivery_type)
             $phCamp = implode(',', array_fill(0, count($campIds), '?'));
+            // Multi-tenant filter
             $recStmt = $this->pdo->prepare(
                 "SELECT bcr.campaign_id, bcr.id AS recipient_id, bcr.oz_id, bcr.target_count,
                         bcr.received_count, bcr.delivery_type, bcr.sort_order,
                         u.jmeno AS oz_name
                  FROM bet_campaign_recipients bcr
                  LEFT JOIN users u ON u.id = bcr.oz_id
-                 WHERE bcr.campaign_id IN ($phCamp)
+                 WHERE bcr.campaign_id IN ($phCamp) AND bcr.tenant_id = ?
                  ORDER BY bcr.campaign_id, bcr.sort_order ASC"
             );
-            $recStmt->execute($campIds);
+            $recStmt->execute(array_merge($campIds, [crm_tenant_id()]));
             $allRecipients = $recStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
             $recByCamp = [];
@@ -146,6 +151,7 @@ final class CallerCampaignsController
 
             // 3. Pro každou sázku: nezpracované call-type leady (stav=READY)
             //    JOIN přes bet_campaign_leads → bet_campaign_recipients (delivery_type='call')
+            // Multi-tenant filter
             $leadStmt = $this->pdo->prepare(
                 "SELECT bcl.campaign_id, bcl.position, bcl.recipient_id,
                         c.id, c.firma, c.telefon, c.operator, c.region, c.stav,
@@ -158,9 +164,10 @@ final class CallerCampaignsController
                  WHERE bcl.campaign_id IN ($phCamp)
                    AND bcr.delivery_type = 'call'
                    AND c.stav = 'READY'
+                   AND c.tenant_id = ?
                  ORDER BY bcl.campaign_id, bcl.position ASC"
             );
-            $leadStmt->execute($campIds);
+            $leadStmt->execute(array_merge($campIds, [crm_tenant_id()]));
             $allLeads = $leadStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
             $leadsByCamp = [];
@@ -172,6 +179,7 @@ final class CallerCampaignsController
 
             // 4. Stat: kolik už call-typů této sázky bylo dotaženo (CALLED_OK)
             //    a kolik v progresu (NEDOVOLANO, CALLBACK, ASSIGNED)
+            // Multi-tenant filter
             $statStmt = $this->pdo->prepare(
                 "SELECT bcl.campaign_id,
                         SUM(CASE WHEN c.stav = 'READY'        THEN 1 ELSE 0 END) AS waiting,
@@ -183,9 +191,10 @@ final class CallerCampaignsController
                  JOIN bet_campaign_recipients bcr ON bcr.id = bcl.recipient_id
                  WHERE bcl.campaign_id IN ($phCamp)
                    AND bcr.delivery_type = 'call'
+                   AND c.tenant_id = ?
                  GROUP BY bcl.campaign_id"
             );
-            $statStmt->execute($campIds);
+            $statStmt->execute(array_merge($campIds, [crm_tenant_id()]));
             $statsByCamp = [];
             foreach ($statStmt->fetchAll(PDO::FETCH_ASSOC) as $s) {
                 $statsByCamp[(int) $s['campaign_id']] = [

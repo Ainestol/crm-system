@@ -33,16 +33,18 @@ function bet_get_active_campaign_for_region(PDO $pdo, string $region): ?array
     if ($region === '') {
         return null;
     }
+    // Multi-tenant filter
     $stmt = $pdo->prepare(
         "SELECT id, name, region, target_count, cleaned_count
          FROM bet_campaigns
          WHERE region = :reg
            AND status = 'open'
            AND cleaned_count < target_count
+           AND tenant_id = :tid
          ORDER BY created_at ASC
          LIMIT 1"
     );
-    $stmt->execute(['reg' => $region]);
+    $stmt->execute(['reg' => $region, 'tid' => crm_tenant_id()]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$row) {
         return null;
@@ -65,16 +67,18 @@ function bet_get_active_campaign_for_region(PDO $pdo, string $region): ?array
  */
 function bet_get_active_regions(PDO $pdo, array $regions = []): array
 {
+    // Multi-tenant filter
     $sql = "SELECT DISTINCT region
             FROM bet_campaigns
             WHERE status = 'open'
-              AND cleaned_count < target_count";
-    $params = [];
+              AND cleaned_count < target_count
+              AND tenant_id = ?";
+    $params = [crm_tenant_id()];
 
     if ($regions !== []) {
         $ph = implode(',', array_fill(0, count($regions), '?'));
         $sql .= " AND region IN ($ph)";
-        $params = $regions;
+        $params = array_merge($params, $regions);
     }
 
     $stmt = $pdo->prepare($sql);
@@ -95,13 +99,14 @@ function bet_get_active_regions(PDO $pdo, array $regions = []): array
  */
 function bet_find_recipient_for_position(PDO $pdo, int $campaignId, int $position): ?array
 {
+    // Multi-tenant filter
     $stmt = $pdo->prepare(
         "SELECT id, oz_id, target_count, delivery_type, sort_order
          FROM bet_campaign_recipients
-         WHERE campaign_id = :cid
+         WHERE campaign_id = :cid AND tenant_id = :tid
          ORDER BY sort_order ASC"
     );
-    $stmt->execute(['cid' => $campaignId]);
+    $stmt->execute(['cid' => $campaignId, 'tid' => crm_tenant_id()]);
     $recipients = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
     $cumulative = 0;
@@ -152,8 +157,9 @@ function bet_assign_lead(PDO $pdo, int $contactId, int $cleanerId, string $regio
     $campaignId = $campaign['id'];
 
     // Idempotence — pokud kontakt už v jakékoli sázce je, neudělej nic
-    $check = $pdo->prepare("SELECT id FROM bet_campaign_leads WHERE contact_id = ? LIMIT 1");
-    $check->execute([$contactId]);
+    // Multi-tenant filter
+    $check = $pdo->prepare("SELECT id FROM bet_campaign_leads WHERE contact_id = ? AND tenant_id = ? LIMIT 1");
+    $check->execute([$contactId, crm_tenant_id()]);
     if ($check->fetchColumn() !== false) {
         return null;
     }
@@ -161,11 +167,12 @@ function bet_assign_lead(PDO $pdo, int $contactId, int $cleanerId, string $regio
     $pdo->beginTransaction();
     try {
         // Atomicky: zamknout řádek sázky, načíst aktuální cleaned_count, určit position
+        // Multi-tenant filter
         $lockStmt = $pdo->prepare(
             "SELECT cleaned_count, target_count FROM bet_campaigns
-             WHERE id = :cid AND status = 'open' FOR UPDATE"
+             WHERE id = :cid AND status = 'open' AND tenant_id = :tid FOR UPDATE"
         );
-        $lockStmt->execute(['cid' => $campaignId]);
+        $lockStmt->execute(['cid' => $campaignId, 'tid' => crm_tenant_id()]);
         $cur = $lockStmt->fetch(PDO::FETCH_ASSOC);
         if (!$cur) {
             $pdo->rollBack();
@@ -201,14 +208,15 @@ function bet_assign_lead(PDO $pdo, int $contactId, int $cleanerId, string $regio
             'cb'  => $cleanerId,
         ]);
 
-        // Inkrement counts
+        // Multi-tenant: tenant filter ve všech UPDATEs
+        $tid = crm_tenant_id();
         $pdo->prepare(
-            "UPDATE bet_campaigns SET cleaned_count = cleaned_count + 1 WHERE id = :cid"
-        )->execute(['cid' => $campaignId]);
+            "UPDATE bet_campaigns SET cleaned_count = cleaned_count + 1 WHERE id = :cid AND tenant_id = :tid"
+        )->execute(['cid' => $campaignId, 'tid' => $tid]);
 
         $pdo->prepare(
-            "UPDATE bet_campaign_recipients SET received_count = received_count + 1 WHERE id = :rid"
-        )->execute(['rid' => $recipient['id']]);
+            "UPDATE bet_campaign_recipients SET received_count = received_count + 1 WHERE id = :rid AND tenant_id = :tid"
+        )->execute(['rid' => $recipient['id'], 'tid' => $tid]);
 
         // Aplikace na contacts:
         //   - assigned_sales_id vždy = oz_id recipient
@@ -218,13 +226,13 @@ function bet_assign_lead(PDO $pdo, int $contactId, int $cleanerId, string $regio
             $pdo->prepare(
                 "UPDATE contacts SET assigned_sales_id = :oz, stav = 'EMAIL_READY',
                     locked_by = NULL, locked_until = NULL, updated_at = NOW(3)
-                 WHERE id = :id"
-            )->execute(['oz' => $recipient['oz_id'], 'id' => $contactId]);
+                 WHERE id = :id AND tenant_id = :tid"
+            )->execute(['oz' => $recipient['oz_id'], 'id' => $contactId, 'tid' => $tid]);
         } else {
             $pdo->prepare(
                 "UPDATE contacts SET assigned_sales_id = :oz, updated_at = NOW(3)
-                 WHERE id = :id"
-            )->execute(['oz' => $recipient['oz_id'], 'id' => $contactId]);
+                 WHERE id = :id AND tenant_id = :tid"
+            )->execute(['oz' => $recipient['oz_id'], 'id' => $contactId, 'tid' => $tid]);
         }
 
         // Auto-close pokud dosaženo
@@ -232,8 +240,8 @@ function bet_assign_lead(PDO $pdo, int $contactId, int $cleanerId, string $regio
         if ($position >= $targetCount) {
             $pdo->prepare(
                 "UPDATE bet_campaigns SET status = 'closed', closed_at = NOW(3)
-                 WHERE id = :cid AND status = 'open'"
-            )->execute(['cid' => $campaignId]);
+                 WHERE id = :cid AND status = 'open' AND tenant_id = :tid"
+            )->execute(['cid' => $campaignId, 'tid' => $tid]);
             $closed = true;
         }
 
@@ -280,13 +288,14 @@ function bet_unassign_lead(PDO $pdo, int $contactId): ?array
     $pdo->beginTransaction();
     try {
         // 1. Najdi lead záznam (s lockem)
+        // Multi-tenant filter
         $leadStmt = $pdo->prepare(
             "SELECT id, campaign_id, recipient_id, position
              FROM bet_campaign_leads
-             WHERE contact_id = ?
+             WHERE contact_id = ? AND tenant_id = ?
              FOR UPDATE"
         );
-        $leadStmt->execute([$contactId]);
+        $leadStmt->execute([$contactId, crm_tenant_id()]);
         $lead = $leadStmt->fetch(PDO::FETCH_ASSOC);
         if (!$lead) {
             $pdo->rollBack();
@@ -299,42 +308,45 @@ function bet_unassign_lead(PDO $pdo, int $contactId): ?array
         $position    = (int) $lead['position'];
 
         // 2. Najdi oz_id pro vrácený údaj (kvůli logu / fronendovi)
-        $rStmt = $pdo->prepare("SELECT oz_id FROM bet_campaign_recipients WHERE id = ?");
-        $rStmt->execute([$recipientId]);
+        // Multi-tenant: tenant filter ve všech queries
+        $tid = crm_tenant_id();
+        $rStmt = $pdo->prepare("SELECT oz_id FROM bet_campaign_recipients WHERE id = ? AND tenant_id = ?");
+        $rStmt->execute([$recipientId, $tid]);
         $ozId = (int) ($rStmt->fetchColumn() ?: 0);
 
         // 3. DELETE lead
-        $pdo->prepare("DELETE FROM bet_campaign_leads WHERE id = ?")->execute([$leadId]);
+        $pdo->prepare("DELETE FROM bet_campaign_leads WHERE id = ? AND tenant_id = ?")->execute([$leadId, $tid]);
 
         // 4. Decrement counts (s ochranou proti záporným hodnotám)
         $pdo->prepare(
             "UPDATE bet_campaigns
              SET cleaned_count = GREATEST(cleaned_count - 1, 0)
-             WHERE id = ?"
-        )->execute([$campaignId]);
+             WHERE id = ? AND tenant_id = ?"
+        )->execute([$campaignId, $tid]);
 
         $pdo->prepare(
             "UPDATE bet_campaign_recipients
              SET received_count = GREATEST(received_count - 1, 0)
-             WHERE id = ?"
-        )->execute([$recipientId]);
+             WHERE id = ? AND tenant_id = ?"
+        )->execute([$recipientId, $tid]);
 
         // 5. Uvolnit assigned_sales_id na contacts (ať nezůstane dangling pointer)
         $pdo->prepare(
             "UPDATE contacts
              SET assigned_sales_id = NULL, updated_at = NOW(3)
-             WHERE id = ?"
-        )->execute([$contactId]);
+             WHERE id = ? AND tenant_id = ?"
+        )->execute([$contactId, $tid]);
 
         // 6. Reopen sázky, pokud byla auto-closed a teď je opět pod cílem
         $pdo->prepare(
             "UPDATE bet_campaigns
              SET status = 'open', closed_at = NULL
              WHERE id = ?
+               AND tenant_id = ?
                AND status = 'closed'
                AND closed_at IS NOT NULL
                AND cleaned_count < target_count"
-        )->execute([$campaignId]);
+        )->execute([$campaignId, $tid]);
 
         $pdo->commit();
 
@@ -362,15 +374,16 @@ function bet_unassign_lead(PDO $pdo, int $contactId): ?array
  */
 function bet_get_active_for_dashboard(PDO $pdo, array $regions = []): array
 {
+    // Multi-tenant
     $sql = "SELECT id, name, region, target_count, cleaned_count
             FROM bet_campaigns
-            WHERE status = 'open'";
-    $params = [];
+            WHERE status = 'open' AND tenant_id = ?";
+    $params = [crm_tenant_id()];
 
     if ($regions !== []) {
         $ph = implode(',', array_fill(0, count($regions), '?'));
         $sql .= " AND region IN ($ph)";
-        $params = $regions;
+        $params = array_merge($params, $regions);
     }
     $sql .= " ORDER BY created_at ASC";
 
@@ -382,7 +395,7 @@ function bet_get_active_for_dashboard(PDO $pdo, array $regions = []): array
         return [];
     }
 
-    // Načti recipients pro všechny sázky najednou
+    // Načti recipients pro všechny sázky najednou — multi-tenant
     $ids = array_map(fn($r) => (int) $r['id'], $campaigns);
     $ph2 = implode(',', array_fill(0, count($ids), '?'));
     $rStmt = $pdo->prepare(
@@ -390,10 +403,10 @@ function bet_get_active_for_dashboard(PDO $pdo, array $regions = []): array
                 r.delivery_type, r.sort_order, u.jmeno
          FROM bet_campaign_recipients r
          LEFT JOIN users u ON u.id = r.oz_id
-         WHERE r.campaign_id IN ($ph2)
+         WHERE r.campaign_id IN ($ph2) AND r.tenant_id = ?
          ORDER BY r.campaign_id, r.sort_order ASC"
     );
-    $rStmt->execute($ids);
+    $rStmt->execute(array_merge($ids, [crm_tenant_id()]));
     $allRecipients = $rStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
     $byCampaign = [];

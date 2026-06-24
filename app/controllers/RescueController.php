@@ -48,14 +48,17 @@ final class RescueController
             if ($targetSalesId <= 0) {
                 $this->jsonOrFlash($isAjax, ['ok' => false, 'error' => 'Pro "Předat jinému OZ" musíte vybrat konkrétního OZ.']);
             }
-            // Validace: target musí být aktivní obchodák
+            // Validace: target musí být aktivní obchodák tohoto tenantu (přes user_tenants)
             $vStmt = $this->pdo->prepare(
-                "SELECT id FROM users WHERE id = ? AND aktivni = 1 AND (
-                    role = 'obchodak'
-                    OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"')
+                "SELECT u.id FROM users u
+                 INNER JOIN user_tenants ut
+                     ON ut.user_id = u.id AND ut.tenant_id = ? AND ut.active = 1
+                 WHERE u.id = ? AND u.aktivni = 1 AND (
+                    u.role = 'obchodak'
+                    OR JSON_CONTAINS(IFNULL(u.roles_extra, '[]'), '\"obchodak\"')
                  )"
             );
-            $vStmt->execute([$targetSalesId]);
+            $vStmt->execute([crm_tenant_id(), $targetSalesId]);
             if ($vStmt->fetchColumn() === false) {
                 $this->jsonOrFlash($isAjax, ['ok' => false, 'error' => 'Vybraný OZ neexistuje nebo není aktivní.']);
             }
@@ -196,7 +199,8 @@ final class RescueController
         $user = crm_require_user($this->pdo);
         crm_require_roles($user, ['majitel', 'superadmin']);
 
-        $stmt = $this->pdo->query(
+        // Multi-tenant filter
+        $stmt = $this->pdo->prepare(
             "SELECT rr.*,
                     c.firma, c.telefon, c.region,
                     uo.jmeno AS original_sales_name,
@@ -205,19 +209,21 @@ final class RescueController
                     urc.jmeno AS rescued_by_caller_name,
                     uoc.jmeno AS original_caller_name
              FROM rescue_requests rr
-             LEFT JOIN contacts c   ON c.id   = rr.contact_id
+             LEFT JOIN contacts c   ON c.id   = rr.contact_id AND c.tenant_id = rr.tenant_id
              LEFT JOIN users uo     ON uo.id  = rr.original_sales_id
              LEFT JOIN users ut     ON ut.id  = rr.target_sales_id
              LEFT JOIN users uf     ON uf.id  = rr.final_sales_id
              LEFT JOIN users urc    ON urc.id = rr.rescued_by_caller_id
              LEFT JOIN users uoc    ON uoc.id = rr.original_caller_id
+             WHERE rr.tenant_id = :tid
              ORDER BY
                  (rr.outcome = 'pending') DESC,
                  (rr.outcome = 'success' AND rr.bonus_amount IS NOT NULL AND rr.bonus_paid_at IS NULL) DESC,
                  rr.requested_at DESC
              LIMIT 200"
         );
-        $rescues = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        $stmt->execute(['tid' => crm_tenant_id()]);
+        $rescues = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $flash = crm_flash_take();
         $csrf  = crm_csrf_token();

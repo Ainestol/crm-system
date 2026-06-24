@@ -32,6 +32,14 @@ final class Router
                 'roles' => [],
                 'handler' => [LoginController::class, 'getLogin'],
             ],
+            // Suspended landing — accessible without auth (tenants s prošlým předplatným)
+            [
+                'method' => 'GET',
+                'path' => '/suspended',
+                'auth' => false,
+                'roles' => [],
+                'handler' => [SuspendedController::class, 'getIndex'],
+            ],
             [
                 'method' => 'POST',
                 'path' => '/login',
@@ -175,6 +183,86 @@ final class Router
                 'auth' => true,
                 'roles' => ['superadmin', 'majitel', 'navolavacka', 'obchodak', 'backoffice', 'cisticka'],
                 'handler' => [AccountController::class, 'postChangePassword'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/tenants/switch',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminTenantsController::class, 'postSwitch'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/debug/tenant',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminTenantsController::class, 'getDebug'],
+            ],
+            // Super-admin: správa firem (tenants management)
+            [
+                'method' => 'GET',
+                'path' => '/admin/tenants',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel'],
+                'handler' => [AdminTenantsController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/admin/tenants/edit',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel'],
+                'handler' => [AdminTenantsController::class, 'getEdit'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/tenants/save',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel'],
+                'handler' => [AdminTenantsController::class, 'postSave'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/tenants/apply-plan',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel'],
+                'handler' => [AdminTenantsController::class, 'postApplyPlan'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/tenants/log-payment',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel'],
+                'handler' => [AdminTenantsController::class, 'postLogPayment'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/tenants/save-branding',
+                'auth' => true,
+                'roles' => ['superadmin', 'majitel'],
+                'handler' => [AdminTenantsController::class, 'postSaveBranding'],
+            ],
+            // Owner dashboard — výkonnostní přehled pro majitele firmy
+            [
+                'method' => 'GET',
+                'path' => '/owner-dashboard',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [OwnerDashboardController::class, 'getIndex'],
+            ],
+            // Konfigurace bodování per role (per-tenant)
+            [
+                'method' => 'GET',
+                'path' => '/admin/activity-scoring',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminActivityScoringController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/admin/activity-scoring/save',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [AdminActivityScoringController::class, 'postSave'],
             ],
             [
                 'method' => 'GET',
@@ -531,6 +619,14 @@ final class Router
                 'roles' => ['navolavacka'],
                 'handler' => [CallerController::class, 'postEditContact'],
             ],
+            // Navolávačka: rychlá inline úprava příležitosti (AJAX, klik na příležitost)
+            [
+                'method' => 'POST',
+                'path' => '/caller/set-prilez',
+                'auth' => true,
+                'roles' => ['navolavacka'],
+                'handler' => [CallerController::class, 'postSetPrilez'],
+            ],
             [
                 'method' => 'GET',
                 'path' => '/caller/search',
@@ -838,14 +934,14 @@ final class Router
                 'method' => 'GET',
                 'path' => '/help',
                 'auth' => true,
-                'roles' => ['majitel', 'superadmin'],
+                'roles' => ['cisticka', 'navolavacka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
                 'handler' => [HelpController::class, 'getIndex'],
             ],
             [
                 'method' => 'GET',
                 'path' => '/help/topic',
                 'auth' => true,
-                'roles' => ['majitel', 'superadmin'],
+                'roles' => ['cisticka', 'navolavacka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
                 'handler' => [HelpController::class, 'getDetail'],
             ],
             // ── OZ: podání reklamace ──
@@ -1041,12 +1137,20 @@ final class Router
                 'roles'  => ['obchodak', 'majitel', 'superadmin'],
                 'handler'=> [OzController::class, 'postContactEdit'],
             ],
+            // OZ: rychlá inline úprava příležitosti (AJAX, klik na příležitost)
+            [
+                'method' => 'POST',
+                'path'   => '/oz/set-prilez',
+                'auth'   => true,
+                'roles'  => ['obchodak', 'majitel', 'superadmin'],
+                'handler'=> [OzController::class, 'postSetPrilez'],
+            ],
             // ── ARES lookup proxy (vyžaduje 8-místné IČO) ──
             [
                 'method' => 'GET',
                 'path'   => '/oz/ares-lookup',
                 'auth'   => true,
-                'roles'  => ['obchodak', 'majitel', 'superadmin', 'backoffice'],
+                'roles'  => ['obchodak', 'majitel', 'superadmin', 'backoffice', 'navolavacka'],
                 'handler'=> [OzController::class, 'getAresLookup'],
             ],
             // ── OZ: přizpůsobitelné záložky (skrytí / připnutí) ──
@@ -1371,6 +1475,13 @@ final class Router
                 'auth'   => true,
                 'roles'  => ['cisticka', 'majitel', 'superadmin'],
                 'handler'=> [PremiumCistickaController::class, 'postVerify'],
+            ],
+            [
+                'method' => 'POST',
+                'path'   => '/cisticka/premium/prilez',
+                'auth'   => true,
+                'roles'  => ['cisticka', 'majitel', 'superadmin'],
+                'handler'=> [PremiumCistickaController::class, 'postPrilez'],
             ],
             [
                 'method' => 'POST',

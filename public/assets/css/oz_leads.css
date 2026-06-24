@@ -108,7 +108,15 @@
    Sémantická barva zůstává navždy v EMOJI ikoně tabu (🟡 📨 💡 atd.).
    ══════════════════════════════════════════════════════════════════ */
 
-.oz-tabs { display: flex; flex-wrap: wrap; gap: 0.15rem; margin-bottom: 1rem; }
+/* Pás tabů — podbarvený band, ať OZ rychle najde pruh, kam přesouvá karty. */
+.oz-tabs {
+    display: flex; flex-wrap: wrap; gap: 0.25rem;
+    margin-bottom: 1rem;
+    padding: 0.4rem 0.5rem;
+    background: linear-gradient(180deg, rgba(37,99,235,0.07), rgba(37,99,235,0.025));
+    border: 1px solid rgba(37,99,235,0.18);
+    border-radius: 10px;
+}
 
 .oz-tab {
     display: inline-flex; align-items: center; gap: 0.3rem;
@@ -116,15 +124,17 @@
     border-radius: 7px; font-size: 0.85rem; font-weight: 500;
     text-decoration: none;
     color: var(--muted);
-    opacity: 0.55;
+    opacity: 0.7;
     background: transparent;
     border: 1px solid transparent;
-    transition: opacity 0.18s, color 0.18s, background 0.15s, border-color 0.15s;
+    transition: opacity 0.15s, color 0.15s, background 0.15s, border-color 0.15s, transform 0.1s;
 }
 .oz-tab:hover {
-    opacity: 0.92;
+    opacity: 1;
     color: var(--text);
-    background: rgba(255,255,255,0.04);
+    background: rgba(37,99,235,0.12);
+    border-color: rgba(37,99,235,0.28);
+    transform: translateY(-1px);
 }
 
 .oz-badge {

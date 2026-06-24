@@ -26,19 +26,24 @@ final class AdminOzTargetsController
         $year  = max(2024, min(2030, (int) ($_GET['year']  ?? date('Y'))));
         $month = max(1,    min(12,   (int) ($_GET['month'] ?? date('n'))));
 
-        // Všichni aktivní OZ — primární role NEBO multi-role obchodák (z roles_extra)
-        // Bez tohoto bys minul uživatele kteří mají primární `majitel` a obchodáka
-        // jen jako sekundární roli (typický pattern u majitel-obchodáků).
-        $ozList = $this->pdo->query(
-            "SELECT id, jmeno FROM users
-             WHERE aktivni = 1
-               AND (role = 'obchodak'
-                    OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"'))
-             ORDER BY jmeno ASC"
+        // Všichni aktivní OZ — multi-tenant přes user_tenants. Primární role NEBO
+        // multi-role obchodák (z roles_extra). Bez tohoto bys minul uživatele
+        // kteří mají primární `majitel` a obchodáka jen jako sekundární roli.
+        $ozStmt = $this->pdo->prepare(
+            "SELECT u.id, u.jmeno
+             FROM users u
+             INNER JOIN user_tenants ut
+                 ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1
+             WHERE u.aktivni = 1
+               AND (u.role = 'obchodak'
+                    OR JSON_CONTAINS(IFNULL(u.roles_extra, '[]'), '\"obchodak\"'))
+             ORDER BY u.jmeno ASC"
         );
-        $ozList = $ozList ? $ozList->fetchAll(PDO::FETCH_ASSOC) : [];
+        $ozStmt->execute(['tid' => crm_tenant_id()]);
+        $ozList = $ozStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-        // Regiony každého OZ z user_regions
+        // Regiony každého OZ z user_regions (user_regions je globální tabulka,
+        // ale uživatel již prošel tenant filtrem nahoře)
         $ozRegions = [];
         foreach ($ozList as $oz) {
             $rs = $this->pdo->prepare(
@@ -48,43 +53,45 @@ final class AdminOzTargetsController
             $ozRegions[(int) $oz['id']] = $rs->fetchAll(PDO::FETCH_COLUMN) ?: [];
         }
 
-        // Uložené kvóty pro daný měsíc
+        // Uložené kvóty pro daný měsíc — per tenant
         $savedTargets = [];
         $tStmt = $this->pdo->prepare(
             'SELECT user_id, region, target_count FROM oz_targets
-             WHERE year = :y AND month = :m'
+             WHERE year = :y AND month = :m AND tenant_id = :tid'
         );
-        $tStmt->execute(['y' => $year, 'm' => $month]);
+        $tStmt->execute(['y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
         foreach ($tStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $savedTargets[(int) $row['user_id']][(string) $row['region']] = (int) $row['target_count'];
         }
 
-        // Přijaté leady tento měsíc per OZ per region
+        // Přijaté leady tento měsíc per OZ per region — per tenant
         $received = [];
         $rStmt = $this->pdo->prepare(
             "SELECT c.assigned_sales_id AS uid, c.region, COUNT(*) AS cnt
              FROM contacts c
              WHERE c.stav = 'CALLED_OK'
                AND c.assigned_sales_id IS NOT NULL
+               AND c.tenant_id = :tid
                AND YEAR(c.datum_volani) = :y
                AND MONTH(c.datum_volani) = :m
              GROUP BY c.assigned_sales_id, c.region"
         );
-        $rStmt->execute(['y' => $year, 'm' => $month]);
+        $rStmt->execute(['y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
         foreach ($rStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $received[(int) $row['uid']][(string) $row['region']] = (int) $row['cnt'];
         }
 
-        // Počet reklamací per OZ per region
+        // Počet reklamací per OZ per region — per tenant
         $flagged = [];
         $fStmt = $this->pdo->prepare(
             "SELECT c.assigned_sales_id AS uid, c.region, COUNT(*) AS cnt
              FROM contact_oz_flags f
-             JOIN contacts c ON c.id = f.contact_id
-             WHERE YEAR(c.datum_volani) = :y AND MONTH(c.datum_volani) = :m
+             JOIN contacts c ON c.id = f.contact_id AND c.tenant_id = f.tenant_id
+             WHERE f.tenant_id = :tid
+               AND YEAR(c.datum_volani) = :y AND MONTH(c.datum_volani) = :m
              GROUP BY c.assigned_sales_id, c.region"
         );
-        $fStmt->execute(['y' => $year, 'm' => $month]);
+        $fStmt->execute(['y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
         foreach ($fStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $flagged[(int) $row['uid']][(string) $row['region']] = (int) $row['cnt'];
         }
@@ -268,11 +275,15 @@ final class AdminOzTargetsController
      */
     public function loadDetailData(int $ozId, int $year, int $month): array
     {
-        // Info o OZ
+        // Info o OZ — multi-tenant přes user_tenants
         $ozStmt = $this->pdo->prepare(
-            "SELECT id, jmeno FROM users WHERE id = :id AND role = 'obchodak'"
+            "SELECT u.id, u.jmeno
+             FROM users u
+             INNER JOIN user_tenants ut
+                 ON ut.user_id = u.id AND ut.tenant_id = :tid AND ut.active = 1
+             WHERE u.id = :id AND u.role = 'obchodak'"
         );
-        $ozStmt->execute(['id' => $ozId]);
+        $ozStmt->execute(['id' => $ozId, 'tid' => crm_tenant_id()]);
         $oz = $ozStmt->fetch(PDO::FETCH_ASSOC);
         if (!$oz) {
             http_response_code(404);
@@ -280,18 +291,18 @@ final class AdminOzTargetsController
             exit;
         }
 
-        // Kvóty tohoto OZ
+        // Kvóty tohoto OZ — per tenant
         $tgtStmt = $this->pdo->prepare(
             'SELECT region, target_count FROM oz_targets
-             WHERE user_id = :uid AND year = :y AND month = :m'
+             WHERE user_id = :uid AND year = :y AND month = :m AND tenant_id = :tid'
         );
-        $tgtStmt->execute(['uid' => $ozId, 'y' => $year, 'm' => $month]);
+        $tgtStmt->execute(['uid' => $ozId, 'y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
         $targets = [];
         foreach ($tgtStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $targets[(string) $row['region']] = (int) $row['target_count'];
         }
 
-        // Kontakty CALLED_OK přidělené tomuto OZ tento měsíc + caller info + flag
+        // Kontakty CALLED_OK přidělené tomuto OZ tento měsíc + caller info + flag — per tenant
         $cStmt = $this->pdo->prepare(
             "SELECT c.id, c.firma, c.telefon, c.region, c.datum_volani, c.poznamka,
                     u.id AS caller_id, u.jmeno AS caller_name,
@@ -300,14 +311,20 @@ final class AdminOzTargetsController
                     f.flagged_at
              FROM contacts c
              LEFT JOIN users u ON u.id = c.assigned_caller_id
-             LEFT JOIN contact_oz_flags f ON f.contact_id = c.id AND f.oz_id = :oz_id
+             LEFT JOIN contact_oz_flags f
+                    ON f.contact_id = c.id AND f.oz_id = :oz_id
+                    AND f.tenant_id = c.tenant_id
              WHERE c.stav = 'CALLED_OK'
                AND c.assigned_sales_id = :oz_id2
+               AND c.tenant_id = :tid
                AND YEAR(c.datum_volani) = :y
                AND MONTH(c.datum_volani) = :m
              ORDER BY u.jmeno ASC, c.region ASC, c.datum_volani ASC"
         );
-        $cStmt->execute(['oz_id' => $ozId, 'oz_id2' => $ozId, 'y' => $year, 'm' => $month]);
+        $cStmt->execute([
+            'oz_id' => $ozId, 'oz_id2' => $ozId,
+            'y' => $year, 'm' => $month, 'tid' => crm_tenant_id(),
+        ]);
         $contacts = $cStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         // Seskupit per navolávačka
@@ -330,13 +347,15 @@ final class AdminOzTargetsController
             $byCaller[$cid]['byRegion'][(string) $c['region']][] = $c;
         }
 
-        // Odměna za výhru (základní sazba)
-        $rewardRow = $this->pdo->query(
+        // Odměna za výhru (základní sazba) — per tenant
+        $rewardStmt = $this->pdo->prepare(
             'SELECT amount_czk FROM caller_rewards_config
              WHERE valid_from <= CURDATE() AND (valid_to IS NULL OR valid_to >= CURDATE())
+               AND tenant_id = :tid
              ORDER BY valid_from DESC LIMIT 1'
         );
-        $rewardPerWin = $rewardRow ? (float) ($rewardRow->fetchColumn() ?: 0) : 0.0;
+        $rewardStmt->execute(['tid' => crm_tenant_id()]);
+        $rewardPerWin = (float) ($rewardStmt->fetchColumn() ?: 0);
 
         return [$oz, $targets, $contacts, $byCaller, $rewardPerWin];
     }

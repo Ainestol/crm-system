@@ -1031,86 +1031,129 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
                             <?php } ?>
                         </div>
 
-                        <!-- Kontaktní údaje (vždy editovatelné) -->
-                        <div class="contact-details">
-                            <?php
-                            /** @var array<int,list<array<string,mixed>>> $phonesByContact */
-                            $cPhones = $phonesByContact[$cId] ?? [];
-                            $opBadgeColors = [
-                                'TM' => ['#ec4899', '#fff'],   // růžová
-                                'O2' => ['#2563eb', '#fff'],   // modrá
-                                'VF' => ['#dc2626', '#fff'],   // červená
-                                'CHYBNY' => ['#9ca3af', '#fff'],
-                            ];
-                            ?>
-                            <?php if (count($cPhones) > 1) { ?>
-                                <!-- Multi-telefon kontakt — každý telefon vlastní řádek s badge operátora -->
-                                <span class="editable-group" style="flex-direction:column;align-items:flex-start;gap:0.2rem;">
-                                    <?php foreach ($cPhones as $cp) {
-                                        $cpPhone = (string) ($cp['phone'] ?? '');
-                                        $cpOp    = strtoupper((string) ($cp['operator'] ?? ''));
-                                        [$cpBg, $cpFg] = $opBadgeColors[$cpOp] ?? ['#9ca3af', '#fff'];
-                                    ?>
-                                        <span style="display:inline-flex;align-items:center;gap:0.3rem;">
-                                            <a href="tel:<?= crm_h($cpPhone) ?>" class="contact-phone editable-val"><?= crm_h($cpPhone) ?></a>
-                                            <?php if ($cpOp !== '') { ?>
-                                                <span style="background:<?= $cpBg ?>;color:<?= $cpFg ?>;
-                                                             font-size:0.62rem;font-weight:700;
-                                                             padding:0.05rem 0.35rem;border-radius:6px;">
-                                                    <?= crm_h($cpOp) ?>
-                                                </span>
-                                            <?php } ?>
-                                        </span>
-                                    <?php } ?>
-                                    <button type="button" class="btn-edit-field"
-                                            onclick="crmEdit(<?= $cId ?>, 'telefon', this)"
-                                            title="Upravit telefon">✎</button>
-                                </span>
-                            <?php } else { ?>
+                        <!-- Kontaktní údaje — dvousloupcový blok: vlevo kontakt, vpravo identifikace -->
+                        <?php
+                        /** @var array<int,list<array<string,mixed>>> $phonesByContact */
+                        $cPhones = $phonesByContact[$cId] ?? [];
+                        $opBadgeColors = [
+                            'TM' => ['#ec4899', '#fff'],   // růžová
+                            'O2' => ['#2563eb', '#fff'],   // modrá
+                            'VF' => ['#dc2626', '#fff'],   // červená
+                            'CHYBNY' => ['#9ca3af', '#fff'],
+                        ];
+                        ?>
+                        <div class="contact-details contact-details--2col">
+                            <!-- Levý sloupec: kontakt (telefon, email) -->
+                            <div class="cd-col cd-col--contact">
+                                <?php if (count($cPhones) > 1) { ?>
+                                    <!-- Multi-telefon kontakt — každý telefon vlastní řádek s badge operátora -->
+                                    <span class="editable-group" style="flex-direction:column;align-items:flex-start;gap:0.2rem;">
+                                        <?php foreach ($cPhones as $cp) {
+                                            $cpPhone = (string) ($cp['phone'] ?? '');
+                                            $cpOp    = strtoupper((string) ($cp['operator'] ?? ''));
+                                            [$cpBg, $cpFg] = $opBadgeColors[$cpOp] ?? ['#9ca3af', '#fff'];
+                                        ?>
+                                            <span style="display:inline-flex;align-items:center;gap:0.3rem;">
+                                                <a href="tel:<?= crm_h($cpPhone) ?>" class="contact-phone editable-val"><?= crm_h($cpPhone) ?></a>
+                                                <?php if ($cpOp !== '') { ?>
+                                                    <span style="background:<?= $cpBg ?>;color:<?= $cpFg ?>;
+                                                                 font-size:0.62rem;font-weight:700;
+                                                                 padding:0.05rem 0.35rem;border-radius:6px;">
+                                                        <?= crm_h($cpOp) ?>
+                                                    </span>
+                                                <?php } ?>
+                                            </span>
+                                        <?php } ?>
+                                        <button type="button" class="btn-edit-field"
+                                                onclick="crmEdit(<?= $cId ?>, 'telefon', this)"
+                                                title="Upravit telefon">✎</button>
+                                    </span>
+                                <?php } else { ?>
+                                    <span class="editable-group">
+                                        <?php if (!empty($c['telefon'])) { ?>
+                                            <a href="tel:<?= crm_h((string) $c['telefon']) ?>"
+                                               class="contact-phone editable-val" id="val-telefon-<?= $cId ?>"><?= crm_h((string) $c['telefon']) ?></a>
+                                        <?php } else { ?>
+                                            <span class="editable-val contact-muted" id="val-telefon-<?= $cId ?>">—</span>
+                                        <?php } ?>
+                                        <button type="button" class="btn-edit-field"
+                                                onclick="crmEdit(<?= $cId ?>, 'telefon', this)"
+                                                title="Upravit telefon">✎</button>
+                                    </span>
+                                <?php } ?>
+
                                 <span class="editable-group">
-                                    <?php if (!empty($c['telefon'])) { ?>
-                                        <a href="tel:<?= crm_h((string) $c['telefon']) ?>"
-                                           class="contact-phone editable-val" id="val-telefon-<?= $cId ?>"><?= crm_h((string) $c['telefon']) ?></a>
-                                    <?php } else { ?>
-                                        <span class="editable-val contact-muted" id="val-telefon-<?= $cId ?>">—</span>
-                                    <?php } ?>
+                                    <span class="editable-val contact-email" id="val-email-<?= $cId ?>"><?= crm_h((string) ($c['email'] ?? '—')) ?></span>
                                     <button type="button" class="btn-edit-field"
-                                            onclick="crmEdit(<?= $cId ?>, 'telefon', this)"
-                                            title="Upravit telefon">✎</button>
+                                            onclick="crmEdit(<?= $cId ?>, 'email', this)"
+                                            title="Upravit e-mail">✎</button>
                                 </span>
-                            <?php } ?>
+                            </div>
 
-                            <span class="editable-group">
-                                <span class="editable-val contact-email" id="val-email-<?= $cId ?>"><?= crm_h((string) ($c['email'] ?? '—')) ?></span>
-                                <button type="button" class="btn-edit-field"
-                                        onclick="crmEdit(<?= $cId ?>, 'email', this)"
-                                        title="Upravit e-mail">✎</button>
-                            </span>
+                            <!-- Pravý sloupec: identifikace (IČO, adresa, kraj) -->
+                            <div class="cd-col cd-col--ident">
+                                <span class="editable-group">
+                                    <span class="label-sm">IČO:</span>
+                                    <span class="editable-val contact-muted" id="val-ico-<?= $cId ?>"><?= crm_h((string) ($c['ico'] ?? '—')) ?></span>
+                                    <button type="button" class="btn-edit-field"
+                                            onclick="crmEdit(<?= $cId ?>, 'ico', this)"
+                                            title="Upravit IČO">✎</button>
+                                </span>
 
-                            <span class="editable-group">
-                                <span class="label-sm">IČO:</span>
-                                <span class="editable-val contact-muted" id="val-ico-<?= $cId ?>"><?= crm_h((string) ($c['ico'] ?? '—')) ?></span>
-                                <button type="button" class="btn-edit-field"
-                                        onclick="crmEdit(<?= $cId ?>, 'ico', this)"
-                                        title="Upravit IČO">✎</button>
-                            </span>
+                                <span class="editable-group">
+                                    <span class="label-sm">Adresa:</span>
+                                    <span class="editable-val contact-city" id="val-adresa-<?= $cId ?>"><?= crm_h((string) ($c['adresa'] ?? '—')) ?></span>
+                                    <button type="button" class="btn-edit-field"
+                                            onclick="crmEdit(<?= $cId ?>, 'adresa', this)"
+                                            title="Upravit adresu / město">✎</button>
+                                    <button type="button" class="btn-ares-fill"
+                                            onclick="callerAresFill(<?= $cId ?>, this)"
+                                            title="Doplnit adresu z ARES podle IČO (předvyplní k revizi)"
+                                            style="margin-left:0.3rem;font-size:0.66rem;padding:0.05rem 0.4rem;
+                                                   border-radius:3px;cursor:pointer;color:#2563eb;
+                                                   background:rgba(37,99,235,0.1);border:1px solid rgba(37,99,235,0.35);
+                                                   font-family:inherit;font-weight:700;white-space:nowrap;">📋 ARES</button>
+                                </span>
 
-                            <span class="editable-group">
-                                <span class="label-sm">Adresa:</span>
-                                <span class="editable-val contact-city" id="val-adresa-<?= $cId ?>"><?= crm_h((string) ($c['adresa'] ?? '—')) ?></span>
-                                <button type="button" class="btn-edit-field"
-                                        onclick="crmEdit(<?= $cId ?>, 'adresa', this)"
-                                        title="Upravit adresu / město">✎</button>
-                            </span>
+                                <?php if (!empty($c['region'])) { ?>
+                                <span class="editable-group">
+                                    <span class="label-sm">Kraj:</span>
+                                    <span class="contact-muted"><?= crm_h(crm_region_label((string) $c['region'])) ?></span>
+                                </span>
+                                <?php } ?>
+
+                                <!-- Příležitost — klikni pro rychlou úpravu -->
+                                <?php
+                                $cPrilez   = trim((string)($c['prilez'] ?? ''));
+                                $cPrilezDo = (string)($c['prilez_do'] ?? '');
+                                if ($cPrilezDo === '0000-00-00') { $cPrilezDo = ''; }
+                                $cPrilezTxt  = ($cPrilez === 'ano') ? '' : $cPrilez;
+                                $cPrilezShow = $cPrilez === '' ? '— bez příležitosti'
+                                             : ($cPrilez === 'ano' ? 'má příležitost' : $cPrilez);
+                                $cPrilezDoFmt = '';
+                                if ($cPrilezDo !== '') { $tsp = strtotime($cPrilezDo); if ($tsp) { $cPrilezDoFmt = date('d.m.Y', $tsp); } }
+                                ?>
+                                <span class="editable-group" style="align-items:flex-start;">
+                                    <span class="label-sm">Přílež.:</span>
+                                    <span id="cpril-view-<?= $cId ?>" onclick="callerPrilezEdit(<?= $cId ?>)"
+                                          title="Klikni pro úpravu příležitosti"
+                                          style="cursor:pointer;border-bottom:1px dashed rgba(37,99,235,0.5);font-size:0.85rem;">
+                                        <?= crm_h($cPrilezShow) ?><?php if ($cPrilezDoFmt !== '') { ?> <span class="contact-muted" style="font-size:0.75rem;">(do <?= crm_h($cPrilezDoFmt) ?>)</span><?php } ?>
+                                        <span style="color:#2563eb;font-size:0.7rem;">✏️</span>
+                                    </span>
+                                    <span id="cpril-edit-<?= $cId ?>" style="display:none;flex-wrap:wrap;gap:0.25rem;align-items:center;">
+                                        <input type="text" id="cpril-txt-<?= $cId ?>" maxlength="255" value="<?= crm_h($cPrilezTxt) ?>"
+                                               placeholder="poznámka (prázdné = nemá)"
+                                               onkeydown="if(event.key==='Enter'){event.preventDefault();callerPrilezSave(<?= $cId ?>);}"
+                                               style="border:1px solid rgba(0,0,0,0.2);border-radius:4px;padding:0.15rem 0.35rem;font-size:0.8rem;font-family:inherit;min-width:130px;">
+                                        <input type="date" id="cpril-do-<?= $cId ?>" value="<?= crm_h($cPrilezDo) ?>"
+                                               style="border:1px solid rgba(0,0,0,0.2);border-radius:4px;padding:0.15rem 0.3rem;font-size:0.78rem;font-family:inherit;">
+                                        <button type="button" onclick="callerPrilezSave(<?= $cId ?>)" style="background:#16a34a;color:#fff;border:0;border-radius:4px;padding:0.15rem 0.45rem;cursor:pointer;font-weight:700;">✓</button>
+                                        <button type="button" onclick="callerPrilezEdit(<?= $cId ?>, true)" style="background:#e5e7eb;color:#374151;border:0;border-radius:4px;padding:0.15rem 0.45rem;cursor:pointer;">✕</button>
+                                    </span>
+                                </span>
+                            </div>
                         </div>
-
-                        <!-- Kraj (read-only) -->
-                        <?php if (!empty($c['region'])) { ?>
-                        <div class="contact-details" style="margin-top:0.2rem;">
-                            <span class="label-sm">Kraj:</span>
-                            <span class="contact-muted"><?= crm_h(crm_region_label((string) $c['region'])) ?></span>
-                        </div>
-                        <?php } ?>
 
                         <?php if (!empty($c['poznamka'])) { ?>
                             <div class="contact-note"><?= crm_h((string) $c['poznamka']) ?></div>
@@ -1274,10 +1317,32 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
                             <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
                             <input type="hidden" name="contact_id" value="<?= $cId ?>">
 
+                            <?php
+                            // Velká textarea má smysl jen v tabech, kde se REÁLNĚ volá / zpracovává.
+                            // V "vyřízených" tabech (navolane, prohra, izolace, chybny, chybne_oz)
+                            // kontakt už má OZ a nová poznámka caller-side nemá smysl — schováme ji,
+                            // aby bylo vidět historii poznámek (.contact-note) a tlačítka pro change-of-mind.
+                            $workingTabs = ['aktivni', 'callback', 'nedovolano', 'rescue'];
+                            $showNoteArea = in_array($tab, $workingTabs, true);
+                            ?>
+                            <?php if ($showNoteArea) { ?>
                             <div class="action-note">
-                                <input type="text" name="poznamka" placeholder="Poznámka (povinná)..."
-                                       class="input-note" autocomplete="off">
+                                <textarea name="poznamka"
+                                          placeholder="Poznámka pro obchodáka — povinná u výhry a u vlastního popisu nezájmu…"
+                                          class="input-note input-note-textarea"
+                                          rows="3"
+                                          oninput="callerNoteGrow(this)"
+                                          autocomplete="off"></textarea>
+                                <div class="note-counter" data-counter></div>
                             </div>
+                            <?php } else { ?>
+                            <!-- Skrytý input — kdyby user kliknul X/Izolace/Chybný, validace v JS najde pole a chová se rozumně.
+                                 Hidden input nepřekáží vizuálně, ale form má vždy konzistentní strukturu. -->
+                            <input type="hidden" name="poznamka" value="">
+                            <?php } ?>
+                            <!-- Příznak pro server: 1 = pracovní tab (pole vidět, smí přepsat
+                                 poznámku), 0 = vyřízený tab (pole skryté → poznámku zachovat). -->
+                            <input type="hidden" name="note_area" value="<?= $showNoteArea ? '1' : '0' ?>">
 
                             <div class="action-buttons">
                                 <button type="button" class="btn-status btn-win"
@@ -1374,39 +1439,53 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
 
                             <!-- Submenu prohry -->
                             <div class="loss-menu hidden">
-                                <span class="loss-menu-label">Důvod zamítnutí:</span>
+                                <span class="loss-menu-label">Co se stalo? Vyber jednu možnost:</span>
                                 <div class="loss-btn-row">
-                                    <!-- Nezájem: otevře sub-panel s roletkou důvodu -->
-                                    <button type="button"
-                                            class="btn-loss-sub"
-                                            onclick="crmShowNezajemPanel(this)">Nezájem</button>
+                                    <!-- Rychlé tlačítka nezájmu — 1 klik = předvyplní + označí typ + submit -->
+                                    <button type="submit" name="new_status" value="NEZAJEM"
+                                            class="btn-loss-sub btn-quick-reject"
+                                            data-reason="nezajem"
+                                            data-prefill="Nezájem"
+                                            title="Bez bližšího upřesnění">✗ Nezájem</button>
+
+                                    <button type="submit" name="new_status" value="NEZAJEM"
+                                            class="btn-loss-sub btn-quick-reject"
+                                            data-reason="cena"
+                                            data-prefill="Nezájem — cena"
+                                            title="Drahé / nesedí cena">💸 Cena</button>
+
+                                    <button type="submit" name="new_status" value="NEZAJEM"
+                                            class="btn-loss-sub btn-quick-reject"
+                                            data-reason="ma_smlouvu"
+                                            data-prefill="Nezájem — má smlouvu jinde"
+                                            title="Má závaznou smlouvu u konkurence (zatím nemůže přejít)">📄 Má smlouvu</button>
+
+                                    <button type="submit" name="new_status" value="NEZAJEM"
+                                            class="btn-loss-sub btn-quick-reject"
+                                            data-reason="nechce_prejit"
+                                            data-prefill="Nezájem — nechce přejít k nám (bojí se změny operátora)"
+                                            title="Nechce přecházet / bojí se změny — nepřemluvili jsme ho">🔁 Nechce přejít</button>
+
+                                    <button type="submit" name="new_status" value="NEZAJEM"
+                                            class="btn-loss-sub btn-quick-reject"
+                                            data-reason="jine"
+                                            data-prefill=""
+                                            title="Jiný důvod — napiš si vlastní poznámku">📝 Vlastní…</button>
+
                                     <button type="submit" name="new_status" value="IZOLACE"
                                             class="btn-loss-sub btn-loss-izolace"
-                                            title="Nechce být kontaktován">🚫 Izolace</button>
+                                            title="Nechce být kontaktován (= blacklist navždy)">🚫 Izolace</button>
+
                                     <button type="submit" name="new_status" value="CHYBNY_KONTAKT"
-                                            class="btn-loss-sub btn-loss-chybny">✗ Chybný kontakt</button>
+                                            class="btn-loss-sub btn-loss-chybny"
+                                            title="Telefon je špatný / někdo jiný">✗ Chybný kontakt</button>
+
                                     <button type="button"
                                             onclick="this.closest('.loss-menu').classList.add('hidden')"
                                             class="btn-loss-sub btn-loss-zpet">← Zpět</button>
                                 </div>
-
-                                <!-- Sub-panel Nezájem: roletka + potvrzení (skrytý) -->
-                                <div class="nezajem-panel hidden">
-                                    <span class="loss-menu-label">Upřesni důvod nezájmu:</span>
-                                    <select name="rejection_reason" class="input-rejection">
-                                        <option value="">— vyberte —</option>
-                                        <option value="nezajem">Obecný nezájem</option>
-                                        <option value="cena">Cena</option>
-                                        <option value="ma_smlouvu">Má smlouvu jinde</option>
-                                        <option value="spatny_kontakt">Špatný kontakt</option>
-                                        <option value="jine">Jiné</option>
-                                    </select>
-                                    <button type="submit" name="new_status" value="NEZAJEM"
-                                            class="btn-loss-sub">✓ Potvrdit nezájem</button>
-                                    <button type="button"
-                                            onclick="this.closest('.nezajem-panel').classList.add('hidden')"
-                                            class="btn-loss-sub btn-loss-zpet">← Zpět</button>
-                                </div>
+                                <!-- Hidden field pro rejection_reason (předvyplněno chip tlačítky) -->
+                                <input type="hidden" name="rejection_reason" value="">
                             </div>
 
                             <!-- Callback pole -->
@@ -1451,19 +1530,368 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
     <!-- Spodní akce odebrány — Dashboard / Hledat / Odhlásit jsou v top baru i sidebaru. -->
 </section>
 
+<style>
+/* ── UX upgrade: přehlednější info, širší textarea, větší tlačítka ── */
+
+/* ── Zákaznická karta: přehledná, intuitivní ── */
+.contact-details {
+    /* Kompaktní inline řádek (telefon | email | IČO | adresa) — jako původní layout.
+       Dřívější grid se širokými sloupci roztahoval kartu přes celou šířku. */
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center;
+    gap: .3rem 1.1rem !important;
+    margin: .4rem 0 .3rem;
+    padding: 0;
+    background: transparent;
+    line-height: 1.5;
+}
+/* Dvousloupcový info blok: vlevo kontakt (telefon, email),
+   vpravo identifikace (IČO, adresa, kraj). Levá strana se tak
+   nenahňácá do jednoho dlouhého řádku. */
+.contact-details--2col {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+    gap: .25rem 1.6rem !important;
+    align-items: start;
+}
+.contact-details--2col .cd-col {
+    display: flex;
+    flex-direction: column;
+    gap: .3rem;
+    min-width: 0;
+}
+/* V sloupcích nech hodnoty zalomit (adresa bývá dlouhá) — bez ellipsis. */
+.contact-details--2col .editable-group {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+}
+@media (max-width: 760px) {
+    .contact-details--2col {
+        grid-template-columns: 1fr !important;
+    }
+}
+.contact-details .editable-group {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: .35rem !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.contact-details .editable-group .label-sm {
+    color: #6b7280;
+    font-size: .78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    min-width: 44px;
+}
+.contact-details .editable-val { font-size: .92rem; }
+/* Telefon — VELKÝ, modrý, dominantní (= nejdůležitější info pro hovor) */
+.contact-phone {
+    font-weight: 700 !important;
+    font-size: 1.02rem !important;
+    color: #2563eb !important;
+    letter-spacing: .02em;
+}
+.contact-phone::before { content: "📞 "; opacity: .85; margin-right: 4px; font-size: .9em; }
+.contact-email::before { content: "✉ ";  opacity: .7;  margin-right: 4px; }
+/* Email taky výraznější (klikatelný v budoucnu) */
+.contact-email { font-size: .98rem !important; color: #374151 !important; }
+
+/* Action area — roztáhne se přes celou pravou polovinu karty, zarovnaná napravo */
+.contact-actions {
+    /* Úzký pravý sloupec (poznámka + tlačítka) — ne přes půl karty.
+       Dřívější flex:1 1 50% + min-width:380px zabíral polovinu řádku. */
+    flex: 0 1 320px !important;
+    min-width: 0 !important;
+    max-width: 340px !important;
+    display: block !important;
+    box-sizing: border-box;
+    padding-right: 0 !important;
+}
+.action-form {
+    display: flex !important;
+    flex-direction: column !important;
+    /* Přepisuje align-items: flex-end z app.css → děti vyplní celou šíři. */
+    align-items: stretch !important;
+    gap: .55rem;
+    width: 100%;
+}
+.action-note {
+    width: 100% !important;
+    flex: 0 0 auto !important;
+    order: 1;
+}
+.action-buttons {
+    order: 2;
+    /* Tlačítka tvoří řadu POD textarea, zarovnanou doprava (estetika + palec OZka). */
+    align-self: stretch;
+    display: flex !important;
+    justify-content: flex-end !important;
+    gap: .4rem !important;
+    flex-wrap: wrap;
+}
+.win-panel, .loss-menu, .callback-fields {
+    order: 3;
+    width: 100%;
+    align-self: stretch;
+}
+.action-note { width: 100%; }
+.input-note-textarea {
+    width: 100% !important;
+    /* Přepisuje .input-note { max-width: 220px } z app.css — textarea má jít přes celou pravou polovinu. */
+    max-width: none !important;
+    min-height: 80px;
+    padding: .6rem .8rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: .93rem;
+    line-height: 1.5;
+    resize: vertical;
+    font-family: inherit;
+    box-sizing: border-box;
+    transition: border-color 120ms, box-shadow 120ms;
+}
+.input-note-textarea:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+}
+
+/* Hlavní akce — větší tlačítka, jasnější vizuál */
+.action-buttons {
+    display: flex !important;
+    gap: .35rem !important;
+    margin-top: .5rem;
+    flex-wrap: wrap;
+}
+.btn-status {
+    min-width: 46px !important;
+    min-height: 38px !important;
+    padding: .4rem .65rem !important;
+    font-size: 1.1rem !important;
+    border-radius: 6px !important;
+    cursor: pointer;
+    border: 1px solid #d1d5db !important;
+    transition: all 120ms;
+}
+.btn-status:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,.08); }
+.btn-status.btn-win  { background: #d1fae5 !important; color: #065f46 !important; border-color: #6ee7b7 !important; font-weight: 700; }
+.btn-status.btn-loss { background: #fee2e2 !important; color: #991b1b !important; border-color: #fca5a5 !important; font-weight: 700; }
+.btn-status.btn-cb   { background: #dbeafe !important; color: #1e40af !important; border-color: #93c5fd !important; }
+.btn-status.btn-nedovolano { background: #fef3c7 !important; color: #92400e !important; border-color: #fcd34d !important; }
+
+/* ── Historie poznámky (c['poznamka'] z DB) ──
+   V app.css má .contact-note ellipsis na 1 řádek (nowrap + overflow hidden).
+   To jsme zde rušíme — caller chce vidět celou předchozí poznámku, zvláště v "Navolané"
+   nebo "Prohra" tabu, kde slouží jako kontext "co se naposled při hovoru řeklo". */
+.contact-note {
+    white-space: pre-wrap !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    max-width: none !important;
+    line-height: 1.45 !important;
+    background: rgba(0, 0, 0, 0.025);
+    border-left: 3px solid rgba(0, 0, 0, 0.12);
+    padding: 0.4rem 0.6rem !important;
+    border-radius: 0 6px 6px 0;
+    margin-top: 0.45rem !important;
+    font-size: 0.83rem !important;
+}
+.contact-note::before {
+    content: "📝 ";
+    margin-right: 0.15rem;
+    opacity: 0.7;
+    font-style: normal;
+}
+
+/* Pokud je obrazovka menší, nech kartu wrapnout (info nad akcí) */
+@media (max-width: 1100px) {
+    .contact-actions {
+        flex: 1 1 100% !important;
+        min-width: 0 !important;
+        margin-top: .6rem;
+    }
+}
+.input-note-textarea:focus {
+    outline: none !important;
+    border-color: #2563eb !important;
+    box-shadow: 0 0 0 3px rgba(37,99,235,.1) !important;
+}
+.note-counter {
+    font-size: .72rem;
+    color: #9ca3af;
+    text-align: right;
+    margin-top: .15rem;
+    min-height: 1em;
+}
+
+/* Quick-reject chips — zvýrazněné, ale ne přebíjivé */
+.btn-quick-reject {
+    background: #fef3c7 !important;
+    border: 1px solid #fcd34d !important;
+    color: #92400e !important;
+    font-weight: 600 !important;
+    padding: .45rem .8rem !important;
+    border-radius: 18px !important;
+    font-size: .85rem !important;
+    cursor: pointer;
+    transition: all 120ms;
+    margin: 0 .25rem .35rem 0;
+    display: inline-flex !important;
+    align-items: center;
+    gap: .3rem;
+}
+.btn-quick-reject:hover {
+    background: #fde68a !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0,0,0,.08);
+}
+.btn-quick-reject[data-reason="jine"] {
+    background: #e0e7ff !important;
+    border-color: #a5b4fc !important;
+    color: #3730a3 !important;
+}
+.btn-quick-reject[data-reason="jine"]:hover { background: #c7d2fe !important; }
+
+.btn-loss-izolace {
+    background: #fee2e2 !important;
+    border: 1px solid #fca5a5 !important;
+    color: #991b1b !important;
+    font-weight: 600 !important;
+    padding: .45rem .8rem !important;
+    border-radius: 18px !important;
+    transition: all 120ms;
+}
+.btn-loss-izolace:hover {
+    background: #fecaca !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0,0,0,.08);
+}
+
+.btn-loss-chybny {
+    background: #f3f4f6 !important;
+    border: 1px solid #d1d5db !important;
+    color: #6b7280 !important;
+    padding: .45rem .8rem !important;
+    border-radius: 18px !important;
+    font-weight: 600 !important;
+    cursor: pointer;
+    transition: all 120ms;
+}
+.btn-loss-chybny:hover {
+    background: #e5e7eb !important;
+    color: #374151 !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0,0,0,.08);
+}
+
+.loss-btn-row {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: .35rem !important;
+    padding: .3rem 0;
+}
+.loss-menu-label {
+    display: block;
+    font-size: .82rem;
+    color: #6b7280;
+    margin-bottom: .35rem;
+    font-weight: 600;
+}
+</style>
+
 <script>
 var CRM_CSRF     = <?= json_encode($csrf) ?>;
 var CRM_CSRF_KEY = <?= json_encode(crm_csrf_field_name()) ?>;
+var CALLER_ARES_URL = <?= json_encode(crm_url('/oz/ares-lookup')) ?>;
+var CALLER_SET_PRILEZ_URL = <?= json_encode(crm_url('/caller/set-prilez')) ?>;
 
-/* ── Validace poznámky ── */
+/* ── Validace poznámky ──────────────────────────────────────────────
+   Povinná JEN když:
+     1) výhra (CALLED_OK) — navolávačka popíše obchodákovi, o co jde, nebo
+     2) "vlastní" nezájem (NEZAJEM s rejection_reason = 'jine') — caller píše
+        vlastními slovy.
+   Předvolené nezájmy (cena, má jinde, nechce přejít, …) si poznámku
+   doplní samy přes chip → povinnost se na ně nevztahuje.
+   Izolace / chybný kontakt / nedovoláno = poznámka volitelná. */
 function callerValidate(form) {
-    var note = form.querySelector('input[name="poznamka"]');
-    if (!note || !note.value.trim()) {
-        if (note) { note.style.borderColor = '#e74c3c'; note.placeholder = 'POZNÁMKA JE POVINNÁ!'; note.focus(); }
+    // Vyřízený tab — velké pole není, poznámka se needituje → nic nevynucuj.
+    var areaField = form.querySelector('input[name="note_area"]');
+    if (areaField && areaField.value === '0') return true;
+
+    var note = form.querySelector('textarea[name="poznamka"], input[name="poznamka"]');
+    var submitter = form.__submitter || null;
+    var status = submitter ? (submitter.getAttribute('value') || '') : '';
+
+    var requiresNote = false;
+    if (status === 'CALLED_OK') {
+        requiresNote = true;
+    } else if (status === 'NEZAJEM') {
+        var reasonField = form.querySelector('input[name="rejection_reason"]');
+        var reason = reasonField ? (reasonField.value || '') : '';
+        // 'jine' = vlastní popis → poznámka povinná; ostatní (předvolené) = OK
+        if (reason === 'jine') requiresNote = true;
+    }
+
+    if (requiresNote && (!note || !note.value.trim())) {
+        if (note) {
+            note.style.borderColor = '#e74c3c';
+            note.placeholder = status === 'CALLED_OK'
+                ? 'U výhry napiš obchodákovi krátkou poznámku!'
+                : 'Popiš vlastními slovy, proč nezájem!';
+            note.focus();
+        }
         return false;
     }
     return true;
 }
+/* Zapamatujeme submit button — ať víme, který stav user posílá */
+document.addEventListener('click', function(e) {
+    var btn = e.target.closest('button[type="submit"]');
+    if (btn) {
+        var form = btn.closest('form.action-form');
+        if (form) form.__submitter = btn;
+    }
+}, true);
+
+/* ── Auto-grow textarea (rozšiřuje se s textem) ── */
+function callerNoteGrow(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(220, el.scrollHeight) + 'px';
+    var counter = el.parentElement.querySelector('[data-counter]');
+    if (counter) {
+        var len = el.value.length;
+        counter.textContent = len > 0 ? (len + ' znaků') : '';
+    }
+}
+
+/* ── Quick-pick chips: 1 klik = předvyplní poznámku + označí rejection_reason ── */
+document.addEventListener('click', function(e) {
+    var chip = e.target.closest('.btn-quick-reject');
+    if (!chip) return;
+    var form = chip.closest('form.action-form');
+    if (!form) return;
+    var prefill = chip.getAttribute('data-prefill') || '';
+    var reason = chip.getAttribute('data-reason') || '';
+    var note = form.querySelector('textarea[name="poznamka"]');
+    var reasonField = form.querySelector('input[name="rejection_reason"]');
+    if (reasonField) reasonField.value = reason;
+    // Pokud user nemá ve note nic vlastního, předvyplníme. Pokud má, necháme co napsala.
+    if (note && !note.value.trim() && prefill) {
+        note.value = prefill;
+    }
+    // "Vlastní…" chip → otevři note pro psaní, nezalívej hned form
+    if (reason === 'jine' && note && !note.value.trim()) {
+        e.preventDefault();
+        note.focus();
+        chip.textContent = '✓ Odeslat vlastní';
+        return;
+    }
+}, true);
 
 /* ── Skryje všechny panely v actions, pak toggle target ── */
 function crmHideOthers(btn, targetSel) {
@@ -1476,37 +1904,31 @@ function crmHideOthers(btn, targetSel) {
     if (t) t.classList.toggle('hidden');
 }
 
-/* ── Win panel: validuje poznámku, pak zobrazí ── */
+/* ── Win panel: otevře OZ výběr. Poznámka se validuje až při finálním submitu (callerValidate) ── */
 function crmShowWinPanel(btn) {
-    var form = btn.closest('.action-form');
-    var note = form.querySelector('input[name="poznamka"]');
-    if (!note.value.trim()) {
-        note.style.borderColor = '#e74c3c'; note.placeholder = 'POZNÁMKA JE POVINNÁ!'; note.focus(); return;
-    }
     crmHideOthers(btn, '.win-panel');
+    // Focus na select OZ pro rychlejší flow
+    var form = btn.closest('.action-form');
+    var ozSel = form ? form.querySelector('.win-panel select') : null;
+    if (ozSel) setTimeout(function(){ ozSel.focus(); }, 50);
 }
 
-/* ── Loss menu: validuje poznámku, pak zobrazí ── */
+/* ── Loss menu: otevřít rovnou (chip tlačítka si poznámku doplní sama) ── */
 function crmShowLossMenu(btn) {
-    var form = btn.closest('.action-form');
-    var note = form.querySelector('input[name="poznamka"]');
-    if (!note.value.trim()) {
-        note.style.borderColor = '#e74c3c'; note.placeholder = 'POZNÁMKA JE POVINNÁ!'; note.focus(); return;
-    }
     crmHideOthers(btn, '.loss-menu');
 }
 
-/* ── Nezájem sub-panel: toggle roletky důvodu ── */
+/* ── Nezájem sub-panel (legacy, ponecháno pro zpětnou kompatibilitu) ── */
 function crmShowNezajemPanel(btn) {
     var lossMenu = btn.closest('.loss-menu');
     var panel = lossMenu.querySelector('.nezajem-panel');
     if (panel) panel.classList.toggle('hidden');
 }
 
-/* ── Nedovoláno: bez povinné poznámky, jen potvrzení ── */
+/* ── Nedovoláno: poznámka volitelná, auto-doplnit kvůli auditu ── */
 function crmNedovolano(btn) {
     var form = btn.closest('.action-form');
-    var note = form.querySelector('input[name="poznamka"]');
+    var note = form.querySelector('textarea[name="poznamka"], input[name="poznamka"]');
     if (note && note.value.trim() === '') {
         note.value = 'Nedovoláno';
     }
@@ -1540,6 +1962,8 @@ function crmEdit(contactId, field, editBtn) {
 
     span.style.display    = 'none';
     editBtn.style.display = 'none';
+    // Vizuální cue "právě edituji" — CSS .editable-group.editing dá světle modrý highlight.
+    if (wrapper.classList) wrapper.classList.add('editing');
     wrapper.appendChild(input);
     wrapper.appendChild(btnSave);
     wrapper.appendChild(btnCancel);
@@ -1549,6 +1973,7 @@ function crmEdit(contactId, field, editBtn) {
         input.remove(); btnSave.remove(); btnCancel.remove();
         span.style.display = '';
         editBtn.style.display = '';
+        if (wrapper.classList) wrapper.classList.remove('editing');
         delete span.dataset.editing;
     }
 
@@ -1591,6 +2016,72 @@ function crmEdit(contactId, field, editBtn) {
             btnSave.disabled = false;
         }
     };
+}
+
+/* ── Příležitost — rychlá inline úprava klikem ── */
+function callerPrilezEdit(cId, cancel) {
+    var view = document.getElementById('cpril-view-' + cId);
+    var edit = document.getElementById('cpril-edit-' + cId);
+    if (!view || !edit) return;
+    if (cancel) { edit.style.display = 'none'; view.style.display = ''; return; }
+    view.style.display = 'none';
+    edit.style.display = 'inline-flex';
+    var t = document.getElementById('cpril-txt-' + cId);
+    if (t) { t.focus(); t.select(); }
+}
+
+function callerPrilezSave(cId) {
+    var t = document.getElementById('cpril-txt-' + cId);
+    var d = document.getElementById('cpril-do-' + cId);
+    if (!t) return;
+    var body = new URLSearchParams();
+    body.set('contact_id', cId);
+    body.set('prilez', (t.value || '').trim());
+    body.set('prilez_do', d ? (d.value || '') : '');
+    body.set(CRM_CSRF_KEY, CRM_CSRF);
+    fetch(CALLER_SET_PRILEZ_URL, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString()
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+        if (!res || !res.ok) { alert((res && res.error) ? res.error : 'Chyba uložení příležitosti.'); return; }
+        window.location.reload();
+    })
+    .catch(function(){ alert('Síťová chyba — zkus to znovu.'); });
+}
+
+/* ── ARES: doplň adresu podle IČO a otevři inline editor k revizi ── */
+function callerAresFill(cId, btn) {
+    var icoSpan = document.getElementById('val-ico-' + cId);
+    var ico = icoSpan ? (icoSpan.textContent || '').replace(/\D+/g, '') : '';
+    if (ico.length !== 8) {
+        alert('Pro načtení z ARES musí mít IČO 8 číslic. Nejdřív doplň IČO.');
+        return;
+    }
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '⏳';
+    fetch(CALLER_ARES_URL + '?ico=' + encodeURIComponent(ico), {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' }
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+        btn.disabled = false; btn.textContent = orig;
+        if (!d || !d.ok) { alert((d && d.error) ? d.error : 'ARES chyba.'); return; }
+        if (!d.adresa)   { alert('ARES nevrátil adresu.'); return; }
+        // Otevři inline editor adresy a předvyplň hodnotou z ARES (k revizi)
+        var adrSpan = document.getElementById('val-adresa-' + cId);
+        var wrapper = adrSpan ? adrSpan.closest('.editable-group') : null;
+        var pencil  = wrapper ? wrapper.querySelector('.btn-edit-field') : null;
+        if (!pencil) { alert('Nelze otevřít editaci adresy.'); return; }
+        crmEdit(cId, 'adresa', pencil);
+        var input = wrapper.querySelector('.input-inline-edit');
+        if (input) { input.value = d.adresa; input.focus(); }
+    })
+    .catch(function(){ btn.disabled = false; btn.textContent = orig; alert('Síťová chyba — zkus to znovu.'); });
 }
 
 /* ── Flag operátorský mismatch (nahlásit čističce přes majitele) ── */

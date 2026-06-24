@@ -346,15 +346,34 @@ $price = (float) $order['price_per_lead'];
                     </td>
                     <td><?= crm_h(crm_region_label((string) $l['region'])) ?></td>
                     <td><?= crm_h((string) ($l['operator'] ?? '—')) ?></td>
-                    <td style="max-width: 260px; font-size: 0.82rem; line-height: 1.35;">
+                    <td style="max-width: 280px; font-size: 0.82rem; line-height: 1.35;">
                         <?php
-                        $_prilez = trim((string) ($l['prilez'] ?? ''));
-                        if ($_prilez === '') {
-                            echo '<em style="color:var(--color-text-muted);">—</em>';
-                        } else {
-                            echo crm_h($_prilez);
-                        }
+                        $_prilez    = trim((string) ($l['prilez'] ?? ''));
+                        $_prilezVal = ($_prilez === 'ano') ? '' : $_prilez; // starý sentinel neukazuj
+                        $_prilezDo  = (string) ($l['prilez_do'] ?? '');
+                        if ($_prilezDo === '0000-00-00') { $_prilezDo = ''; }
+                        $_pInput = 'background:var(--bg,#fff);color:var(--text,#111);'
+                                 . 'border:1px solid rgba(0,0,0,0.18);border-radius:4px;'
+                                 . 'padding:0.22rem 0.4rem;font-size:0.8rem;font-family:inherit;';
                         ?>
+                        <form method="post" action="<?= crm_h(crm_url('/cisticka/premium/prilez')) ?>"
+                              style="display:flex;flex-direction:column;gap:0.25rem;margin:0;">
+                            <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+                            <input type="hidden" name="pool_id" value="<?= (int) $l['pool_id'] ?>">
+                            <input type="hidden" name="order_id" value="<?= (int) $order['id'] ?>">
+                            <input type="text" name="prilez" maxlength="255" value="<?= crm_h($_prilezVal) ?>"
+                                   placeholder="příležitost / stav (prázdné = nemá)"
+                                   style="<?= $_pInput ?>width:100%;box-sizing:border-box;">
+                            <div style="display:flex;gap:0.25rem;align-items:center;">
+                                <input type="date" name="prilez_do" value="<?= crm_h($_prilezDo) ?>"
+                                       title="Do kdy je příležitost platná (volitelné)"
+                                       style="<?= $_pInput ?>flex:1;min-width:0;">
+                                <button type="submit" title="Uložit příležitost (uvidí ji OZ)"
+                                        style="flex:0 0 auto;background:#7e22ce;color:#fff;border:0;
+                                               border-radius:4px;padding:0.25rem 0.55rem;cursor:pointer;
+                                               font-size:0.8rem;font-weight:700;">💾</button>
+                            </div>
+                        </form>
                     </td>
                     <td>
                         <?php if ($cs === 'pending') { ?>

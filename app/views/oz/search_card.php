@@ -142,18 +142,16 @@ declare(strict_types=1);
                                 </span>
                             <?php } ?>
                         </span>
-                        <!-- EDIT mode: checkbox + nested fields -->
+                        <!-- EDIT mode: jen poznámka + datum (bez zaškrtávátka) -->
                         <span class="oz-card-edit" style="display:none;">
-                            <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;cursor:pointer;">
-                                <input type="checkbox" name="has_prilez" id="oz-card-has-prilez" value="1" <?= $hasPr ? 'checked' : '' ?>
-                                       onchange="document.getElementById('oz-card-prilez-details').style.display = this.checked ? '' : 'none';">
-                                <strong>Má příležitost</strong>
-                            </label>
-                            <div id="oz-card-prilez-details" style="<?= $hasPr ? '' : 'display:none;' ?>margin-top:0.4rem;display:flex;gap:0.4rem;flex-wrap:wrap;">
+                            <strong style="font-size:0.85rem;">Příležitost</strong>
+                            <span style="color:#6b7280;font-size:0.75rem;"> — vyplň jen pokud nějaká je</span>
+                            <div style="margin-top:0.4rem;display:flex;gap:0.4rem;flex-wrap:wrap;">
+                                <input type="text" name="prilez" value="<?= crm_h($pr === 'ano' ? '' : $pr) ?>" maxlength="200"
+                                       placeholder="Poznámka (karanténa, požádáno o uvolnění…) — prázdné = bez příležitosti"
+                                       style="<?= $inputCss ?>flex:1;min-width:200px;">
                                 <input type="date" name="prilez_do" value="<?= crm_h($prDo) ?>"
                                        style="<?= $inputCss ?>flex:0 0 170px;" title="Do kdy je příležitost platná (volitelné)">
-                                <input type="text" name="prilez" value="<?= crm_h($pr === 'ano' ? '' : $pr) ?>" maxlength="200"
-                                       placeholder="Volitelný popis (Internet, TV, …)" style="<?= $inputCss ?>flex:1;min-width:160px;">
                             </div>
                         </span>
                     </td></tr>

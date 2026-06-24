@@ -36,19 +36,24 @@ if (!function_exists('crm_setting_get')) {
     {
         global $pdo;
         $cache = &_crm_settings_cache();
-        if (array_key_exists($key, $cache)) {
-            return $cache[$key];
+        // Multi-tenant: cache key = "{tid}:{key}" (každý tenant svá data)
+        $tid = function_exists('crm_tenant_id') ? crm_tenant_id() : 0;
+        $cacheKey = $tid . ':' . $key;
+        if (array_key_exists($cacheKey, $cache)) {
+            return $cache[$cacheKey];
         }
         try {
             $pdoLocal = $GLOBALS['pdo'] ?? null;
             if (!$pdoLocal instanceof PDO) {
                 return $default;
             }
-            $stmt = $pdoLocal->prepare("SELECT sval FROM app_settings WHERE skey = ? LIMIT 1");
-            $stmt->execute([$key]);
+            $stmt = $pdoLocal->prepare(
+                "SELECT sval FROM app_settings WHERE skey = ? AND tenant_id = ? LIMIT 1"
+            );
+            $stmt->execute([$key, $tid]);
             $val = $stmt->fetchColumn();
-            $cache[$key] = ($val === false) ? $default : (string) $val;
-            return $cache[$key];
+            $cache[$cacheKey] = ($val === false) ? $default : (string) $val;
+            return $cache[$cacheKey];
         } catch (\Throwable $_) {
             return $default;
         }
@@ -64,6 +69,8 @@ if (!function_exists('crm_setting_get')) {
             if (!$pdoLocal instanceof PDO) {
                 return false;
             }
+            // INSERT — TenantAwarePDO auto-injektuje tenant_id.
+            // Unique key v migraci 032 byl rozšířen na (tenant_id, skey).
             $stmt = $pdoLocal->prepare(
                 "INSERT INTO app_settings (skey, sval, updated_by)
                  VALUES (?, ?, ?)
@@ -72,7 +79,8 @@ if (!function_exists('crm_setting_get')) {
             $ok = $stmt->execute([$key, (string) $value, $userId > 0 ? $userId : null]);
             if ($ok) {
                 $cache = &_crm_settings_cache();
-                $cache[$key] = (string) $value;
+                $tid = function_exists('crm_tenant_id') ? crm_tenant_id() : 0;
+                $cache[$tid . ':' . $key] = (string) $value;
             }
             return $ok;
         } catch (\Throwable $e) {

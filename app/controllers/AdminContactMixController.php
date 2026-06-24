@@ -44,11 +44,14 @@ final class AdminContactMixController
 
         // 1) Backfill subject_type — BATCH 500 contactů per UPDATE
         //    Při 5000+ kontaktech je per-row UPDATE pomalý. Použijeme CASE WHEN batch.
+        // Multi-tenant: mix běží jen v rámci aktivního tenantu
+        $tid = crm_tenant_id();
         $bfStmt = $pdo->prepare(
             "SELECT id, firma FROM contacts
-             WHERE stav = 'NEW' AND queue_mix_seq IS NULL AND subject_type = 'unknown'"
+             WHERE stav = 'NEW' AND queue_mix_seq IS NULL AND subject_type = 'unknown'
+               AND tenant_id = :tid"
         );
-        $bfStmt->execute();
+        $bfStmt->execute(['tid' => $tid]);
         $allBackfill = $bfStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $backfilled = 0;
         if ($allBackfill !== []) {
@@ -63,9 +66,9 @@ final class AdminContactMixController
                 foreach (array_chunk($ids, 500) as $chunk) {
                     $ph = implode(',', array_fill(0, count($chunk), '?'));
                     $stmt = $pdo->prepare(
-                        "UPDATE contacts SET subject_type = ? WHERE id IN ($ph)"
+                        "UPDATE contacts SET subject_type = ? WHERE id IN ($ph) AND tenant_id = ?"
                     );
-                    $stmt->execute(array_merge([$type], $chunk));
+                    $stmt->execute(array_merge([$type], $chunk, [$tid]));
                     $backfilled += $stmt->rowCount();
                 }
             }
@@ -75,17 +78,20 @@ final class AdminContactMixController
         $loadStmt = $pdo->prepare(
             "SELECT id FROM contacts
              WHERE stav = 'NEW' AND queue_mix_seq IS NULL AND subject_type = :t
+               AND tenant_id = :tid
              ORDER BY id ASC"
         );
-        $loadStmt->execute(['t' => 'firma']);
+        $loadStmt->execute(['t' => 'firma', 'tid' => $tid]);
         $firmaIds = array_map('intval', $loadStmt->fetchAll(PDO::FETCH_COLUMN) ?: []);
-        $loadStmt->execute(['t' => 'osvc']);
+        $loadStmt->execute(['t' => 'osvc', 'tid' => $tid]);
         $osvcIds = array_map('intval', $loadStmt->fetchAll(PDO::FETCH_COLUMN) ?: []);
 
-        // 3) Append start
-        $nextSeq = (int) $pdo->query(
-            "SELECT COALESCE(MAX(queue_mix_seq), 0) + 1 FROM contacts"
-        )->fetchColumn();
+        // 3) Append start — multi-tenant scope
+        $nextSeqStmt = $pdo->prepare(
+            "SELECT COALESCE(MAX(queue_mix_seq), 0) + 1 FROM contacts WHERE tenant_id = :tid"
+        );
+        $nextSeqStmt->execute(['tid' => $tid]);
+        $nextSeq = (int) $nextSeqStmt->fetchColumn();
 
         // 4) Interleave (OSVČ first, firma na konec cyklu)
         $mixed = [];
@@ -132,7 +138,8 @@ final class AdminContactMixController
                     }
                     $ph = implode(',', array_fill(0, count($idList), '?'));
                     $sql = "UPDATE contacts SET queue_mix_seq = CASE id " . implode(' ', $cases)
-                         . " END WHERE id IN ($ph)";
+                         . " END WHERE id IN ($ph) AND tenant_id = ?";
+                    $params[] = $tid;
                     $stmt = $pdo->prepare($sql);
                     $stmt->execute($params);
                     $assignedCount += count($batch);
@@ -171,7 +178,8 @@ final class AdminContactMixController
 
         try {
             // Per subject_type rozpad pro NEW nezamíchaných
-            $row = $this->pdo->query(
+            // Multi-tenant: stats per-tenant
+            $statsStmt = $this->pdo->prepare(
                 "SELECT
                     SUM(CASE WHEN stav = 'NEW' THEN 1 ELSE 0 END) AS total_new,
                     SUM(CASE WHEN stav = 'NEW' AND queue_mix_seq IS NULL AND subject_type = 'firma'   THEN 1 ELSE 0 END) AS unmixed_firma,
@@ -179,8 +187,10 @@ final class AdminContactMixController
                     SUM(CASE WHEN stav = 'NEW' AND queue_mix_seq IS NULL AND subject_type = 'unknown' THEN 1 ELSE 0 END) AS unmixed_unknown,
                     SUM(CASE WHEN queue_mix_seq IS NOT NULL THEN 1 ELSE 0 END) AS mixed_total,
                     COALESCE(MAX(queue_mix_seq), 0) AS last_seq
-                 FROM contacts"
-            )->fetch(PDO::FETCH_ASSOC);
+                 FROM contacts WHERE tenant_id = :tid"
+            );
+            $statsStmt->execute(['tid' => crm_tenant_id()]);
+            $row = $statsStmt->fetch(PDO::FETCH_ASSOC);
             if ($row) {
                 foreach ($stats as $k => $_) {
                     $stats[$k] = (int) ($row[$k] ?? 0);

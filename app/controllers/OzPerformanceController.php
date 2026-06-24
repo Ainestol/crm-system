@@ -41,13 +41,17 @@ final class OzPerformanceController
         // Před touto opravou byl JOIN podmíněný JEN na stav = 'SMLOUVA' —
         // takže každá uzavřená smlouva mizela z této tabulky a OZ-ové
         // viděli nuly i když měli reálné výhry.
+        // Multi-tenant: users přes user_tenants, workflow přes w.tenant_id
         $stmt = $this->pdo->prepare(
             "SELECT u.id, u.jmeno,
                     COUNT(w.id)                AS contracts,
                     COALESCE(SUM(w.bmsl), 0)   AS total_bmsl
              FROM users u
+             INNER JOIN user_tenants ut
+                 ON ut.user_id = u.id AND ut.tenant_id = :tid_u AND ut.active = 1
              LEFT JOIN oz_contact_workflow w
                ON  w.oz_id = u.id
+               AND w.tenant_id = :tid_w
                AND (
                  (w.podpis_potvrzen = 1
                   AND YEAR(w.podpis_potvrzen_at)  = :y
@@ -61,20 +65,23 @@ final class OzPerformanceController
              GROUP BY u.id, u.jmeno
              ORDER BY total_bmsl DESC, u.jmeno ASC"
         );
-        $stmt->execute(['y' => $year, 'm' => $month, 'y2' => $year, 'm2' => $month]);
+        $stmt->execute([
+            'y' => $year, 'm' => $month, 'y2' => $year, 'm2' => $month,
+            'tid_u' => crm_tenant_id(), 'tid_w' => crm_tenant_id(),
+        ]);
         $ozRows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $teamBmsl      = (int) array_sum(array_column($ozRows, 'total_bmsl'));
         $teamContracts = (int) array_sum(array_column($ozRows, 'contracts'));
 
-        // ── Stages pro vybraný měsíc ──────────────────────────────────
+        // ── Stages pro vybraný měsíc — multi-tenant ──────────────────
         $sStmt = $this->pdo->prepare(
             'SELECT id, stage_number, label, target_bmsl
              FROM oz_team_stages
-             WHERE year = :y AND month = :m
+             WHERE year = :y AND month = :m AND tenant_id = :tid
              ORDER BY target_bmsl ASC'
         );
-        $sStmt->execute(['y' => $year, 'm' => $month]);
+        $sStmt->execute(['y' => $year, 'm' => $month, 'tid' => crm_tenant_id()]);
         $stages = $sStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $title = 'Výkon OZ týmu';

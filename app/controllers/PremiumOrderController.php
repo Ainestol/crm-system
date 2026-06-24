@@ -66,13 +66,17 @@ final class PremiumOrderController
     public static function topUpOpenOrders(PDO $pdo): int
     {
         try {
-            $orders = $pdo->query(
+            // Multi-tenant filter
+            $ordersStmt = $pdo->prepare(
                 "SELECT id, oz_id, requested_count, reserved_count, regions_json
                  FROM premium_orders
                  WHERE status = 'open'
                    AND reserved_count < requested_count
+                   AND tenant_id = :tid
                  ORDER BY created_at ASC"
-            )->fetchAll(PDO::FETCH_ASSOC);
+            );
+            $ordersStmt->execute(['tid' => function_exists('crm_tenant_id') ? crm_tenant_id() : 0]);
+            $orders = $ordersStmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (\PDOException) {
             return 0; // tabulka ještě nemusí existovat při prvním requestu
         }
@@ -135,6 +139,13 @@ final class PremiumOrderController
             $pdo->beginTransaction();
 
             // SELECT FOR UPDATE — zamkne řádky proti souběžným objednávkám
+            // Multi-tenant: tenant_id přidaný k filteru (před LIMIT)
+            $tid = function_exists('crm_tenant_id') ? crm_tenant_id() : 0;
+            // Vlož tenant_id před LIMIT — nutno upravit pořadí params
+            $countParam = array_pop($params); // odeber LIMIT
+            $params[] = $tid;                 // přidej tenant_id
+            $params[] = $countParam;          // vrať LIMIT na konec
+
             $sql = "SELECT c.id
                     FROM contacts c
                     WHERE c.stav = 'READY'
@@ -143,14 +154,17 @@ final class PremiumOrderController
                           SELECT 1 FROM premium_lead_pool p WHERE p.contact_id = c.id
                       )
                       $regionFilter
+                      AND c.tenant_id = ?
                     ORDER BY c.id ASC
                     LIMIT ?
                     FOR UPDATE";
 
             $stmt = $pdo->prepare($sql);
-            // posledni param je LIMIT (int), ostatni jsou regiony (string)
+            // poslední param je LIMIT (int), předposlední je tenant_id (int), ostatní jsou regiony (string)
+            $total = count($params);
             foreach ($params as $i => $v) {
-                $stmt->bindValue($i + 1, $v, $i === count($params) - 1 ? PDO::PARAM_INT : PDO::PARAM_STR);
+                $isInt = ($i === $total - 1) || ($i === $total - 2);
+                $stmt->bindValue($i + 1, $v, $isInt ? PDO::PARAM_INT : PDO::PARAM_STR);
             }
             $stmt->execute();
             $ids = $stmt->fetchAll(PDO::FETCH_COLUMN, 0);
@@ -210,6 +224,7 @@ final class PremiumOrderController
 
         // Pokud je to majitel/superadmin, vidí jen své objednávky (kdyby si testoval).
         // Plný admin přehled napříč všemi OZ je samostatná stránka /admin/premium-orders (Fáze 5).
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             "SELECT po.*,
                     u_pc.jmeno AS preferred_caller_name,
@@ -231,10 +246,10 @@ final class PremiumOrderController
                        AND p.call_status = 'success' AND p.flagged_for_refund = 0) AS pool_payable_to_caller
              FROM premium_orders po
              LEFT JOIN users u_pc ON u_pc.id = po.preferred_caller_id
-             WHERE po.oz_id = :oz
+             WHERE po.oz_id = :oz AND po.tenant_id = :tid
              ORDER BY po.created_at DESC"
         );
-        $stmt->execute(['oz' => $ozId]);
+        $stmt->execute(['oz' => $ozId, 'tid' => crm_tenant_id()]);
         $orders = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $title = '💎 Premium objednávky';
@@ -259,27 +274,33 @@ final class PremiumOrderController
         $regions = crm_region_choices();
 
         // Kolik je momentálně k dispozici READY leadů (které nejsou v premium poolu)?
-        $availStmt = $this->pdo->query(
+        // Multi-tenant filter
+        $tid = crm_tenant_id();
+        $availStmt = $this->pdo->prepare(
             "SELECT COUNT(*) FROM contacts c
              WHERE c.stav = 'READY'
                AND c.assigned_caller_id IS NULL
+               AND c.tenant_id = :tid
                AND NOT EXISTS (SELECT 1 FROM premium_lead_pool p WHERE p.contact_id = c.id)"
         );
-        $availableTotal = (int) ($availStmt ? $availStmt->fetchColumn() : 0);
+        $availStmt->execute(['tid' => $tid]);
+        $availableTotal = (int) $availStmt->fetchColumn();
 
-        // Per-region breakdown — aby OZ věděl kde je nejvíc dostupných
+        // Per-region breakdown — aby OZ věděl kde je nejvíc dostupných (multi-tenant)
         $availPerRegion = [];
         try {
-            $rs = $this->pdo->query(
+            $rs = $this->pdo->prepare(
                 "SELECT c.region, COUNT(*) AS cnt
                  FROM contacts c
                  WHERE c.stav = 'READY'
                    AND c.assigned_caller_id IS NULL
+                   AND c.tenant_id = :tid
                    AND NOT EXISTS (SELECT 1 FROM premium_lead_pool p WHERE p.contact_id = c.id)
                  GROUP BY c.region
                  ORDER BY cnt DESC"
             );
-            foreach ($rs ? $rs->fetchAll(PDO::FETCH_ASSOC) : [] as $r) {
+            $rs->execute(['tid' => $tid]);
+            foreach ($rs->fetchAll(PDO::FETCH_ASSOC) as $r) {
                 $availPerRegion[(string) $r['region']] = (int) $r['cnt'];
             }
         } catch (\PDOException) { /* ignore */ }
@@ -435,6 +456,13 @@ final class PremiumOrderController
             ]
         );
 
+        // Activity log — premium objednávka vytvořena
+        crm_activity_log_record(
+            $this->pdo, $ozId, 'admin.premium_order_created',
+            'premium_order', $orderId,
+            ['requested' => $requestedCount, 'reserved' => $reserved, 'price_per_lead' => $pricePerLead]
+        );
+
         if ($reserved < $requestedCount) {
             crm_flash_set(sprintf(
                 '✓ Objednávka vytvořena. Zarezervováno %d/%d leadů — zbytek se doplní postupně, jak budou další leady k dispozici.',
@@ -479,10 +507,10 @@ final class PremiumOrderController
             crm_redirect($role === 'cisticka' ? '/cisticka/premium' : '/oz/premium');
         }
 
-        // Ověř že objednávka existuje a je otevřená
-        // Pro OZ: jen vlastní; pro čističku/majitele/superadmina: jakákoliv
-        $sql = "SELECT id, oz_id, status FROM premium_orders WHERE id = :id";
-        $params = ['id' => $orderId];
+        // Ověř že objednávka existuje a je otevřená — multi-tenant
+        // Pro OZ: jen vlastní; pro čističku/majitele/superadmina: jakákoliv v daném tenantu
+        $sql = "SELECT id, oz_id, status FROM premium_orders WHERE id = :id AND tenant_id = :tid";
+        $params = ['id' => $orderId, 'tid' => crm_tenant_id()];
         if ($role === 'obchodak') {
             $sql .= " AND oz_id = :oz";
             $params['oz'] = $userId;
@@ -573,10 +601,11 @@ final class PremiumOrderController
         }
 
         // Ověř že objednávka patří tomuto OZ a je otevřená
+        // Multi-tenant
         $stmt = $this->pdo->prepare(
-            "SELECT id, status FROM premium_orders WHERE id = :id AND oz_id = :oz LIMIT 1"
+            "SELECT id, status FROM premium_orders WHERE id = :id AND oz_id = :oz AND tenant_id = :tid LIMIT 1"
         );
-        $stmt->execute(['id' => $orderId, 'oz' => $ozId]);
+        $stmt->execute(['id' => $orderId, 'oz' => $ozId, 'tid' => crm_tenant_id()]);
         $order = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$order) {
@@ -666,9 +695,9 @@ final class PremiumOrderController
             crm_redirect('/oz/premium');
         }
 
-        // Ověřit oprávnění — OZ jen vlastní, majitel/superadmin cokoliv
-        $sql = "SELECT id, oz_id, caller_bonus_per_lead FROM premium_orders WHERE id = :id";
-        $params = ['id' => $orderId];
+        // Ověřit oprávnění — OZ jen vlastní, majitel/superadmin cokoliv (multi-tenant)
+        $sql = "SELECT id, oz_id, caller_bonus_per_lead FROM premium_orders WHERE id = :id AND tenant_id = :tid";
+        $params = ['id' => $orderId, 'tid' => crm_tenant_id()];
         if ($role === 'obchodak') {
             $sql .= " AND oz_id = :oz";
             $params['oz'] = $userId;
@@ -698,14 +727,14 @@ final class PremiumOrderController
                 $this->pdo->prepare(
                     "UPDATE premium_orders
                      SET `$col` = NOW(3), `$byCol` = :uid
-                     WHERE id = :id"
-                )->execute(['uid' => $userId, 'id' => $orderId]);
+                     WHERE id = :id AND tenant_id = :tid"
+                )->execute(['uid' => $userId, 'id' => $orderId, 'tid' => crm_tenant_id()]);
             } else {
                 $this->pdo->prepare(
                     "UPDATE premium_orders
                      SET `$col` = NULL, `$byCol` = NULL
-                     WHERE id = :id"
-                )->execute(['id' => $orderId]);
+                     WHERE id = :id AND tenant_id = :tid"
+                )->execute(['id' => $orderId, 'tid' => crm_tenant_id()]);
             }
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
@@ -766,6 +795,7 @@ final class PremiumOrderController
         // Načíst data:
         //  - Pokud single order: všechny vyčištěné leady té objednávky (bez ohledu na měsíc)
         //  - Jinak: všechny vyčištěné leady ze všech objednávek tohoto OZ za daný měsíc
+        // Multi-tenant filter na premium_orders
         $sql = "SELECT p.id            AS pool_id,
                        p.contact_id,
                        p.cleaning_status,
@@ -793,8 +823,9 @@ final class PremiumOrderController
                 LEFT JOIN users u_c    ON u_c.id    = p.cleaner_id
                 LEFT JOIN users u_call ON u_call.id = p.caller_id
                 WHERE po.oz_id = :oz
+                  AND po.tenant_id = :tid
                   AND p.cleaning_status IN ('tradeable','non_tradeable')";
-        $params = ['oz' => $ozId];
+        $params = ['oz' => $ozId, 'tid' => crm_tenant_id()];
 
         if ($singleOrder) {
             $sql .= " AND po.id = :oid";
@@ -902,12 +933,13 @@ final class PremiumOrderController
         // Hlavička objednávky pro single mode (i když nejsou vyčištěné leady)
         $singleOrderHeader = null;
         if ($singleOrder) {
+            // Multi-tenant
             $oh = $this->pdo->prepare(
                 "SELECT id, year, month, requested_count, reserved_count,
                         price_per_lead, status, note, created_at
-                 FROM premium_orders WHERE id = :id AND oz_id = :oz LIMIT 1"
+                 FROM premium_orders WHERE id = :id AND oz_id = :oz AND tenant_id = :tid LIMIT 1"
             );
-            $oh->execute(['id' => $orderId, 'oz' => $ozId]);
+            $oh->execute(['id' => $orderId, 'oz' => $ozId, 'tid' => crm_tenant_id()]);
             $singleOrderHeader = $oh->fetch(PDO::FETCH_ASSOC) ?: null;
             if (!$singleOrderHeader) {
                 http_response_code(404);

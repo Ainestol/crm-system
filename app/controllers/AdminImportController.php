@@ -325,8 +325,9 @@ final class AdminImportController
             'err'  => $stats['errors'],
         ]);
         try {
+            $importLogId = (int) $this->pdo->lastInsertId();
             crm_audit_log($this->pdo, (int) $actor['id'], 'contacts_csv_import', 'import_log',
-                (int) $this->pdo->lastInsertId(), [
+                $importLogId, [
                     'filename'      => (string) ($analysis['filename'] ?? ''),
                     'format'        => (string) ($analysis['format'] ?? ''),
                     'dup_action'    => $dupAction,
@@ -337,6 +338,12 @@ final class AdminImportController
                     'skipped_dnc'   => $stats['skipped_dnc'],
                     'errors'        => $stats['errors'],
                 ], 'web');
+
+            // Activity log — import dokončen
+            crm_activity_log_record(
+                $this->pdo, (int) $actor['id'], 'admin.import_run', 'import_log', $importLogId,
+                ['imported' => $stats['imported'], 'updated' => $stats['updated'], 'total' => $stats['total']]
+            );
         } catch (\PDOException $e) {
             crm_db_log_error($e, __METHOD__);
         }
@@ -1291,7 +1298,10 @@ final class AdminImportController
     {
         $ico = $phone = $email = [];
         try {
-            $st = $this->pdo->query('SELECT ico, telefon, email FROM dnc_list');
+            // Multi-tenant: DNC seznam jen z aktivního tenantu
+            $stP = $this->pdo->prepare('SELECT ico, telefon, email FROM dnc_list WHERE tenant_id = :tid');
+            $stP->execute(['tid' => crm_tenant_id()]);
+            $st = $stP;
             if ($st) {
                 foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $d) {
                     if (!empty($d['ico']))     $ico[crm_import_normalize_ico((string)$d['ico'])] = true;
@@ -1311,7 +1321,10 @@ final class AdminImportController
         // Vrátí mapy hash -> contacts.id pro rychlý lookup
         $ico = $phone = $email = [];
         try {
-            $st = $this->pdo->query('SELECT id, ico, telefon, email FROM contacts');
+            // Multi-tenant: existující kontakty per-tenant
+            $stP = $this->pdo->prepare('SELECT id, ico, telefon, email FROM contacts WHERE tenant_id = :tid');
+            $stP->execute(['tid' => crm_tenant_id()]);
+            $st = $stP;
             if ($st) {
                 while ($d = $st->fetch(PDO::FETCH_ASSOC)) {
                     $id = (int) $d['id'];
@@ -1346,16 +1359,20 @@ final class AdminImportController
     {
         $protected = [];
         try {
+            // Multi-tenant filter
             $sql = "SELECT c.id, c.stav, c.dnc_flag, c.stav_changed_at, c.updated_at,
                            (SELECT w.stav FROM oz_contact_workflow w
                               WHERE w.contact_id = c.id
                               ORDER BY w.updated_at DESC LIMIT 1) AS wf_stav
                     FROM contacts c
-                    WHERE c.stav IN ('DONE','UZAVRENO','NEZAJEM','CALLED_BAD')
-                       OR c.dnc_flag = 1
-                       OR EXISTS (SELECT 1 FROM oz_contact_workflow w2
-                                  WHERE w2.contact_id = c.id AND w2.stav = 'UZAVRENO')";
-            $st = $this->pdo->query($sql);
+                    WHERE c.tenant_id = :tid
+                      AND (c.stav IN ('DONE','UZAVRENO','NEZAJEM','CALLED_BAD')
+                           OR c.dnc_flag = 1
+                           OR EXISTS (SELECT 1 FROM oz_contact_workflow w2
+                                      WHERE w2.contact_id = c.id AND w2.stav = 'UZAVRENO'))";
+            $stP = $this->pdo->prepare($sql);
+            $stP->execute(['tid' => crm_tenant_id()]);
+            $st = $stP;
             if ($st) {
                 while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
                     [$isProtected, $reason] = crm_import_is_protected_contact($row);
@@ -1872,12 +1889,13 @@ final class AdminImportController
         $idsPh = implode(',', array_fill(0, count($ids), '?'));
         $existing = [];
         try {
+            // Multi-tenant filter — jen kontakty z aktivního tenantu
             $est = $this->pdo->prepare(
                 "SELECT id, firma, ico, adresa, telefon, email, operator, prilez,
                         poznamka, narozeniny_majitele, vyrocni_smlouvy
-                 FROM contacts WHERE id IN ({$idsPh})"
+                 FROM contacts WHERE id IN ({$idsPh}) AND tenant_id = ?"
             );
-            $est->execute($ids);
+            $est->execute(array_merge($ids, [crm_tenant_id()]));
             foreach ($est->fetchAll(PDO::FETCH_ASSOC) as $row) {
                 $existing[(int) $row['id']] = $row;
             }
@@ -1885,6 +1903,7 @@ final class AdminImportController
             crm_db_log_error($e, __METHOD__ . '/load');
         }
 
+        // Multi-tenant: tenant filter ve WHERE jako defense-in-depth
         $sql = 'UPDATE contacts SET
                   firma                = :firma,
                   ico                  = :ico,
@@ -1898,7 +1917,7 @@ final class AdminImportController
                   narozeniny_majitele  = :naroz,
                   vyrocni_smlouvy      = :vyroci,
                   updated_at           = NOW(3)
-                WHERE id = :id';
+                WHERE id = :id AND tenant_id = :tid';
         $stmt = $this->pdo->prepare($sql);
         $updated = 0;
         $note = 'Import update (smart merge): ' . mb_substr($origName, 0, 200);
@@ -1926,6 +1945,7 @@ final class AdminImportController
                     'naroz'  => $r['naroz'] !== null ? $r['naroz'] : ($ex['narozeniny_majitele'] ?? null),
                     'vyroci' => $r['vyroci'] !== null ? $r['vyroci'] : ($ex['vyrocni_smlouvy'] ?? null),
                     'id'     => $b['id'],
+                    'tid'    => crm_tenant_id(),
                 ]);
                 if ($stmt->rowCount() > 0) {
                     $updated++;
@@ -2217,8 +2237,9 @@ final class AdminImportController
         if (!$hasPhone && !$hasEmail) return false;
 
         try {
-            $st = $this->pdo->prepare('SELECT telefon, email FROM contacts WHERE id = :id LIMIT 1');
-            $st->execute(['id' => $contactId]);
+            // Multi-tenant filter
+            $st = $this->pdo->prepare('SELECT telefon, email FROM contacts WHERE id = :id AND tenant_id = :tid LIMIT 1');
+            $st->execute(['id' => $contactId, 'tid' => crm_tenant_id()]);
             $row = $st->fetch(PDO::FETCH_ASSOC) ?: ['telefon' => '', 'email' => ''];
 
             $existingPhone = (string) ($row['telefon'] ?? '');
@@ -2232,12 +2253,13 @@ final class AdminImportController
             if (!$phoneChanged && !$emailChanged) return false; // nic nového
 
             $upd = $this->pdo->prepare(
-                'UPDATE contacts SET telefon = :tel, email = :em, updated_at = NOW(3) WHERE id = :id'
+                'UPDATE contacts SET telefon = :tel, email = :em, updated_at = NOW(3) WHERE id = :id AND tenant_id = :tid'
             );
             $upd->execute([
                 'tel' => $mergedPhone,
                 'em'  => $mergedEmail,
                 'id'  => $contactId,
+                'tid' => crm_tenant_id(),
             ]);
             return $upd->rowCount() > 0;
         } catch (\PDOException $e) {
@@ -2253,28 +2275,32 @@ final class AdminImportController
     private function findExistingByDedupKeys(?string $icoN, ?string $emN, ?string $pd): ?int
     {
         try {
+            // Multi-tenant: hledáme duplicity JEN v aktivním tenantu
+            $tid = crm_tenant_id();
             if ($icoN !== '' && $icoN !== null) {
                 $st = $this->pdo->prepare(
-                    'SELECT id FROM contacts WHERE ico IS NOT NULL AND TRIM(ico) = :v LIMIT 1'
+                    'SELECT id FROM contacts
+                     WHERE ico IS NOT NULL AND TRIM(ico) = :v AND tenant_id = :tid LIMIT 1'
                 );
-                $st->execute(['v' => $icoN]);
+                $st->execute(['v' => $icoN, 'tid' => $tid]);
                 $id = (int) ($st->fetchColumn() ?: 0);
                 if ($id > 0) return $id;
             }
             if ($emN !== '' && $emN !== null) {
                 $st = $this->pdo->prepare(
-                    'SELECT id FROM contacts WHERE email IS NOT NULL AND LOWER(TRIM(email)) = :v LIMIT 1'
+                    'SELECT id FROM contacts
+                     WHERE email IS NOT NULL AND LOWER(TRIM(email)) = :v AND tenant_id = :tid LIMIT 1'
                 );
-                $st->execute(['v' => $emN]);
+                $st->execute(['v' => $emN, 'tid' => $tid]);
                 $id = (int) ($st->fetchColumn() ?: 0);
                 if ($id > 0) return $id;
             }
             if ($pd !== '' && $pd !== null) {
                 $st = $this->pdo->prepare(
                     "SELECT id FROM contacts WHERE telefon IS NOT NULL
-                     AND REGEXP_REPLACE(telefon, '[^0-9]+', '') = :v LIMIT 1"
+                     AND REGEXP_REPLACE(telefon, '[^0-9]+', '') = :v AND tenant_id = :tid LIMIT 1"
                 );
-                $st->execute(['v' => $pd]);
+                $st->execute(['v' => $pd, 'tid' => $tid]);
                 $id = (int) ($st->fetchColumn() ?: 0);
                 if ($id > 0) return $id;
             }
@@ -2292,11 +2318,12 @@ final class AdminImportController
     private function loadContactSnapshot(int $contactId): array
     {
         try {
+            // Multi-tenant filter
             $st = $this->pdo->prepare(
                 'SELECT firma, ico, telefon, email, region, adresa
-                 FROM contacts WHERE id = :id LIMIT 1'
+                 FROM contacts WHERE id = :id AND tenant_id = :tid LIMIT 1'
             );
-            $st->execute(['id' => $contactId]);
+            $st->execute(['id' => $contactId, 'tid' => crm_tenant_id()]);
             $row = $st->fetch(PDO::FETCH_ASSOC);
             if (is_array($row)) {
                 return [

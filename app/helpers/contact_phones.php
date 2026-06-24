@@ -61,13 +61,14 @@ if (!function_exists('crm_phones_for_contact')) {
     function crm_phones_for_contact(PDO $pdo, int $contactId): array
     {
         try {
+            // Multi-tenant filter
             $st = $pdo->prepare(
                 'SELECT id, phone, phone_digits, operator, verified_at, verified_by, position
                  FROM contact_phones
-                 WHERE contact_id = :cid
+                 WHERE contact_id = :cid AND tenant_id = :tid
                  ORDER BY position ASC, id ASC'
             );
-            $st->execute(['cid' => $contactId]);
+            $st->execute(['cid' => $contactId, 'tid' => crm_tenant_id()]);
             $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
             foreach ($rows as &$r) {
                 $r['id']        = (int) $r['id'];
@@ -110,12 +111,13 @@ if (!function_exists('crm_phone_ensure_for_contact')) {
             ? strtoupper(trim($contactOperator))
             : null;
 
-        // 1) Načti existující řádky
+        // 1) Načti existující řádky — multi-tenant
+        $tid = crm_tenant_id();
         $exStmt = $pdo->prepare(
             'SELECT id, phone, phone_digits, operator, verified_at, position
-             FROM contact_phones WHERE contact_id = :cid'
+             FROM contact_phones WHERE contact_id = :cid AND tenant_id = :tid'
         );
-        $exStmt->execute(['cid' => $contactId]);
+        $exStmt->execute(['cid' => $contactId, 'tid' => $tid]);
         $existing = $exStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $existingByDigits = [];
         foreach ($existing as $e) {
@@ -135,7 +137,8 @@ if (!function_exists('crm_phone_ensure_for_contact')) {
                                           verified_at, position, created_at)
              VALUES (:cid, :phone, :digits, :op, :vat, :pos, NOW(3))'
         );
-        $del = $pdo->prepare('DELETE FROM contact_phones WHERE id = :id');
+        // INSERT — wrapper auto-injektuje tenant_id; DELETE explicitně per tenant
+        $del = $pdo->prepare('DELETE FROM contact_phones WHERE id = :id AND tenant_id = :tid');
 
         // 3) Přidat nové telefony (digits, které ještě neexistují)
         $i = 0;
@@ -162,7 +165,7 @@ if (!function_exists('crm_phone_ensure_for_contact')) {
         foreach ($existing as $e) {
             $d = (string) ($e['phone_digits'] ?? '');
             if ($d === '' || !isset($currentDigits[$d])) {
-                $del->execute(['id' => (int) $e['id']]);
+                $del->execute(['id' => (int) $e['id'], 'tid' => $tid]);
             }
         }
     }

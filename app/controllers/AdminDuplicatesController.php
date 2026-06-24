@@ -65,12 +65,14 @@ final class AdminDuplicatesController
                 FROM (
                     SELECT $col AS k, COUNT(*) AS c
                     FROM contacts
-                    WHERE $col IS NOT NULL AND $col <> ''
+                    WHERE $col IS NOT NULL AND $col <> '' AND tenant_id = :tid
                     GROUP BY $col
                     HAVING COUNT(*) > 1
                 ) AS d";
         try {
-            $row = $this->pdo->query($sql)->fetch(PDO::FETCH_ASSOC) ?: [];
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute(['tid' => crm_tenant_id()]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
         } catch (\PDOException) {
             $row = [];
         }
@@ -91,16 +93,18 @@ final class AdminDuplicatesController
         $col = $this->safeCol($col);
 
         // Nejdřív zjisti, které hodnoty mají duplicity
+        // Multi-tenant filter
         $stmt = $this->pdo->prepare(
             "SELECT $col AS k, COUNT(*) AS c
              FROM contacts
-             WHERE $col IS NOT NULL AND $col <> ''
+             WHERE $col IS NOT NULL AND $col <> '' AND tenant_id = :tid
              GROUP BY $col
              HAVING c > 1
              ORDER BY c DESC, $col ASC
              LIMIT :lim"
         );
         $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
+        $stmt->bindValue(':tid', crm_tenant_id(), PDO::PARAM_INT);
         $stmt->execute();
         $keys = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
@@ -118,6 +122,7 @@ final class AdminDuplicatesController
         // Načti všechny kontakty s těmito hodnotami (jednou DB roundtripem)
         $values = array_column($keys, 'k');
         $place  = implode(',', array_fill(0, count($values), '?'));
+        // Multi-tenant filter
         $sql = "SELECT c.id, c.firma, c.ico, c.telefon, c.email, c.region, c.adresa,
                        c.stav AS contact_stav,
                        c.created_at, c.updated_at,
@@ -128,10 +133,10 @@ final class AdminDuplicatesController
                 LEFT JOIN oz_contact_workflow w ON w.contact_id = c.id
                 LEFT JOIN users u_oz ON u_oz.id = c.assigned_sales_id
                 LEFT JOIN users u_cl ON u_cl.id = c.assigned_caller_id
-                WHERE c.$col IN ($place)
+                WHERE c.$col IN ($place) AND c.tenant_id = ?
                 ORDER BY c.$col, c.id ASC";
         $detail = $this->pdo->prepare($sql);
-        $detail->execute($values);
+        $detail->execute(array_merge($values, [crm_tenant_id()]));
 
         foreach ($detail->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
             $colName = $col;
