@@ -1783,12 +1783,15 @@ final class AdminImportController
             $placeholders[] = "(:cid{$p},:uid{$p},:stav{$p},{$startedSql},{$changedSql},{$updatedSql},:bmsl{$p},:cis{$p})";
             $values["cid{$p}"]  = $r['id'];
             $values["uid{$p}"]  = $r['oz_user_id'];
-            // Pokud admin specifikoval workflow stav (NOVE/ZPRACOVAVA/...), použij ho
-            // Jinak default FOR_SALES
-            $wfStav = (string) ($r['wf_stav'] ?? 'FOR_SALES');
+            // Pokud admin specifikoval workflow stav (NOVE/ZPRACOVAVA/...), použij ho.
+            // Jinak default NOVE = nový lead v pracovní ploše OZ (tab "Rozpracované").
+            // POZOR: 'FOR_SALES' je hodnota contacts.stav, NE platný stav
+            // oz_contact_workflow — OZ taby ho neznají a lead by byl NEVIDITELNÝ.
+            // Proto FOR_SALES (i cokoli neplatného) mapujeme na NOVE.
+            $wfStav = (string) ($r['wf_stav'] ?? 'NOVE');
             $validWf = ['NOVE','ZPRACOVAVA','NABIDKA','SCHUZKA','SANCE','CALLBACK',
-                        'BO_PREDANO','BO_VPRACI','BO_VRACENO','SMLOUVA','FOR_SALES'];
-            if (!in_array($wfStav, $validWf, true)) $wfStav = 'FOR_SALES';
+                        'BO_PREDANO','BO_VPRACI','BO_VRACENO','SMLOUVA'];
+            if (!in_array($wfStav, $validWf, true)) $wfStav = 'NOVE';
             $values["stav{$p}"] = $wfStav;
             if ($r['started_at'] !== null) {
                 $values["sa{$p}"] = $r['started_at'];
