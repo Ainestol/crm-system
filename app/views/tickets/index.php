@@ -98,8 +98,9 @@ $fmt = static function (?string $dt): string {
         </form>
     </details>
 
-    <!-- ── Filtry (admin) ── -->
+    <!-- ── Filtry (admin) — jen prohledávání seznamu, NE zakládání ── -->
     <?php if ($isAdmin) { ?>
+        <div class="tk-filter-label">🔎 Filtr ticketů (jen pro hledání v seznamu)</div>
         <form method="GET" action="<?= crm_h(crm_url('/tickets')) ?>" class="tk-filters">
             <select name="status" class="tk-input tk-input--sm">
                 <option value="">— stav —</option>
@@ -306,8 +307,11 @@ $fmt = static function (?string $dt): string {
 .tk-btn--ghost { background:transparent; }
 .tk-btn--sm { padding:0.35rem 0.7rem; font-size:0.8rem; border-radius:7px; }
 
+.tk-filter-label { font-size:0.78rem; font-weight:700; color:var(--muted,#6b7280);
+                   text-transform:uppercase; letter-spacing:0.04em; margin:0.4rem 0 0.4rem 0.2rem; }
 .tk-filters { display:flex; gap:0.45rem; flex-wrap:wrap; align-items:center; margin-bottom:1.1rem;
-              padding:0.7rem; background:var(--sb-hover,#f9fafb); border-radius:11px; }
+              padding:0.7rem; background:var(--sb-hover,#f9fafb); border:1px solid var(--sb-border,#e5e7eb);
+              border-radius:11px; }
 
 .tk-empty { color:var(--muted,#9ca3af); font-style:italic; padding:2rem 0; text-align:center; font-size:0.95rem; }
 
