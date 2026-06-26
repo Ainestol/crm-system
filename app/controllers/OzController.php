@@ -696,6 +696,11 @@ final class OzController
             crm_db_log_error($e, __METHOD__);
         }
 
+        // Sjednocená poznámková osa pro všechny zobrazené kontakty (dávkově, ne N+1).
+        $notesTimeline = $contacts !== []
+            ? crm_contact_timeline_batch($this->pdo, array_map(static fn($c) => (int) $c['id'], $contacts))
+            : [];
+
         $title = 'Pracovní plocha';
         ob_start();
         require dirname(__DIR__) . '/views/oz/leads.php';

@@ -608,6 +608,20 @@ final class AdminDatagridController
             exit;
         }
 
+        // ── Ochrana proti ztrátě poznámky ────────────────────────────────
+        // Prázdná hodnota NESMÍ přepsat existující neprázdnou poznámku
+        // (časté při editaci v gridu — uživatel klikne do buňky a omylem
+        // uloží prázdno → smaže bohatou poznámku z importu/od navolávačky).
+        if (in_array($field, ['poznamka', 'prilez'], true)
+            && trim((string) $sqlValue) === ''
+            && trim((string) ($before[$field] ?? '')) !== '') {
+            if (ob_get_length()) ob_clean();
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' =>
+                'Prázdnou hodnotou nelze přepsat existující poznámku (ochrana proti ztrátě dat).']);
+            exit;
+        }
+
         // Spustit UPDATE v transakci (kvůli workflow_log + workflow row přesunu)
         $this->pdo->beginTransaction();
         try {
