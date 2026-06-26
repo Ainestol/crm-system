@@ -929,6 +929,42 @@ final class Router
                 'roles' => ['majitel', 'superadmin'],
                 'handler' => [AdminContactMixController::class, 'postReclassify'],
             ],
+            // ── Tickety (interní pomoc / požadavky) ──
+            [
+                'method' => 'GET',
+                'path' => '/tickets',
+                'auth' => true,
+                'roles' => ['cisticka', 'navolavacka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
+                'handler' => [TicketController::class, 'getIndex'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/tickets/create',
+                'auth' => true,
+                'roles' => ['cisticka', 'navolavacka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
+                'handler' => [TicketController::class, 'postCreate'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/tickets/status',
+                'auth' => true,
+                'roles' => ['majitel', 'superadmin'],
+                'handler' => [TicketController::class, 'postStatus'],
+            ],
+            [
+                'method' => 'POST',
+                'path' => '/tickets/upload',
+                'auth' => true,
+                'roles' => ['cisticka', 'navolavacka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
+                'handler' => [TicketController::class, 'postUpload'],
+            ],
+            [
+                'method' => 'GET',
+                'path' => '/tickets/attachment',
+                'auth' => true,
+                'roles' => ['cisticka', 'navolavacka', 'obchodak', 'backoffice', 'majitel', 'superadmin'],
+                'handler' => [TicketController::class, 'getAttachment'],
+            ],
             // ── Nápověda (in-app dokumentace) ──
             [
                 'method' => 'GET',

@@ -146,6 +146,8 @@ $_navForRole = static function (string $role, int $proposalsPending = 0): array 
     // ── Společné dole pro všechny role (mimo BO které má jen pracovní plochu) ──
     $nav[] = ['key' => 'novy_kontakt',    'icon' => '➕', 'label' => 'Nový kontakt',    'href' => '/contacts/new',      'children' => []];
     $nav[] = ['key' => 'doporucenky',     'icon' => '📋', 'label' => 'Moje doporučenky','href' => '/me/added-contacts', 'children' => []];
+    // Tickety — pro VŠECHNY role. Každý vidí svoje, admin/superadmin všechny.
+    $nav[] = ['key' => 'tickety', 'icon' => '🎫', 'label' => 'Tickety', 'href' => '/tickets', 'children' => []];
     // Nápověda — pro VŠECHNY role. Každá uvidí jen návod relevantní pro svou práci.
     $nav[] = ['key' => 'napoveda', 'icon' => '❓', 'label' => 'Nápověda', 'href' => '/help', 'children' => []];
 

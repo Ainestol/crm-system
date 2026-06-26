@@ -17,11 +17,20 @@
 declare(strict_types=1);
 
 // ─── Konfigurace ──────────────────────────────────────────────────
-$host = getenv('DB_HOST') ?: '127.0.0.1';
-$port = getenv('DB_PORT') ?: '3306';
-$db   = getenv('DB_NAME') ?: 'crm';
-$user = getenv('DB_USER') ?: 'root';
-$pass = getenv('DB_PASS') ?: '';
+// Načti .env + konstanty stejně jako web aplikace (constants.php obsahuje
+// .env loader → naplní getenv('CRM_DB_*')). Díky tomu funguje migrace
+// bez ručního předávání hesla: stačí `php bin/migrate.php up`.
+$constants = __DIR__ . '/../config/constants.php';
+if (is_file($constants)) {
+    require_once $constants;
+}
+
+// Primárně čteme CRM_DB_* (jako aplikace), fallback na DB_* (zpětná kompatibilita).
+$host = getenv('CRM_DB_HOST')     ?: (getenv('DB_HOST') ?: '127.0.0.1');
+$port = getenv('CRM_DB_PORT')     ?: (getenv('DB_PORT') ?: '3306');
+$db   = getenv('CRM_DB_DATABASE') ?: (getenv('DB_NAME') ?: 'crm');
+$user = getenv('CRM_DB_USERNAME') ?: (getenv('DB_USER') ?: 'root');
+$pass = getenv('CRM_DB_PASSWORD') ?: (getenv('DB_PASS') ?: '');
 
 // Cesta k migracím (relativně od bin/)
 $migrationsDir = realpath(__DIR__ . '/../sql/migrations');

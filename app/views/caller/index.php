@@ -2058,10 +2058,12 @@ function callerPrilezSave(cId) {
 function callerAresFill(cId, btn) {
     var icoSpan = document.getElementById('val-ico-' + cId);
     var ico = icoSpan ? (icoSpan.textContent || '').replace(/\D+/g, '') : '';
-    if (ico.length !== 8) {
-        alert('Pro načtení z ARES musí mít IČO 8 číslic. Nejdřív doplň IČO.');
+    if (ico.length === 0 || ico.length > 8) {
+        alert('Pro načtení z ARES musí mít IČO 1–8 číslic. Nejdřív doplň IČO.');
         return;
     }
+    // chybějící nuly doplníme zleva (např. „1234567" → „01234567")
+    ico = ico.padStart(8, '0');
     var orig = btn.textContent;
     btn.disabled = true; btn.textContent = '⏳';
     fetch(CALLER_ARES_URL + '?ico=' + encodeURIComponent(ico), {

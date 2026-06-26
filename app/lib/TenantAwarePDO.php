@@ -53,7 +53,7 @@ final class TenantAwarePDO extends PDO
         'bet_campaigns', 'bet_campaign_recipients', 'bet_campaign_callers', 'bet_campaign_leads',
         'premium_orders', 'premium_lead_pool', 'rescue_requests',
         'app_settings', 'note_templates', 'dnc_list', 'alerts', 'announcements',
-        'team_records', 'oz_tab_prefs',
+        'team_records', 'oz_tab_prefs', 'tickets', 'ticket_attachments',
     ];
 
     /**

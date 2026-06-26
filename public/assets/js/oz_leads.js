@@ -503,12 +503,15 @@ function ozAresLookup(cId) {
     const status   = document.getElementById('oz-ares-status-' + cId);
     if (!icoInput || !status) return;
 
-    const ico = (icoInput.value || '').replace(/\D+/g, '');
-    if (ico.length !== 8) {
-        status.textContent = '⚠ IČO musí mít 8 číslic.';
+    let ico = (icoInput.value || '').replace(/\D+/g, '');
+    if (ico.length === 0 || ico.length > 8) {
+        status.textContent = '⚠ IČO musí mít 1–8 číslic.';
         status.style.color = '#e74c3c';
         return;
     }
+    // ARES vyžaduje 8 číslic — chybějící nuly doplníme zleva
+    // (např. „1234567" → „01234567"). Stejně to dělá i server.
+    ico = ico.padStart(8, '0');
     status.textContent = '⏳ Načítám z ARES…';
     status.style.color = 'var(--muted)';
 
