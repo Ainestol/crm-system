@@ -490,7 +490,8 @@
         <select id="dg-bulk-action" style="font-size:0.85rem;padding:0.3rem 0.5rem;">
             <option value="">— Vyber akci —</option>
             <option value="assign_caller">🎯 Přiřadit navolávačku</option>
-            <option value="assign_oz">🎯 Přiřadit OZ</option>
+            <option value="assign_oz">🎯 Přiřadit OZ (jen vlastník)</option>
+            <option value="promote_oz">🚀 Předat OZ k práci (i nenavolané)</option>
             <option value="reset_to_pool">🔄 Vrátit do poolu</option>
         </select>
         <select id="dg-bulk-user" style="font-size:0.85rem;padding:0.3rem 0.5rem;display:none;min-width:180px;">
@@ -1892,7 +1893,7 @@
         // Action select — show/hide user picker podle akce
         actionSel.addEventListener('change', function() {
             const a = actionSel.value;
-            if (a === 'assign_caller' || a === 'assign_oz') {
+            if (a === 'assign_caller' || a === 'assign_oz' || a === 'promote_oz') {
                 userSel.style.display = '';
                 // Naplň options podle role.
                 // editOptions.caller/oz jsou POLE OBJEKTŮ [{id, jmeno, email}, ...]
@@ -1923,14 +1924,15 @@
                 return;
             }
             let userId = 0;
-            if (action === 'assign_caller' || action === 'assign_oz') {
+            if (action === 'assign_caller' || action === 'assign_oz' || action === 'promote_oz') {
                 userId = parseInt(userSel.value, 10);
                 if (!userId) { crmAlert('Vyber uživatele z dropdownu.', { type: 'warn' }); return; }
             }
 
             const labels = {
                 'assign_caller': '🎯 přiřadit navolávačku',
-                'assign_oz':     '🎯 přiřadit OZ',
+                'assign_oz':     '🎯 přiřadit OZ (jen vlastník)',
+                'promote_oz':    '🚀 předat OZ k práci (i nenavolané)',
                 'reset_to_pool': '🔄 vrátit do poolu',
             };
             const big = selectedIds.size > 50;

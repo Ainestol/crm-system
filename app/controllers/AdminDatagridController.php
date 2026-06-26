@@ -700,41 +700,42 @@ final class AdminDatagridController
                 //    nastavíme contacts.stav = CALLED_OK (= „připraveno k převzetí OZ")
                 //    a vytvoříme workflow row pro nového OZ (pokud neexistuje).
                 if ($newOzId > 0) {
-                    // Raw / mezistavy, ze kterých BUMPNEME na CALLED_OK aby OZ viděl kontakt
-                    // ve své pracovní ploše (OZ filter: c.stav = 'CALLED_OK').
-                    // FOR_SALES je legacy stav z importu — OZ ho taky bez bumpu nevidí.
-                    $rawStavs = ['NEW', 'READY', 'VF_SKIP', 'ASSIGNED', 'NEDOVOLANO',
-                                 'EMAIL_READY', 'CHYBNY_KONTAKT', 'CALLED_BAD', 'NEZAJEM',
-                                 'FOR_SALES'];
-
-                    // Pokud contacts.stav byl raw, povýšit na CALLED_OK
-                    if (in_array($oldStav, $rawStavs, true)) {
-                        // Multi-tenant: filtr aby admin tenant 1 nepřepsal data tenant 2
-                        $this->pdo->prepare(
-                            "UPDATE contacts SET stav = 'CALLED_OK', datum_predani = NOW(3), updated_at = NOW(3)
-                             WHERE id = ? AND tenant_id = ?"
-                        )->execute([$contactId, crm_tenant_id()]);
-
-                        // Workflow log: stav promote (tenant_id auto-doplní wrapper)
-                        $this->pdo->prepare(
-                            "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
-                             VALUES (?, ?, ?, 'CALLED_OK', 'ADMIN EDIT: auto-promote stav po přiřazení OZ', NOW(3))"
-                        )->execute([$contactId, (int) $actor['id'], $oldStav]);
-                    }
-
-                    // Vytvoř workflow řádek pro nového OZ (pokud neexistuje)
-                    $wfCheck = $this->pdo->prepare(
-                        "SELECT id FROM oz_contact_workflow WHERE contact_id = ? AND oz_id = ? AND tenant_id = ?"
-                    );
-                    $wfCheck->execute([$contactId, $newOzId, crm_tenant_id()]);
-                    if ($wfCheck->fetchColumn() === false) {
-                        try {
+                    // KOŘEN MAZCE: dřív se přiřazením OZ povýšil na CALLED_OK + workflow
+                    // KAŽDÝ "raw" stav (i NEDOVOLANO, NEZAJEM, READY, NEW…), takže se
+                    // nenavolané kontakty nacpaly do OZ/leads. Nově do OZ/leads pošleme
+                    // kontakt JEN když je reálně připravený pro obchod:
+                    //   - FOR_SALES (legacy "chce" z importu) → povýšit na CALLED_OK,
+                    //   - CALLED_OK  (už je lead)             → jen doplnit workflow.
+                    // Ostatní stavy: změní se jen vlastník (assigned_sales_id výše),
+                    // stav i zařazení zůstanou — do OZ/leads nepadnou.
+                    $promoteStavs = ['FOR_SALES', 'CALLED_OK'];
+                    if (in_array($oldStav, $promoteStavs, true)) {
+                        // FOR_SALES → CALLED_OK (CALLED_OK už je, ten nepřepisujeme)
+                        if ($oldStav === 'FOR_SALES') {
                             $this->pdo->prepare(
-                                "INSERT INTO oz_contact_workflow
-                                 (contact_id, oz_id, stav, started_at, stav_changed_at, updated_at)
-                                 VALUES (?, ?, 'NOVE', NOW(3), NOW(3), NOW(3))"
-                            )->execute([$contactId, $newOzId]);
-                        } catch (\Throwable $_) {}
+                                "UPDATE contacts SET stav = 'CALLED_OK', datum_predani = NOW(3), updated_at = NOW(3)
+                                 WHERE id = ? AND tenant_id = ?"
+                            )->execute([$contactId, crm_tenant_id()]);
+                            $this->pdo->prepare(
+                                "INSERT INTO workflow_log (contact_id, user_id, old_status, new_status, note, created_at)
+                                 VALUES (?, ?, ?, 'CALLED_OK', 'ADMIN EDIT: FOR_SALES → CALLED_OK po přiřazení OZ', NOW(3))"
+                            )->execute([$contactId, (int) $actor['id'], $oldStav]);
+                        }
+
+                        // Workflow řádek pro nového OZ (jen pro lead stavy)
+                        $wfCheck = $this->pdo->prepare(
+                            "SELECT id FROM oz_contact_workflow WHERE contact_id = ? AND oz_id = ? AND tenant_id = ?"
+                        );
+                        $wfCheck->execute([$contactId, $newOzId, crm_tenant_id()]);
+                        if ($wfCheck->fetchColumn() === false) {
+                            try {
+                                $this->pdo->prepare(
+                                    "INSERT INTO oz_contact_workflow
+                                     (contact_id, oz_id, stav, started_at, stav_changed_at, updated_at)
+                                     VALUES (?, ?, 'NOVE', NOW(3), NOW(3), NOW(3))"
+                                )->execute([$contactId, $newOzId]);
+                            } catch (\Throwable $_) {}
+                        }
                     }
                 }
             }
@@ -851,7 +852,7 @@ final class AdminDatagridController
             exit;
         }
 
-        $validActions = ['assign_caller', 'assign_oz', 'reset_to_pool'];
+        $validActions = ['assign_caller', 'assign_oz', 'promote_oz', 'reset_to_pool'];
         if (!in_array($action, $validActions, true)) {
             if (ob_get_length()) ob_clean();
             http_response_code(400);
@@ -866,6 +867,9 @@ final class AdminDatagridController
                     break;
                 case 'assign_oz':
                     $this->bulkAssignOz($ids, (int) $value, (int) $actor['id']);
+                    break;
+                case 'promote_oz':
+                    $this->bulkPromoteToOz($ids, (int) $value, (int) $actor['id']);
                     break;
                 case 'reset_to_pool':
                     $this->bulkResetToPool($ids, (int) $actor['id']);
@@ -963,10 +967,6 @@ final class AdminDatagridController
             throw new \RuntimeException('Uživatel není aktivní obchodák (OZ).');
         }
 
-        $rawStavs = ['NEW', 'READY', 'VF_SKIP', 'ASSIGNED', 'NEDOVOLANO',
-                     'EMAIL_READY', 'CHYBNY_KONTAKT', 'CALLED_BAD', 'NEZAJEM',
-                     'FOR_SALES'];
-
         $this->pdo->beginTransaction();
         try {
             $tid = crm_tenant_id();
@@ -979,16 +979,105 @@ final class AdminDatagridController
                      WHERE id IN ($ph) AND tenant_id = ?"
                 )->execute(array_merge([$ozId], $chunk, [$tid]));
 
-                // 2) Auto-promote raw → CALLED_OK + datum_predani
-                $phS = implode(',', array_fill(0, count($rawStavs), '?'));
+                // 2) Do OZ/leads pošleme JEN reálné lead-stavy:
+                //    FOR_SALES (legacy "chce") → povýšit na CALLED_OK.
+                //    Ostatní (NEDOVOLANO, NEZAJEM, READY, NEW…) NEPOVYŠUJEME —
+                //    jinak by se nenavolané kontakty hromadně nacpaly do OZ/leads
+                //    (přesně to způsobilo ten mazec při přehazování OZ).
                 $this->pdo->prepare(
                     "UPDATE contacts SET stav = 'CALLED_OK',
                                           datum_predani = COALESCE(datum_predani, NOW(3))
-                     WHERE id IN ($ph) AND stav IN ($phS) AND tenant_id = ?"
-                )->execute(array_merge($chunk, $rawStavs, [$tid]));
+                     WHERE id IN ($ph) AND stav = 'FOR_SALES' AND tenant_id = ?"
+                )->execute(array_merge($chunk, [$tid]));
 
-                // 3) Vytvoř workflow row pro každého (kde neexistuje)
-                foreach ($chunk as $cid) {
+                // 3) Workflow row JEN pro kontakty, co jsou teď CALLED_OK (lead).
+                //    Nenavolané (NEDOVOLANO/NEZAJEM/READY/…) workflow nedostanou
+                //    → do OZ/leads nepadnou.
+                $leadStmt = $this->pdo->prepare(
+                    "SELECT id FROM contacts WHERE id IN ($ph) AND stav = 'CALLED_OK' AND tenant_id = ?"
+                );
+                $leadStmt->execute(array_merge($chunk, [$tid]));
+                $leadIds = $leadStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+                foreach ($leadIds as $cid) {
+                    $wfCheck = $this->pdo->prepare(
+                        "SELECT id FROM oz_contact_workflow
+                         WHERE contact_id = ? AND oz_id = ? AND tenant_id = ?"
+                    );
+                    $wfCheck->execute([$cid, $ozId, $tid]);
+                    if ($wfCheck->fetchColumn() === false) {
+                        try {
+                            $this->pdo->prepare(
+                                "INSERT INTO oz_contact_workflow
+                                 (contact_id, oz_id, stav, started_at, stav_changed_at, updated_at)
+                                 VALUES (?, ?, 'NOVE', NOW(3), NOW(3), NOW(3))"
+                            )->execute([$cid, $ozId]);
+                        } catch (\Throwable $_) {}
+                    }
+                }
+            }
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /**
+     * Bulk: VĚDOMÉ předání OZ k práci.
+     *
+     * Na rozdíl od bulkAssignOz (= jen přepis vlastníka, nic nepovyšuje) tahle
+     * akce ZÁMĚRNĚ pošle VYBRANÉ kontakty do OZ/leads i když nebyly navolané —
+     * admin/majitel je sám označil a klikl „Předat OZ k práci".
+     *
+     * Co dělá: přiřadí OZ, povýší stav na CALLED_OK (lead) a založí OZ workflow
+     * row (NOVE). NEMAŽE poznámky ani žádná data — jen mění vlastníka/stav.
+     * Uzavřené kontakty (DONE/UZAVRENO) přeskakuje, aby se omylem neotevřela
+     * hotová smlouva.
+     */
+    private function bulkPromoteToOz(array $ids, int $ozId, int $adminId): void
+    {
+        if ($ozId <= 0) {
+            throw new \RuntimeException('Neplatné ID obchodáka.');
+        }
+        $os = $this->pdo->prepare(
+            "SELECT id FROM users WHERE id = ? AND aktivni = 1
+             AND (role = 'obchodak' OR JSON_CONTAINS(IFNULL(roles_extra, '[]'), '\"obchodak\"'))"
+        );
+        $os->execute([$ozId]);
+        if (!$os->fetchColumn()) {
+            throw new \RuntimeException('Uživatel není aktivní obchodák (OZ).');
+        }
+
+        // Uzavřené kontakty nepřepisujeme (neotevírat hotové smlouvy omylem).
+        $skipStavs = ['DONE', 'UZAVRENO'];
+
+        $this->pdo->beginTransaction();
+        try {
+            $tid = crm_tenant_id();
+            foreach (array_chunk($ids, 250) as $chunk) {
+                $ph  = implode(',', array_fill(0, count($chunk), '?'));
+                $phS = implode(',', array_fill(0, count($skipStavs), '?'));
+
+                // 1) Přiřaď OZ + povýš na CALLED_OK (lead) — kromě uzavřených.
+                //    Poznámky/notes se NEDOTÝKÁME, jen vlastník + stav + datum_predani.
+                $this->pdo->prepare(
+                    "UPDATE contacts
+                     SET assigned_sales_id = ?,
+                         stav = 'CALLED_OK',
+                         datum_predani = COALESCE(datum_predani, NOW(3)),
+                         updated_at = NOW(3)
+                     WHERE id IN ($ph) AND stav NOT IN ($phS) AND tenant_id = ?"
+                )->execute(array_merge([$ozId], $chunk, $skipStavs, [$tid]));
+
+                // 2) Workflow row (NOVE) pro každý povýšený kontakt (kde neexistuje).
+                $leadStmt = $this->pdo->prepare(
+                    "SELECT id FROM contacts
+                     WHERE id IN ($ph) AND stav = 'CALLED_OK'
+                       AND assigned_sales_id = ? AND tenant_id = ?"
+                );
+                $leadStmt->execute(array_merge($chunk, [$ozId, $tid]));
+                $leadIds = $leadStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+                foreach ($leadIds as $cid) {
                     $wfCheck = $this->pdo->prepare(
                         "SELECT id FROM oz_contact_workflow
                          WHERE contact_id = ? AND oz_id = ? AND tenant_id = ?"
