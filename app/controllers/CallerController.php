@@ -769,15 +769,19 @@ final class CallerController
         $tabCounts['aktivni'] = (int) ($tabCounts['aktivni'] ?? 0) + (int) $lockedForBadge->fetchColumn();
 
         // Obchodáci seskupení dle regionu
+        // (vč. víc-rolových uživatelů, kteří mají obchodáka v roles_extra —
+        //  jinak by např. navolávačka+obchodák nešla vybrat jako OZ pro výhru)
         $salesStmt = $this->pdo->prepare(
             'SELECT u.id, u.jmeno, ur.region
              FROM users u
              JOIN user_regions ur ON ur.user_id = u.id
-             WHERE u.role = \'obchodak\' AND u.aktivni = 1
+             WHERE (u.role = \'obchodak\' OR JSON_CONTAINS(IFNULL(u.roles_extra, \'[]\'), \'"obchodak"\'))
+               AND u.aktivni = 1
              UNION
              SELECT u.id, u.jmeno, u.primary_region AS region
              FROM users u
-             WHERE u.role = \'obchodak\' AND u.aktivni = 1
+             WHERE (u.role = \'obchodak\' OR JSON_CONTAINS(IFNULL(u.roles_extra, \'[]\'), \'"obchodak"\'))
+               AND u.aktivni = 1
                AND u.primary_region IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM user_regions ur2 WHERE ur2.user_id = u.id)
              ORDER BY jmeno ASC'
@@ -1076,7 +1080,9 @@ final class CallerController
                     crm_redirect('/caller');
                 }
                 $sc = $this->pdo->prepare(
-                    'SELECT id, jmeno FROM users WHERE id = :id AND role = \'obchodak\' AND aktivni = 1 LIMIT 1'
+                    'SELECT id, jmeno FROM users WHERE id = :id
+                       AND (role = \'obchodak\' OR JSON_CONTAINS(IFNULL(roles_extra, \'[]\'), \'"obchodak"\'))
+                       AND aktivni = 1 LIMIT 1'
                 );
                 $sc->execute(['id' => $salesId]);
                 $salesUser = $sc->fetch(PDO::FETCH_ASSOC);
@@ -1518,7 +1524,9 @@ final class CallerController
 
         if ($salesId > 0) {
             $sc = $this->pdo->prepare(
-                'SELECT id FROM users WHERE id = :id AND role = \'obchodak\' AND aktivni = 1 LIMIT 1'
+                'SELECT id FROM users WHERE id = :id
+                   AND (role = \'obchodak\' OR JSON_CONTAINS(IFNULL(roles_extra, \'[]\'), \'"obchodak"\'))
+                   AND aktivni = 1 LIMIT 1'
             );
             $sc->execute(['id' => $salesId]);
             if ($sc->fetch()) {
@@ -1659,8 +1667,13 @@ final class CallerController
         $results  = [];
 
         if (strlen($q) >= 3) {
-            // Hledá v celé DB — telefon nebo firma
-            $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+            // Hledá v celé DB (v rámci firmy/tenanta) — podle firmy/jména,
+            // telefonu, IČO nebo e-mailu. Telefon i IČO porovnáváme i po
+            // odstranění mezer/nečíslic, aby "608 860 792" i "46298690"
+            // (bez ohledu na formát v DB) našly kontakt.
+            $like     = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+            $digits   = preg_replace('/\D+/', '', $q) ?? '';
+            $likeNum  = $digits !== '' ? '%' . $digits . '%' : '%__no_match__%';
             // Multi-tenant filter
             $stmt = $this->pdo->prepare(
                 'SELECT c.id, c.firma, c.telefon, c.email, c.stav, c.operator,
@@ -1670,11 +1683,24 @@ final class CallerController
                  FROM contacts c
                  LEFT JOIN users u ON u.id = c.assigned_sales_id
                  WHERE c.tenant_id = :tid
-                   AND (c.firma LIKE :q1 OR c.telefon LIKE :q2)
+                   AND (c.firma LIKE :q1
+                        OR c.telefon LIKE :q2
+                        OR c.ico LIKE :q3
+                        OR c.email LIKE :q4
+                        OR REPLACE(REPLACE(c.telefon, \' \', \'\'), \'+\', \'\') LIKE :qn1
+                        OR c.ico LIKE :qn2)
                  ORDER BY c.firma ASC
                  LIMIT 50'
             );
-            $stmt->execute(['q1' => $like, 'q2' => $like, 'tid' => crm_tenant_id()]);
+            $stmt->execute([
+                'q1'  => $like,
+                'q2'  => $like,
+                'q3'  => $like,
+                'q4'  => $like,
+                'qn1' => $likeNum,
+                'qn2' => $likeNum,
+                'tid' => crm_tenant_id(),
+            ]);
             $results = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
             // Anotuj výsledky o info o sdílených telefonech (stejně jako v hlavní queue).
@@ -1686,15 +1712,18 @@ final class CallerController
         }
 
         // OZ pro akční formuláře v search výsledcích
+        // (vč. víc-rolových uživatelů s obchodákem v roles_extra)
         $salesStmt = $this->pdo->prepare(
             'SELECT u.id, u.jmeno, ur.region
              FROM users u
              JOIN user_regions ur ON ur.user_id = u.id
-             WHERE u.role = \'obchodak\' AND u.aktivni = 1
+             WHERE (u.role = \'obchodak\' OR JSON_CONTAINS(IFNULL(u.roles_extra, \'[]\'), \'"obchodak"\'))
+               AND u.aktivni = 1
              UNION
              SELECT u.id, u.jmeno, u.primary_region AS region
              FROM users u
-             WHERE u.role = \'obchodak\' AND u.aktivni = 1
+             WHERE (u.role = \'obchodak\' OR JSON_CONTAINS(IFNULL(u.roles_extra, \'[]\'), \'"obchodak"\'))
+               AND u.aktivni = 1
                AND u.primary_region IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM user_regions ur2 WHERE ur2.user_id = u.id)
              ORDER BY jmeno ASC'
@@ -1851,7 +1880,9 @@ final class CallerController
         }
 
         $salesCheck = $this->pdo->prepare(
-            'SELECT id, jmeno FROM users WHERE id = :id AND role = \'obchodak\' AND aktivni = 1 LIMIT 1'
+            'SELECT id, jmeno FROM users WHERE id = :id
+               AND (role = \'obchodak\' OR JSON_CONTAINS(IFNULL(roles_extra, \'[]\'), \'"obchodak"\'))
+               AND aktivni = 1 LIMIT 1'
         );
         $salesCheck->execute(['id' => $salesId]);
         $salesUser = $salesCheck->fetch(PDO::FETCH_ASSOC);
