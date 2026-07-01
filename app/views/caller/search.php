@@ -48,6 +48,13 @@ $callerId = (int) ($user['id'] ?? 0);
                 $canAct = in_array($stav, ['NEW','ASSIGNED','CALLBACK','NEDOVOLANO','READY'], true)
                        && ($assignedCaller === null || (int) $assignedCaller === $callerId);
 
+                // Může opravit špatně přiřazené OZ? (jen SVOJE čerstvá výhra, OZ ještě nezačal)
+                $ozWfStav  = (string) ($c['oz_wf_stav'] ?? '');
+                $ozStarted = $ozWfStav !== '' && $ozWfStav !== 'NOVE';
+                $canFixOz  = in_array($stav, ['CALLED_OK','FOR_SALES'], true)
+                          && $assignedCaller !== null && (int) $assignedCaller === $callerId
+                          && !$ozStarted;
+
                 $stavClass = match ($stav) {
                     'CALLED_OK'      => 'status--win',
                     'CALLED_BAD'     => 'status--loss',
@@ -286,10 +293,31 @@ $callerId = (int) ($user['id'] ?? 0);
                         'READY'          => '<span class="status-tag" style="background:rgba(61,139,253,0.15);color:var(--accent);">Připraveno</span>',
                         default          => crm_h($stav),
                     } ?>
-                    <?php if (in_array($stav, ['CALLED_OK','CALLED_BAD','NEZAJEM','IZOLACE','CHYBNY_KONTAKT','FOR_SALES'], true)) { ?>
+                    <?php if (in_array($stav, ['CALLED_OK','CALLED_BAD','NEZAJEM','IZOLACE','CHYBNY_KONTAKT','FOR_SALES'], true)
+                              && $assignedCaller !== null && (int) $assignedCaller !== $callerId) { ?>
                         <span class="muted" style="font-size:0.75rem; display:block; margin-top:0.2rem;">
                             Přiřazeno jiné navolávačce
                         </span>
+                    <?php } ?>
+
+                    <?php if ($canFixOz && !$noSales) { ?>
+                        <div class="fixoz-box" style="margin-top:0.5rem; padding:0.5rem 0.6rem; background:rgba(234,179,8,0.10); border:1px solid rgba(234,179,8,0.4); border-radius:8px;">
+                            <div class="muted" style="font-size:0.75rem; margin-bottom:0.3rem;">
+                                Špatné OZ? <?php if (!empty($c['sales_name'])) { ?>Teď: <strong><?= crm_h((string) $c['sales_name']) ?></strong>. <?php } ?>OZ zatím nezačal — můžeš opravit:
+                            </div>
+                            <form method="post" action="<?= crm_h(crm_url('/caller/fix-oz')) ?>" style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center;">
+                                <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+                                <input type="hidden" name="contact_id" value="<?= $cId ?>">
+                                <input type="hidden" name="q" value="<?= crm_h((string) ($q ?? '')) ?>">
+                                <select name="sales_id" class="input-sales">
+                                    <option value="">— vyber OZ —</option>
+                                    <?php foreach ($salesList as $s) { ?>
+                                        <option value="<?= (int) $s['id'] ?>"><?= crm_h((string) $s['jmeno']) ?></option>
+                                    <?php } ?>
+                                </select>
+                                <button type="submit" class="btn btn-secondary btn-sm">Opravit OZ</button>
+                            </form>
+                        </div>
                     <?php } ?>
                 </div>
                 <?php } ?>

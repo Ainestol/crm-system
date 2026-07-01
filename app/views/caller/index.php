@@ -1172,7 +1172,27 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
                             </div>
                         <?php } ?>
                         <?php if (!empty($c['sales_name'])) { ?>
-                            <div class="contact-sales">Obchodák: <?= crm_h((string) $c['sales_name']) ?></div>
+                            <div class="contact-sales">
+                                Obchodák: <?= crm_h((string) $c['sales_name']) ?>
+                                <?php if (in_array($stav, ['CALLED_OK','FOR_SALES'], true) && !$noSales) { ?>
+                                    <details class="oz-fix">
+                                        <summary>opravit OZ</summary>
+                                        <form method="post" action="<?= crm_h(crm_url('/caller/fix-oz')) ?>" class="oz-fix-form">
+                                            <input type="hidden" name="<?= crm_h(crm_csrf_field_name()) ?>" value="<?= crm_h($csrf) ?>">
+                                            <input type="hidden" name="contact_id" value="<?= $cId ?>">
+                                            <input type="hidden" name="back" value="<?= crm_h((string) ($_SERVER['REQUEST_URI'] ?? '/caller')) ?>">
+                                            <select name="sales_id" class="input-sales">
+                                                <option value="">— vyber správné OZ —</option>
+                                                <?php foreach ($salesList as $s) { ?>
+                                                    <option value="<?= (int) $s['id'] ?>"><?= crm_h((string) $s['jmeno']) ?></option>
+                                                <?php } ?>
+                                            </select>
+                                            <button type="submit" class="oz-fix-btn" title="Opravit OZ">✓</button>
+                                        </form>
+                                        <div class="oz-fix-hint">Jen dokud OZ ještě nezačal pracovat.</div>
+                                    </details>
+                                <?php } ?>
+                            </div>
                         <?php } ?>
                         <?php if ((int)($c['oz_flagged'] ?? 0) === 1) { ?>
                             <div style="margin-top:0.25rem;display:inline-flex;align-items:center;gap:0.4rem;
@@ -1640,6 +1660,20 @@ $mLeft     = (int) ($workDaysLeft   ?? 0);
     width: 100%;
     align-self: stretch;
 }
+/* Inline oprava OZ na kartě (u „Obchodák: …") */
+.oz-fix { display: inline-block; margin-left: 0.4rem; }
+.oz-fix > summary {
+    display: inline; cursor: pointer; color: var(--accent, #2563eb);
+    font-size: 0.72rem; list-style: none;
+}
+.oz-fix > summary::-webkit-details-marker { display: none; }
+.oz-fix-form { display: inline-flex; gap: 0.3rem; align-items: center; margin: 0.25rem 0 0; }
+.oz-fix-form .input-sales { font-size: 0.75rem; padding: 0.15rem 0.3rem; }
+.oz-fix-btn {
+    background: #16a34a; color: #fff; border: 0; border-radius: 4px;
+    padding: 0.12rem 0.45rem; cursor: pointer; font-weight: 700;
+}
+.oz-fix-hint { font-size: 0.66rem; color: var(--muted, #6b7280); margin-top: 0.15rem; }
 .action-note { width: 100%; }
 .input-note-textarea {
     width: 100% !important;

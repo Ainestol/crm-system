@@ -1678,10 +1678,13 @@ final class CallerController
             $stmt = $this->pdo->prepare(
                 'SELECT c.id, c.firma, c.telefon, c.email, c.stav, c.operator,
                         c.region, c.poznamka, c.callback_at, c.assigned_caller_id,
-                        c.nedovolano_count,
-                        u.jmeno AS sales_name
+                        c.nedovolano_count, c.assigned_sales_id,
+                        u.jmeno AS sales_name,
+                        w.stav AS oz_wf_stav
                  FROM contacts c
                  LEFT JOIN users u ON u.id = c.assigned_sales_id
+                 LEFT JOIN oz_contact_workflow w
+                        ON w.contact_id = c.id AND w.oz_id = c.assigned_sales_id
                  WHERE c.tenant_id = :tid
                    AND (c.firma LIKE :q1
                         OR c.telefon LIKE :q2
@@ -1920,6 +1923,129 @@ final class CallerController
 
         crm_flash_set('Kontakt předán: ' . $salesUser['jmeno']);
         crm_redirect('/caller');
+    }
+
+    /**
+     * POST /caller/fix-oz — oprava špatně přiřazeného OZ u ČERSTVÉ výhry.
+     *
+     * Povoleno JEN když:
+     *   - kontakt je výhra téhle navolávačky (assigned_caller_id = ona),
+     *   - stav je CALLED_OK / FOR_SALES (předaná výhra),
+     *   - OZ ještě nezačal pracovat (žádný workflow nebo stav = NOVE).
+     * Jinak se odmítne s hláškou „řeš přes majitele". Bez schvalování —
+     * je to oprava vlastní čerstvé chyby, kde OZ zatím nic neudělal.
+     */
+    public function postFixOz(): void
+    {
+        $user = crm_require_user($this->pdo);
+        crm_require_roles($user, ['navolavacka']);
+
+        // Kam se vrátit: preferuj explicitní ?back (jen interní /caller cesta),
+        // jinak zpět do hledání s dotazem, jinak na hlavní plochu.
+        $q       = trim((string) ($_POST['q'] ?? ''));
+        $rawBack = (string) ($_POST['back'] ?? '');
+        if ($rawBack !== '' && str_starts_with($rawBack, '/caller')) {
+            $back = $rawBack;
+        } elseif ($q !== '') {
+            $back = '/caller/search?q=' . urlencode($q);
+        } else {
+            $back = '/caller';
+        }
+
+        if (!crm_csrf_validate($_POST[crm_csrf_field_name()] ?? null)) {
+            crm_flash_set('Neplatný CSRF token.');
+            crm_redirect($back);
+        }
+
+        $callerId  = (int) $user['id'];
+        $contactId = (int) ($_POST['contact_id'] ?? 0);
+        $salesId   = (int) ($_POST['sales_id'] ?? 0);
+        $tid       = crm_tenant_id();
+
+        if ($salesId <= 0) {
+            crm_flash_set('Vyber OZ.');
+            crm_redirect($back);
+        }
+
+        // Kontakt musí být výhra téhle navolávačky
+        $st = $this->pdo->prepare(
+            'SELECT id, stav, assigned_sales_id FROM contacts
+             WHERE id = :id AND assigned_caller_id = :cid AND tenant_id = :tid LIMIT 1'
+        );
+        $st->execute(['id' => $contactId, 'cid' => $callerId, 'tid' => $tid]);
+        $contact = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$contact) {
+            crm_flash_set('Kontakt nenalezen nebo to není tvoje výhra.');
+            crm_redirect($back);
+        }
+        if (!in_array((string) $contact['stav'], ['CALLED_OK', 'FOR_SALES'], true)) {
+            crm_flash_set('Opravit OZ jde jen u předané výhry.');
+            crm_redirect($back);
+        }
+
+        // OZ nesmí mít rozpracováno (workflow dál než NOVE)
+        $wf = $this->pdo->prepare(
+            'SELECT stav FROM oz_contact_workflow WHERE contact_id = :id AND tenant_id = :tid'
+        );
+        $wf->execute(['id' => $contactId, 'tid' => $tid]);
+        foreach ($wf->fetchAll(PDO::FETCH_COLUMN) as $wstav) {
+            if ($wstav !== null && (string) $wstav !== 'NOVE') {
+                crm_flash_set('OZ už s kontaktem pracuje (' . (string) $wstav . '). Přepis vyřeš přes majitele.');
+                crm_redirect($back);
+            }
+        }
+
+        // Validace nového OZ (vč. víc-rolových přes roles_extra)
+        $sc = $this->pdo->prepare(
+            'SELECT id, jmeno FROM users WHERE id = :id
+               AND (role = \'obchodak\' OR JSON_CONTAINS(IFNULL(roles_extra, \'[]\'), \'"obchodak"\'))
+               AND aktivni = 1 LIMIT 1'
+        );
+        $sc->execute(['id' => $salesId]);
+        $sales = $sc->fetch(PDO::FETCH_ASSOC);
+        if (!$sales) {
+            crm_flash_set('Vybraný OZ neexistuje nebo není aktivní.');
+            crm_redirect($back);
+        }
+
+        $oldOz = (int) $contact['assigned_sales_id'];
+        if ($oldOz === $salesId) {
+            crm_flash_set('Kontakt už patří tomuto OZ.');
+            crm_redirect($back);
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            // Přepiš vlastníka (stav necháváme — je to pořád výhra)
+            $this->pdo->prepare(
+                'UPDATE contacts SET assigned_sales_id = :sid, updated_at = NOW(3)
+                 WHERE id = :id AND tenant_id = :tid'
+            )->execute(['sid' => $salesId, 'id' => $contactId, 'tid' => $tid]);
+
+            // Ukliď nerozpracovaný (NOVE) workflow řádek starého OZ,
+            // ať mu kontakt nezůstane viset v leadech.
+            $this->pdo->prepare(
+                "DELETE FROM oz_contact_workflow
+                  WHERE contact_id = :id AND stav = 'NOVE' AND tenant_id = :tid"
+            )->execute(['id' => $contactId, 'tid' => $tid]);
+
+            // Audit přeřazení
+            $this->pdo->prepare(
+                'INSERT INTO assignment_log (contact_id, from_user_id, to_user_id, assignment_type, reason, created_at)
+                 VALUES (:cid, :from, :to, \'caller\', \'Oprava OZ navolávačkou (čerstvá výhra)\', NOW(3))'
+            )->execute(['cid' => $contactId, 'from' => $callerId, 'to' => $salesId]);
+
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            crm_flash_set('Chyba při opravě OZ: ' . $e->getMessage());
+            crm_redirect($back);
+        }
+
+        crm_flash_set('✓ OZ opraveno na: ' . (string) $sales['jmeno']);
+        crm_redirect($back);
     }
 
     // ─────────────────────────────────────────────────────────────────

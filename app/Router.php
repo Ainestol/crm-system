@@ -592,6 +592,13 @@ final class Router
                 'handler' => [CallerController::class, 'postAssignSales'],
             ],
             [
+                'method' => 'POST',
+                'path' => '/caller/fix-oz',
+                'auth' => true,
+                'roles' => ['navolavacka'],
+                'handler' => [CallerController::class, 'postFixOz'],
+            ],
+            [
                 'method' => 'GET',
                 'path' => '/caller/calendar',
                 'auth' => true,
